@@ -24,10 +24,10 @@ export function AuthProvider({ children }) {
 
   function login(pin) {
     const r = PINS[pin]
-    if (!r) return false
+    if (!r) return null
     setRole(r)
     sessionStorage.setItem('mz_role', r)
-    return true
+    return r   // returns role string so caller can navigate correctly
   }
 
   function logout() {

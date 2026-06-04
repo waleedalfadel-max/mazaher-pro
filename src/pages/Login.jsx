@@ -20,9 +20,9 @@ export default function Login() {
   }
 
   function attempt(p) {
-    const ok = login(p)
-    if (ok) {
-      navigate('/')
+    const r = login(p)
+    if (r) {
+      navigate(r === 'purchasing' ? '/invoice' : '/')
     } else {
       setShake(true)
       setError('PIN غير صحيح')

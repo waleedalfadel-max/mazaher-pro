@@ -14,7 +14,9 @@ import InvoiceUpload from './pages/InvoiceUpload'
 function ProtectedRoute({ children, allowedRoles }) {
   const { role } = useAuth()
   if (!role) return <Navigate to="/login" replace />
-  if (allowedRoles && !allowedRoles.includes(role)) return <Navigate to="/" replace />
+  if (allowedRoles && !allowedRoles.includes(role)) {
+    return <Navigate to={role === 'purchasing' ? '/invoice' : '/'} replace />
+  }
   return <Layout>{children}</Layout>
 }
 
@@ -67,7 +69,9 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
-      <Route path="*" element={<Navigate to={role ? '/' : '/login'} replace />} />
+      <Route path="*" element={
+        <Navigate to={!role ? '/login' : role === 'purchasing' ? '/invoice' : '/'} replace />
+      } />
     </Routes>
   )
 }
