@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { to: '/journals',  label: 'القيود المعلقة',     icon: '📋', roles: ['owner', 'accountant'] },
   { to: '/reports',   label: 'التقارير',           icon: '📈', roles: ['owner', 'accountant'] },
   { to: '/loans',     label: 'القروض',             icon: '🏦', roles: ['owner', 'accountant'] },
-  { to: '/invoice',   label: 'رفع مستند',          icon: '📤', roles: ['purchasing'] },
+  { to: '/invoice',   label: 'رفع مستند',          icon: '📤', roles: ['purchasing', 'accountant', 'owner'] },
 ]
 
 export default function Layout({ children }) {

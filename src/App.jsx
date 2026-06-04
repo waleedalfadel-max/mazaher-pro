@@ -65,7 +65,7 @@ function AppRoutes() {
       } />
 
       <Route path="/invoice" element={
-        <ProtectedRoute allowedRoles={['purchasing']}>
+        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'owner']}>
           <InvoiceUpload />
         </ProtectedRoute>
       } />

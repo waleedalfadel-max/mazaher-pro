@@ -12,26 +12,29 @@ export async function analyzeDocument(fileBase64, mimeType, fileName) {
 
   const today = new Date().toISOString().split('T')[0]
 
-  const prompt = `أنت مساعد محاسبي. اسم الملف: ${fileName}
+  const prompt = `أنت مساعد محاسبي خبير. اسم الملف: ${fileName}
 اليوم: ${today}
 
-أنواع الحركات: 💵 مبيعات كاش | 🏦 مبيعات شبكة | 🛒 مصروفات تشغيلية | 💰 مصروفات ثابتة | 💳 قسط قرض | 👤 صرف عهدة | ✅ تسوية عهدة | 💼 مسحوبات سليمان | 💼 مسحوبات أم طوبى | 🏛️ ضريبة القيمة المضافة
+أنواع الحركات المتاحة:
+💵 مبيعات كاش | 🏦 مبيعات شبكة | 🛒 مصروفات تشغيلية | 💰 مصروفات ثابتة
+💳 قسط سيارة | 💳 قسط شراء أرض | 💳 قرض ١ | 💳 قرض ٢
+👤 صرف عهدة | 💼 مسحوبات سليمان | 💼 مسحوبات أم طوبى | 🏛️ ضريبة القيمة المضافة
 
-مصادر الدفع: cash = صندوق | bank = بنك/مدى/تحويل | custody = عهدة
+مصادر الدفع: cash=صندوق نقدي | bank=بنك أو مدى أو تحويل | custody=عهدة موظف
 
-١. تقرير POS (مبيعات يومية):
+١. تقرير POS (مبيعات يومية كاش+شبكة):
 {"type":"sales","date":"YYYY-MM-DD","cashSales":0.00,"networkSales":0.00,"totalSales":0.00}
 
-٢. مستند واضح (إيصال بنكي، سند صرف):
-{"type":"auto","date":"YYYY-MM-DD","amount":0.00,"vatAmount":0.00,"transType":"النوع من القائمة","paySource":"cash/bank/custody","description":"وصف أقل من 50 حرف"}
+٢. أي مستند آخر (فاتورة، إيصال، سند، كشف):
+{"type":"auto","date":"YYYY-MM-DD","amount":0.00,"vatAmount":0.00,"transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"وصف مختصر"}
 
-٣. فاتورة شراء عادية:
-{"type":"auto","date":"YYYY-MM-DD","amount":0.00,"vatAmount":0.00,"transType":"🛒 مصروفات تشغيلية","paySource":"custody","description":"وصف"}
-
-٤. غير واضح:
-{"type":"expense","date":"YYYY-MM-DD","amount":0.00,"vatAmount":0.00,"description":"وصف"}
-
-قواعد: التاريخ YYYY-MM-DD — المبلغ الإجمالي فقط — vatAmount إذا مذكور وإلا 0 — JSON فقط بدون أي نص إضافي`
+قواعد صارمة — لا استثناء:
+- transType: يجب اختياره دائماً من القائمة — الافتراضي 🛒 مصروفات تشغيلية لأي فاتورة شراء
+- paySource: يجب تحديده دائماً — الافتراضي custody للفواتير العادية، bank للتحويلات والمدى
+- date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
+- amount: الإجمالي شامل الضريبة
+- vatAmount: مبلغ الضريبة إذا مذكور صراحةً وإلا 0
+- JSON فقط بدون أي نص قبله أو بعده`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
