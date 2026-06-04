@@ -1,9 +1,14 @@
 import React, { createContext, useContext, useState } from 'react'
 
+// fallback hardcoded so the app works even if env vars aren't set at build time
+const PIN_OWNER      = import.meta.env.VITE_PIN_OWNER      || '1111'
+const PIN_ACCOUNTANT = import.meta.env.VITE_PIN_ACCOUNTANT || '2222'
+const PIN_PURCHASING = import.meta.env.VITE_PIN_PURCHASING || '3333'
+
 const PINS = {
-  [import.meta.env.VITE_PIN_OWNER]:      'owner',
-  [import.meta.env.VITE_PIN_ACCOUNTANT]: 'accountant',
-  [import.meta.env.VITE_PIN_PURCHASING]: 'purchasing',
+  [PIN_OWNER]:      'owner',
+  [PIN_ACCOUNTANT]: 'accountant',
+  [PIN_PURCHASING]: 'purchasing',
 }
 
 const ROLE_LABELS = {
