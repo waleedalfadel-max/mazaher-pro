@@ -10,6 +10,7 @@ import Journals from './pages/Journals'
 import Reports from './pages/Reports'
 import Loans from './pages/Loans'
 import InvoiceUpload from './pages/InvoiceUpload'
+import PendingDocuments from './pages/PendingDocuments'
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { role } = useAuth()
@@ -64,8 +65,14 @@ function AppRoutes() {
       } />
 
       <Route path="/invoice" element={
-        <ProtectedRoute allowedRoles={['purchasing', 'accountant']}>
+        <ProtectedRoute allowedRoles={['purchasing']}>
           <InvoiceUpload />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/pending" element={
+        <ProtectedRoute allowedRoles={['accountant']}>
+          <PendingDocuments />
         </ProtectedRoute>
       } />
 
