@@ -44,13 +44,12 @@ export default function InvoiceUpload() {
       // تحويل الملف لـ base64
       const base64 = await toBase64(file)
 
-      // الحصول على project_id
+      // الحصول على project_id — اختياري، نكمل بدونه إذا ما وجد
       const { data: proj } = await supabase
-        .from('projects').select('id').eq('name', 'مزاهر').single()
-      if (!proj) throw new Error('ما وجد المشروع في Supabase')
+        .from('projects').select('id').eq('name', 'مزاهر').maybeSingle()
 
       const { error: err } = await supabase.from('documents').insert({
-        project_id: proj.id,
+        project_id: proj?.id || null,
         file_name:  file.name,
         file_type:  file.type,
         file_data:  base64,
