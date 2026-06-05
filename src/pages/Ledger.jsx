@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -31,14 +31,34 @@ const TABS = [
   { key: 'cancelled', label: 'ملغي' },
 ]
 
+function BalanceSummary({ cash, bank, custody }) {
+  const fmt = v => (v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
+  const card = (label, value, posColor, negColor) => (
+    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
+      <div className="text-slate-400 text-xs mb-1">{label}</div>
+      <div className={`text-lg font-bold tabular-nums font-mono ${value < 0 ? negColor : posColor}`}>
+        {fmt(value)}
+      </div>
+      <div className="text-slate-500 text-xs">ر.س</div>
+    </div>
+  )
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {card('🏧 رصيد الصندوق', cash,    'text-green-400', 'text-red-400')}
+      {card('🏦 رصيد البنك',   bank,    'text-blue-400',  'text-red-400')}
+      {card('👤 رصيد العهدة',  custody, 'text-amber-400', 'text-red-400')}
+    </div>
+  )
+}
+
 export default function Ledger() {
   const { canEdit } = useAuth()
-  const [rows, setRows]           = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [projectId, setProjectId] = useState(null)
-  const [editRow, setEditRow]     = useState(null)
-  const [activeTab, setActiveTab] = useState('')
-  const [filter, setFilter]       = useState({ from: '', to: '', type: '' })
+  const [allRows, setAllRows]       = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [projectId, setProjectId]   = useState(null)
+  const [editRow, setEditRow]       = useState(null)
+  const [activeTab, setActiveTab]   = useState('')
+  const [filter, setFilter]         = useState({ from: '', to: '', type: '' })
   const [archiveDate, setArchiveDate] = useState('')
   const [archiving, setArchiving]     = useState(false)
   const [archiveDone, setArchiveDone] = useState('')
@@ -47,28 +67,51 @@ export default function Ledger() {
 
   async function init() {
     const { data } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').single()
-    if (data) { setProjectId(data.id); await load(data.id, '', filter) }
+    if (data) { setProjectId(data.id); await load(data.id) }
     setLoading(false)
   }
 
-  async function load(pid, tab, f) {
+  async function load(pid) {
     setLoading(true)
-    let q = supabase.from('ledger_entries')
-      .select('*').eq('project_id', pid || projectId)
-      .order('date', { ascending: false }).limit(300)
-    if (tab)   q = q.eq('status', tab)
-    if (f.from) q = q.gte('date', f.from)
-    if (f.to)   q = q.lte('date', f.to)
-    if (f.type) q = q.eq('type', f.type)
-    const { data } = await q
-    setRows(data || [])
+    const { data } = await supabase.from('ledger_entries')
+      .select('*')
+      .eq('project_id', pid || projectId)
+      .order('date', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(2000)
+    setAllRows(data || [])
     setLoading(false)
   }
 
-  function handleTab(tab) {
-    setActiveTab(tab)
-    load(projectId, tab, filter)
-  }
+  // Compute running balances for all non-cancelled entries (ascending order)
+  const enriched = useMemo(() => {
+    let cash = 0, bank = 0, custody = 0
+    return allRows.map(r => {
+      if (r.status !== 'cancelled') {
+        cash    += (r.cash_in    || 0) - (r.cash_out    || 0)
+        bank    += (r.bank_in    || 0) - (r.bank_out    || 0)
+        custody += (r.custody_in || 0) - (r.custody_out || 0)
+        return { ...r, _cashBal: cash, _bankBal: bank, _custodyBal: custody }
+      }
+      return { ...r, _cashBal: null, _bankBal: null, _custodyBal: null }
+    })
+  }, [allRows])
+
+  // Current balance = last non-cancelled row's running balance
+  const currentBal = useMemo(() => {
+    const last = [...enriched].reverse().find(r => r._cashBal !== null)
+    return last ? { cash: last._cashBal, bank: last._bankBal, custody: last._custodyBal } : { cash: 0, bank: 0, custody: 0 }
+  }, [enriched])
+
+  // Apply tab + date + type filters, then reverse for newest-first display
+  const filteredRows = useMemo(() => {
+    let rows = enriched
+    if (activeTab)  rows = rows.filter(r => r.status === activeTab)
+    if (filter.from) rows = rows.filter(r => r.date >= filter.from)
+    if (filter.to)   rows = rows.filter(r => r.date <= filter.to)
+    if (filter.type) rows = rows.filter(r => r.type === filter.type)
+    return [...rows].reverse()
+  }, [enriched, activeTab, filter])
 
   async function saveEdit() {
     if (!editRow) return
@@ -84,12 +127,12 @@ export default function Ledger() {
       status:      'modified',
     }).eq('id', editRow.id)
     setEditRow(null)
-    load(projectId, activeTab, filter)
+    load(projectId)
   }
 
   async function cancelEntry(id) {
     await supabase.from('ledger_entries').update({ status: 'cancelled' }).eq('id', id)
-    setRows(rs => rs.map(r => r.id === id ? { ...r, status: 'cancelled' } : r))
+    load(projectId)
   }
 
   async function archiveDay() {
@@ -100,7 +143,6 @@ export default function Ledger() {
         .select('*').eq('project_id', projectId).eq('date', archiveDate)
         .not('status', 'eq', 'cancelled')
       if (!entries || entries.length === 0) { setArchiveDone('لا توجد قيود لهذا اليوم'); setArchiving(false); return }
-
       const sum = (field) => entries.reduce((s, r) => s + (Number(r[field]) || 0), 0)
       const { error } = await supabase.from('ledger_entries').insert({
         project_id:   projectId,
@@ -120,12 +162,13 @@ export default function Ledger() {
       if (error) throw new Error(error.message)
       setArchiveDone(`تم إنشاء قيد موحد لـ ${entries.length} حركة`)
       setArchiveDate('')
-      load(projectId, activeTab, filter)
+      load(projectId)
     } catch(e) { setArchiveDone(`خطأ: ${e.message}`) }
     finally { setArchiving(false) }
   }
 
-  const fmt = v => v ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
+  const fmt = v => v != null && v !== 0 ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
+  const fmtBal = v => v != null ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
 
   return (
     <div className="space-y-4">
@@ -134,10 +177,13 @@ export default function Ledger() {
         {!canEdit && <span className="text-xs bg-slate-100 text-slate-500 px-3 py-1 rounded-full">عرض فقط</span>}
       </div>
 
+      {/* Balance Summary — all time */}
+      <BalanceSummary cash={currentBal.cash} bank={currentBal.bank} custody={currentBal.custody} />
+
       {/* Tabs */}
       <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
         {TABS.map(t => (
-          <button key={t.key} onClick={() => handleTab(t.key)}
+          <button key={t.key} onClick={() => setActiveTab(t.key)}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
               activeTab === t.key
                 ? 'bg-white text-slate-800 shadow-sm'
@@ -171,9 +217,9 @@ export default function Ledger() {
             {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
-        <button onClick={() => load(projectId, activeTab, filter)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-          بحث
+        <button onClick={() => setFilter(f => ({ ...f }))}
+          className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
+          مسح الفلتر
         </button>
       </div>
 
@@ -211,34 +257,54 @@ export default function Ledger() {
           </div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
+            <thead className="bg-slate-800 text-white">
               <tr>
-                {['التاريخ','النوع','الوصف','خرج صندوق','دخل صندوق','خرج بنك','دخل بنك','خرج عهدة','دخل عهدة','الحالة',''].map(h => (
-                  <th key={h} className="px-4 py-3 text-right text-xs font-semibold text-slate-500">{h}</th>
+                {[
+                  'التاريخ','النوع','الوصف',
+                  'خرج صندوق','دخل صندوق',
+                  'خرج بنك','دخل بنك',
+                  'خرج عهدة','دخل عهدة',
+                ].map(h => (
+                  <th key={h} className="px-3 py-3 text-right text-xs font-semibold whitespace-nowrap">{h}</th>
                 ))}
+                <th className="px-3 py-3 text-right text-xs font-semibold text-green-300 whitespace-nowrap">رصيد صندوق</th>
+                <th className="px-3 py-3 text-right text-xs font-semibold text-blue-300 whitespace-nowrap">رصيد بنك</th>
+                <th className="px-3 py-3 text-right text-xs font-semibold text-amber-300 whitespace-nowrap">رصيد عهدة</th>
+                <th className="px-3 py-3 text-right text-xs font-semibold">الحالة</th>
+                <th className="px-3 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {rows.length === 0 && (
-                <tr><td colSpan={11} className="text-center py-10 text-slate-400">لا توجد بيانات</td></tr>
+              {filteredRows.length === 0 && (
+                <tr><td colSpan={14} className="text-center py-10 text-slate-400">لا توجد بيانات</td></tr>
               )}
-              {rows.map(r => (
+              {filteredRows.map(r => (
                 <tr key={r.id} className={`hover:bg-slate-50 transition-colors ${r.status === 'cancelled' ? 'opacity-50' : ''}`}>
-                  <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{r.date}</td>
-                  <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{r.type || '—'}</td>
-                  <td className="px-4 py-3 text-slate-600 max-w-40 truncate">{r.description || '—'}</td>
-                  <td className="px-4 py-3 text-red-600 tabular-nums">{r.cash_out   > 0 ? fmt(r.cash_out)   : '—'}</td>
-                  <td className="px-4 py-3 text-green-600 tabular-nums">{r.cash_in  > 0 ? fmt(r.cash_in)   : '—'}</td>
-                  <td className="px-4 py-3 text-red-600 tabular-nums">{r.bank_out   > 0 ? fmt(r.bank_out)   : '—'}</td>
-                  <td className="px-4 py-3 text-green-600 tabular-nums">{r.bank_in  > 0 ? fmt(r.bank_in)   : '—'}</td>
-                  <td className="px-4 py-3 text-red-600 tabular-nums">{r.custody_out > 0 ? fmt(r.custody_out) : '—'}</td>
-                  <td className="px-4 py-3 text-green-600 tabular-nums">{r.custody_in > 0 ? fmt(r.custody_in) : '—'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-3 text-slate-600 whitespace-nowrap font-mono text-xs">{r.date}</td>
+                  <td className="px-3 py-3 text-slate-700 whitespace-nowrap text-xs">{r.type || '—'}</td>
+                  <td className="px-3 py-3 text-slate-600 max-w-36 truncate text-xs">{r.description || '—'}</td>
+                  <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.cash_out    > 0 ? fmt(r.cash_out)    : '—'}</td>
+                  <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.cash_in    > 0 ? fmt(r.cash_in)    : '—'}</td>
+                  <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.bank_out    > 0 ? fmt(r.bank_out)    : '—'}</td>
+                  <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.bank_in    > 0 ? fmt(r.bank_in)    : '—'}</td>
+                  <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.custody_out > 0 ? fmt(r.custody_out) : '—'}</td>
+                  <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.custody_in > 0 ? fmt(r.custody_in) : '—'}</td>
+                  {/* Running balances */}
+                  <td className={`px-3 py-3 tabular-nums text-xs text-right font-semibold font-mono ${
+                    r._cashBal == null ? 'text-slate-300' : r._cashBal < 0 ? 'text-red-600' : 'text-green-600'
+                  }`}>{fmtBal(r._cashBal)}</td>
+                  <td className={`px-3 py-3 tabular-nums text-xs text-right font-semibold font-mono ${
+                    r._bankBal == null ? 'text-slate-300' : r._bankBal < 0 ? 'text-red-600' : 'text-blue-600'
+                  }`}>{fmtBal(r._bankBal)}</td>
+                  <td className={`px-3 py-3 tabular-nums text-xs text-right font-semibold font-mono ${
+                    r._custodyBal == null ? 'text-slate-300' : r._custodyBal < 0 ? 'text-red-600' : 'text-amber-600'
+                  }`}>{fmtBal(r._custodyBal)}</td>
+                  <td className="px-3 py-3">
                     <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_BADGE[r.status] || 'bg-slate-100 text-slate-500'}`}>
                       {STATUS_LABEL[r.status] || r.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-3">
                     {canEdit && r.status !== 'cancelled' && (
                       <div className="flex gap-2">
                         <button onClick={() => setEditRow({ ...r })}
@@ -254,6 +320,11 @@ export default function Ledger() {
           </table>
         )}
       </div>
+
+      {/* Row count */}
+      {!loading && filteredRows.length > 0 && (
+        <div className="text-xs text-slate-400 text-left">{filteredRows.length} صف معروض من {allRows.length} إجمالي</div>
+      )}
 
       {/* Edit Modal */}
       {editRow && (
