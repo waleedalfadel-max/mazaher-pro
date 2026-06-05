@@ -2,27 +2,31 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
+function defaultPath(role) {
+  if (role === 'purchasing') return '/invoice'
+  if (role === 'cashier')    return '/cashier'
+  return '/'
+}
+
 export default function Login() {
-  const [pin, setPin]       = useState('')
-  const [error, setError]   = useState('')
-  const [shake, setShake]   = useState(false)
-  const { login, role }     = useAuth()
-  const navigate            = useNavigate()
+  const [pin, setPin]     = useState('')
+  const [error, setError] = useState('')
+  const [shake, setShake] = useState(false)
+  const { login, role }   = useAuth()
+  const navigate          = useNavigate()
 
   function handleDigit(d) {
     if (pin.length >= 4) return
     const next = pin + d
     setPin(next)
     setError('')
-    if (next.length === 4) {
-      setTimeout(() => attempt(next), 150)
-    }
+    if (next.length === 4) setTimeout(() => attempt(next), 150)
   }
 
   function attempt(p) {
     const r = login(p)
     if (r) {
-      navigate(r === 'purchasing' ? '/invoice' : '/')
+      navigate(defaultPath(r))
     } else {
       setShake(true)
       setError('PIN غير صحيح')
@@ -55,8 +59,7 @@ export default function Login() {
           {/* PIN dots */}
           <div className={`flex justify-center gap-4 mb-6 ${shake ? 'animate-bounce' : ''}`}>
             {[0,1,2,3].map(i => (
-              <div
-                key={i}
+              <div key={i}
                 className={`w-4 h-4 rounded-full transition-all duration-200 ${
                   i < pin.length ? 'bg-blue-500 scale-110' : 'bg-slate-600'
                 }`}
@@ -64,7 +67,6 @@ export default function Login() {
             ))}
           </div>
 
-          {/* Error */}
           {error && (
             <p className="text-center text-red-400 text-sm mb-4 font-medium">{error}</p>
           )}
@@ -95,6 +97,7 @@ export default function Login() {
           <p>المالك: <span className="text-slate-400 font-mono">1111</span></p>
           <p>المحاسب: <span className="text-slate-400 font-mono">2222</span></p>
           <p>مسؤول المشتريات: <span className="text-slate-400 font-mono">3333</span></p>
+          <p>الكاشير: <span className="text-slate-400 font-mono">4444</span></p>
         </div>
       </div>
     </div>

@@ -3,14 +3,16 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
 const NAV_ITEMS = [
-  { to: '/',          label: 'لوحة التحكم',       icon: '📊', roles: ['owner', 'accountant'] },
-  { to: '/pending',   label: 'مستندات جديدة',     icon: '🔔', roles: ['accountant'] },
-  { to: '/ledger',    label: 'الدفتر',             icon: '📒', roles: ['owner', 'accountant'] },
-  { to: '/sales',     label: 'المبيعات',           icon: '💵', roles: ['owner', 'accountant'] },
-  { to: '/journals',  label: 'القيود المعلقة',     icon: '📋', roles: ['owner', 'accountant'] },
-  { to: '/reports',   label: 'التقارير',           icon: '📈', roles: ['owner', 'accountant'] },
-  { to: '/loans',     label: 'القروض',             icon: '🏦', roles: ['owner', 'accountant'] },
-  { to: '/invoice',   label: 'رفع مستند',          icon: '📤', roles: ['purchasing', 'accountant', 'owner'] },
+  { to: '/',        label: 'لوحة التحكم',     icon: '📊', roles: ['owner', 'accountant'] },
+  { to: '/cashier', label: 'لوحة الكاشير',    icon: '💰', roles: ['cashier', 'owner', 'accountant'] },
+  { to: '/pending', label: 'مستندات جديدة',   icon: '🔔', roles: ['accountant'] },
+  { to: '/ledger',  label: 'الدفتر',           icon: '📒', roles: ['owner', 'accountant'] },
+  { to: '/sales',   label: 'المبيعات',         icon: '💵', roles: ['owner', 'accountant'] },
+  { to: '/journals',label: 'القيود المعلقة',  icon: '📋', roles: ['owner', 'accountant'] },
+  { to: '/reports', label: 'التقارير',         icon: '📈', roles: ['owner', 'accountant'] },
+  { to: '/loans',   label: 'القروض',           icon: '🏦', roles: ['owner', 'accountant'] },
+  { to: '/invoice', label: 'رفع مستند',        icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },
+  { to: '/users',   label: 'المستخدمون',       icon: '👥', roles: ['owner'] },
 ]
 
 export default function Layout({ children }) {
@@ -54,7 +56,7 @@ export default function Layout({ children }) {
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === '/'}
+              end={item.to === '/' || item.to === '/cashier'}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm font-medium
                 ${isActive

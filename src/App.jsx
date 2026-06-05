@@ -11,12 +11,20 @@ import Reports from './pages/Reports'
 import Loans from './pages/Loans'
 import InvoiceUpload from './pages/InvoiceUpload'
 import PendingDocuments from './pages/PendingDocuments'
+import CashierDashboard from './pages/CashierDashboard'
+import UsersManagement from './pages/UsersManagement'
+
+function defaultPath(role) {
+  if (role === 'purchasing') return '/invoice'
+  if (role === 'cashier')    return '/cashier'
+  return '/'
+}
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { role } = useAuth()
   if (!role) return <Navigate to="/login" replace />
   if (allowedRoles && !allowedRoles.includes(role)) {
-    return <Navigate to={role === 'purchasing' ? '/invoice' : '/'} replace />
+    return <Navigate to={defaultPath(role)} replace />
   }
   return <Layout>{children}</Layout>
 }
@@ -26,7 +34,7 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/login" element={role ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={role ? <Navigate to={defaultPath(role)} replace /> : <Login />} />
 
       <Route path="/" element={
         <ProtectedRoute allowedRoles={['owner', 'accountant']}>
@@ -65,7 +73,7 @@ function AppRoutes() {
       } />
 
       <Route path="/invoice" element={
-        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'owner']}>
+        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'owner', 'cashier']}>
           <InvoiceUpload />
         </ProtectedRoute>
       } />
@@ -76,8 +84,20 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      <Route path="/cashier" element={
+        <ProtectedRoute allowedRoles={['cashier', 'owner', 'accountant']}>
+          <CashierDashboard />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/users" element={
+        <ProtectedRoute allowedRoles={['owner']}>
+          <UsersManagement />
+        </ProtectedRoute>
+      } />
+
       <Route path="*" element={
-        <Navigate to={!role ? '/login' : role === 'purchasing' ? '/invoice' : '/'} replace />
+        <Navigate to={!role ? '/login' : defaultPath(role)} replace />
       } />
     </Routes>
   )

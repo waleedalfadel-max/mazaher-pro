@@ -8,18 +8,23 @@ const TRANS_TYPES = [
   '👤 صرف عهدة','💼 مسحوبات سليمان','💼 مسحوبات أم طوبى','🏛️ ضريبة القيمة المضافة','🔄 تحويل داخلي',
 ]
 
-const ROLE_AR  = { purchasing:'مسؤول المشتريات', accountant:'المحاسب', owner:'المالك' }
-const ROLE_COLOR = { purchasing:'bg-blue-100 text-blue-700', accountant:'bg-purple-100 text-purple-700', owner:'bg-amber-100 text-amber-700' }
+const ROLE_AR    = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك', cashier: 'الكاشير' }
+const ROLE_COLOR = {
+  purchasing: 'bg-blue-100 text-blue-700',
+  accountant: 'bg-purple-100 text-purple-700',
+  owner:      'bg-amber-100 text-amber-700',
+  cashier:    'bg-green-100 text-green-700',
+}
 
 export default function PendingDocuments() {
-  const [docs, setDocs]       = useState([])
-  const [loading, setLoading] = useState(true)
+  const [docs, setDocs]           = useState([])
+  const [loading, setLoading]     = useState(true)
   const [projectId, setProjectId] = useState(null)
 
   useEffect(() => { init() }, [])
 
   async function init() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر-برو').maybeSingle()
+    const { data: proj } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').maybeSingle()
     setProjectId(proj?.id || null)
     await loadDocs(proj?.id || null)
     setLoading(false)
@@ -28,49 +33,45 @@ export default function PendingDocuments() {
   async function loadDocs(pid) {
     const q = supabase.from('documents')
       .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by')
-      .in('status', ['uploaded','analyzed'])
+      .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
     if (pid) q.eq('project_id', pid)
     const { data } = await q
-    setDocs((data||[]).map(d=>({...d, _state:'idle', _error:'', _edit: d.analysis_result || null, _imageData:null, _showImage:false})))
+    setDocs((data || []).map(d => ({
+      ...d,
+      _state: 'idle', _error: '', _edit: d.analysis_result || null,
+      _imageData: null, _showImage: false,
+    })))
   }
 
   function updateDoc(id, patch) {
-    setDocs(ds => ds.map(d => d.id===id ? {...d,...patch} : d))
+    setDocs(ds => ds.map(d => d.id === id ? { ...d, ...patch } : d))
   }
 
   async function loadImage(doc) {
-    if (doc._imageData) { updateDoc(doc.id, {_showImage:!doc._showImage}); return }
-    updateDoc(doc.id, {_loadingImg:true})
-    const { data } = await supabase.from('documents').select('file_data').eq('id',doc.id).single()
-    updateDoc(doc.id, {_imageData: data?.file_data || null, _showImage:true, _loadingImg:false})
+    if (doc._imageData) { updateDoc(doc.id, { _showImage: !doc._showImage }); return }
+    updateDoc(doc.id, { _loadingImg: true })
+    const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
+    updateDoc(doc.id, { _imageData: data?.file_data || null, _showImage: true, _loadingImg: false })
   }
 
   async function analyze(doc) {
-    updateDoc(doc.id, {_state:'analyzing', _error:''})
+    updateDoc(doc.id, { _state: 'analyzing', _error: '' })
     try {
-      const { data } = await supabase.from('documents').select('file_data').eq('id',doc.id).single()
+      const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
       if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
-
       const result = await analyzeDocument(data.file_data, doc.file_type, doc.file_name)
-
-      await supabase.from('documents').update({
-        status: 'analyzed',
-        analysis_result: result,
-      }).eq('id', doc.id)
-
+      await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
-        _state:'analyzed', status:'analyzed',
+        _state: 'analyzed', status: 'analyzed',
         analysis_result: result, _edit: result,
         _imageData: data.file_data, _showImage: true,
       })
-    } catch(e) {
-      updateDoc(doc.id, {_state:'idle', _error: e.message})
-    }
+    } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
   }
 
   async function approve(doc) {
-    updateDoc(doc.id, {_state:'approving'})
+    updateDoc(doc.id, { _state: 'approving' })
     const res = doc._edit || doc.analysis_result
     try {
       const amount = Number(res.amount) || 0
@@ -92,10 +93,10 @@ export default function PendingDocuments() {
           date:         res.date,
           type:         res.transType || '',
           description:  res.description || doc.file_name,
-          cash_out:     pay==='cash'    ? amount : 0,
-          bank_out:     pay==='bank'    ? amount : 0,
-          custody_out:  pay==='custody' ? amount : 0,
-          cash_in:0, bank_in:0, custody_in:0,
+          cash_out:     pay === 'cash'    ? amount : 0,
+          bank_out:     pay === 'bank'    ? amount : 0,
+          custody_out:  pay === 'custody' ? amount : 0,
+          cash_in: 0, bank_in: 0, custody_in: 0,
           vat_amount:   Number(res.vatAmount) || 0,
           total_amount: amount,
           status:       'approved',
@@ -104,18 +105,24 @@ export default function PendingDocuments() {
         if (err) throw new Error(err.message)
       }
 
-      await supabase.from('documents').update({status:'approved'}).eq('id', doc.id)
+      await supabase.from('documents').update({ status: 'approved' }).eq('id', doc.id)
       setDocs(ds => ds.filter(d => d.id !== doc.id))
-    } catch(e) {
-      updateDoc(doc.id, {_state:'analyzed', _error: e.message})
-    }
+    } catch(e) { updateDoc(doc.id, { _state: 'analyzed', _error: e.message }) }
+  }
+
+  async function reject(doc) {
+    updateDoc(doc.id, { _state: 'rejecting' })
+    try {
+      await supabase.from('documents').update({ status: 'rejected' }).eq('id', doc.id)
+      setDocs(ds => ds.filter(d => d.id !== doc.id))
+    } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
   }
 
   const timeAgo = t => {
-    const m = (Date.now()-new Date(t))/60000
-    if (m<60) return `${Math.round(m)}د`
-    if (m<1440) return `${Math.round(m/60)}س`
-    return `${Math.round(m/1440)}ي`
+    const m = (Date.now() - new Date(t)) / 60000
+    if (m < 60)   return `${Math.round(m)}د`
+    if (m < 1440) return `${Math.round(m / 60)}س`
+    return `${Math.round(m / 1440)}ي`
   }
 
   if (loading) return (
@@ -131,7 +138,8 @@ export default function PendingDocuments() {
           <h1 className="text-2xl font-bold text-slate-800">مستندات بانتظار المراجعة</h1>
           <p className="text-sm text-slate-500 mt-1">{docs.length} مستند</p>
         </div>
-        <button onClick={()=>loadDocs(projectId)} className="text-sm text-blue-600 hover:text-blue-800 font-medium">↻ تحديث</button>
+        <button onClick={() => loadDocs(projectId)}
+          className="text-sm text-blue-600 hover:text-blue-800 font-medium">↻ تحديث</button>
       </div>
 
       {docs.length === 0 ? (
@@ -141,10 +149,11 @@ export default function PendingDocuments() {
         </div>
       ) : docs.map(doc => (
         <DocCard key={doc.id} doc={doc}
-          onLoadImage={()=>loadImage(doc)}
-          onAnalyze={()=>analyze(doc)}
-          onApprove={()=>approve(doc)}
-          onEdit={(f,v)=>updateDoc(doc.id,{_edit:{...(doc._edit||doc.analysis_result||{}),[f]:v}})}
+          onLoadImage={() => loadImage(doc)}
+          onAnalyze={() => analyze(doc)}
+          onApprove={() => approve(doc)}
+          onReject={() => reject(doc)}
+          onEdit={(f, v) => updateDoc(doc.id, { _edit: { ...(doc._edit || doc.analysis_result || {}), [f]: v } })}
           timeAgo={timeAgo}
           TRANS_TYPES={TRANS_TYPES}
           ROLE_AR={ROLE_AR}
@@ -155,12 +164,11 @@ export default function PendingDocuments() {
   )
 }
 
-function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onEdit, timeAgo, TRANS_TYPES, ROLE_AR, ROLE_COLOR }) {
-  const res  = doc._edit || doc.analysis_result
-  const busy = doc._state==='analyzing' || doc._state==='approving'
+function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, timeAgo, TRANS_TYPES, ROLE_AR, ROLE_COLOR }) {
+  const res     = doc._edit || doc.analysis_result
+  const busy    = ['analyzing','approving','rejecting'].includes(doc._state)
   const isImage = doc.file_type?.startsWith('image/')
-
-  const fmt = v => v ? Number(v).toLocaleString('ar-SA',{minimumFractionDigits:2}) : '—'
+  const fmt     = v => v ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -174,37 +182,33 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onEdit, timeAgo, TRAN
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {doc.uploaded_by && (
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLOR[doc.uploaded_by]||'bg-slate-100 text-slate-500'}`}>
-              {ROLE_AR[doc.uploaded_by]||doc.uploaded_by}
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLOR[doc.uploaded_by] || 'bg-slate-100 text-slate-500'}`}>
+              {ROLE_AR[doc.uploaded_by] || doc.uploaded_by}
             </span>
           )}
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-            doc.status==='analyzed' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
+            doc.status === 'analyzed' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
           }`}>
-            {doc.status==='analyzed' ? 'محلَّل' : 'جديد'}
+            {doc.status === 'analyzed' ? 'محلَّل' : 'جديد'}
           </span>
         </div>
       </div>
 
       <div className="p-4 space-y-4">
 
-        {/* Error */}
         {doc._error && (
           <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-red-700 text-sm">❌ {doc._error}</div>
         )}
 
         {/* Image toggle */}
-        {(doc.status==='uploaded' || doc.status==='analyzed') && (
-          <button onClick={onLoadImage} disabled={doc._loadingImg}
-            className="flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">
-            {doc._loadingImg
-              ? <><div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"/>جارٍ التحميل...</>
-              : doc._showImage ? '🔼 إخفاء الصورة' : '👁 عرض الفاتورة'
-            }
-          </button>
-        )}
+        <button onClick={onLoadImage} disabled={doc._loadingImg}
+          className="flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">
+          {doc._loadingImg
+            ? <><div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"/>جارٍ التحميل...</>
+            : doc._showImage ? '🔼 إخفاء الصورة' : '👁 عرض الفاتورة'
+          }
+        </button>
 
-        {/* Image preview */}
         {doc._showImage && doc._imageData && isImage && (
           <img
             src={`data:${doc.file_type};base64,${doc._imageData}`}
@@ -219,35 +223,33 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onEdit, timeAgo, TRAN
           </div>
         )}
 
-        {/* Analyze button */}
-        {doc.status==='uploaded' && (
+        {/* Analyze */}
+        {doc.status === 'uploaded' && (
           <button onClick={onAnalyze} disabled={busy}
             className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-            {doc._state==='analyzing'
+            {doc._state === 'analyzing'
               ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ التحليل...</span></>
               : '🤖 تحليل بالذكاء الاصطناعي'
             }
           </button>
         )}
 
-        {/* Analysis result — editable */}
-        {(doc.status==='analyzed' || doc._state==='analyzed') && res && (
+        {/* Analysis result */}
+        {(doc.status === 'analyzed' || doc._state === 'analyzed') && res && (
           <div className="space-y-3">
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">نتيجة التحليل — عدّل إن لزم ثم اعتمد</div>
 
-            {/* Summary row */}
             <div className="bg-slate-50 rounded-xl p-3 grid grid-cols-2 gap-2 text-sm">
               <div><span className="text-slate-400 text-xs block">التاريخ</span><span className="font-medium">{res.date}</span></div>
-              {res.type==='sales'
-                ? <div><span className="text-slate-400 text-xs block">الإجمالي</span><span className="font-semibold text-green-700">{fmt(res.totalSales||((res.cashSales||0)+(res.networkSales||0)))} ر.س</span></div>
+              {res.type === 'sales'
+                ? <div><span className="text-slate-400 text-xs block">الإجمالي</span><span className="font-semibold text-green-700">{fmt(res.totalSales || ((res.cashSales || 0) + (res.networkSales || 0)))} ر.س</span></div>
                 : <div><span className="text-slate-400 text-xs block">المبلغ</span><span className="font-semibold text-red-700">{fmt(res.amount)} ر.س</span></div>
               }
-              {res.type!=='sales' && <div><span className="text-slate-400 text-xs block">البند</span><span className="font-medium">{res.transType||'—'}</span></div>}
-              {res.type!=='sales' && <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{cash:'الصندوق',bank:'البنك',custody:'العهدة'}[res.paySource]||res.paySource||'—'}</span></div>}
+              {res.type !== 'sales' && <div><span className="text-slate-400 text-xs block">البند</span><span className="font-medium">{res.transType || '—'}</span></div>}
+              {res.type !== 'sales' && <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{ cash: 'الصندوق', bank: 'البنك', custody: 'العهدة' }[res.paySource] || res.paySource || '—'}</span></div>}
               {res.description && <div className="col-span-2"><span className="text-slate-400 text-xs block">الوصف</span><span>{res.description}</span></div>}
             </div>
 
-            {/* Edit form */}
             <details className="group">
               <summary className="text-sm text-blue-600 cursor-pointer hover:text-blue-800 font-medium list-none flex items-center gap-1">
                 <span className="group-open:rotate-90 transition-transform inline-block">▶</span> تعديل البيانات
@@ -255,30 +257,30 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onEdit, timeAgo, TRAN
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
-                  <input type="date" value={res.date||''} onChange={e=>onEdit('date',e.target.value)}
+                  <input type="date" value={res.date || ''} onChange={e => onEdit('date', e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
-                {res.type!=='sales' && (
+                {res.type !== 'sales' && (
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">المبلغ</label>
-                    <input type="number" value={res.amount||''} onChange={e=>onEdit('amount',e.target.value)}
+                    <input type="number" value={res.amount || ''} onChange={e => onEdit('amount', e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                   </div>
                 )}
-                {res.type!=='sales' && (
+                {res.type !== 'sales' && (
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">البند المحاسبي</label>
-                    <select value={res.transType||''} onChange={e=>onEdit('transType',e.target.value)}
+                    <select value={res.transType || ''} onChange={e => onEdit('transType', e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                       <option value="">— اختر —</option>
-                      {TRANS_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      {TRANS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                 )}
-                {res.type!=='sales' && (
+                {res.type !== 'sales' && (
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">مصدر الدفع</label>
-                    <select value={res.paySource||'custody'} onChange={e=>onEdit('paySource',e.target.value)}
+                    <select value={res.paySource || 'custody'} onChange={e => onEdit('paySource', e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                       <option value="cash">💵 الصندوق</option>
                       <option value="bank">🏦 البنك / مدى</option>
@@ -286,36 +288,51 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onEdit, timeAgo, TRAN
                     </select>
                   </div>
                 )}
-                {res.type==='sales' && (
+                {res.type === 'sales' && (
                   <>
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">مبيعات كاش</label>
-                      <input type="number" value={res.cashSales||''} onChange={e=>onEdit('cashSales',e.target.value)}
+                      <input type="number" value={res.cashSales || ''} onChange={e => onEdit('cashSales', e.target.value)}
                         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                     </div>
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">مبيعات شبكة</label>
-                      <input type="number" value={res.networkSales||''} onChange={e=>onEdit('networkSales',e.target.value)}
+                      <input type="number" value={res.networkSales || ''} onChange={e => onEdit('networkSales', e.target.value)}
                         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                     </div>
                   </>
                 )}
                 <div className="col-span-2">
                   <label className="text-xs text-slate-400 block mb-1">الوصف</label>
-                  <input value={res.description||''} onChange={e=>onEdit('description',e.target.value)}
+                  <input value={res.description || ''} onChange={e => onEdit('description', e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
               </div>
             </details>
 
-            <button onClick={onApprove} disabled={busy}
-              className="w-full py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-              {doc._state==='approving'
-                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ الاعتماد...</span></>
-                : '✓ اعتماد وحفظ في الدفتر'
-              }
-            </button>
+            {/* Action buttons */}
+            <div className="flex gap-2 pt-1">
+              <button onClick={onApprove} disabled={busy}
+                className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
+                {doc._state === 'approving'
+                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
+                  : '✓ اعتماد وحفظ'
+                }
+              </button>
+              <button onClick={onReject} disabled={busy}
+                className="px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
+                {doc._state === 'rejecting' ? '...' : '✕ رد'}
+              </button>
+            </div>
           </div>
+        )}
+
+        {/* Reject button for non-analyzed docs */}
+        {doc.status === 'uploaded' && doc._state !== 'analyzing' && (
+          <button onClick={onReject} disabled={busy}
+            className="w-full py-2 bg-slate-50 text-slate-500 border border-slate-200 rounded-xl text-sm font-medium hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50">
+            ✕ رد المستند
+          </button>
         )}
       </div>
     </div>
