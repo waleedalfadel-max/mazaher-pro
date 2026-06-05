@@ -39,7 +39,7 @@ export default function CashierDashboard() {
 
   async function init() {
     const { data: proj } = await supabase
-      .from('projects').select('id').eq('name', 'مزاهر-برو').maybeSingle()
+      .from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
     if (proj) { setProjectId(proj.id); loadToday(proj.id) }
   }
 

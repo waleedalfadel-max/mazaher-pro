@@ -34,10 +34,10 @@ export default function Layout({ children }) {
       <aside className={`${sidebarOpen ? 'w-64' : 'w-16'} transition-all duration-300 bg-slate-900 flex flex-col shrink-0`}>
         {/* Logo */}
         <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-700">
-          <div className="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-lg shrink-0">م</div>
+          <div className="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-lg shrink-0">ت</div>
           {sidebarOpen && (
             <div>
-              <div className="text-white font-bold text-sm leading-tight">مزاهر برو</div>
+              <div className="text-white font-bold text-sm leading-tight">تحسيب برو</div>
               <div className="text-slate-400 text-xs">نظام المحاسبة</div>
             </div>
           )}

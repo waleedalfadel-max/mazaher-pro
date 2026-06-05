@@ -30,7 +30,7 @@ export default function JournalLedger() {
 
   async function init() {
     const { data: proj } = await supabase
-      .from('projects').select('id').eq('name', 'مزاهر-برو').single()
+      .from('projects').select('id').eq('name', 'تحسيب-برو').single()
     if (proj) { setProjectId(proj.id); await load(proj.id, filter) }
     setLoading(false)
   }

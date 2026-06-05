@@ -21,7 +21,7 @@ export default function Reports() {
 
   async function load() {
     setLoading(true)
-    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر-برو').single()
+    const { data: proj } = await supabase.from('projects').select('id').eq('name','تحسيب-برو').single()
     if (!proj) { setLoading(false); return }
 
     const [{ data: sales }, { data: ledger }] = await Promise.all([

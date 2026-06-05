@@ -63,7 +63,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function init() {
       try {
-        const { data: proj } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').maybeSingle()
+        const { data: proj } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
         if (!proj) { setLoading(false); setBalances({ cash: 0, bank: 0, custody: 0 }); return }
         setPid(proj.id)
         const r = getRange('month')
@@ -143,6 +143,7 @@ export default function Dashboard() {
       <div>
         <h1 className="text-2xl font-bold text-slate-800">لوحة التحكم</h1>
         <p className="text-slate-500 text-sm mt-1">مرحباً — {roleLabel} | مقهى ديوانية مزاهر</p>
+
       </div>
 
       {/* Current Balances — all time, not period-filtered */}

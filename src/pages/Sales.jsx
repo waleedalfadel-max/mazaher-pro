@@ -15,7 +15,7 @@ export default function Sales() {
   useEffect(() => { init() }, [])
 
   async function init() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').single()
+    const { data: proj } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').single()
     if (!proj) { setLoading(false); return }
     setProjectId(proj.id)
     await load(proj.id, filter)

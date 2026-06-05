@@ -66,7 +66,7 @@ export default function Ledger() {
   useEffect(() => { init() }, [])
 
   async function init() {
-    const { data } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').single()
+    const { data } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').single()
     if (data) { setProjectId(data.id); await load(data.id) }
     setLoading(false)
   }

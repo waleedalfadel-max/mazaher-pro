@@ -47,8 +47,8 @@ export default function Login() {
       <div className="w-full max-w-sm">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-500 rounded-2xl flex items-center justify-center text-white text-3xl font-bold mx-auto mb-4 shadow-lg">م</div>
-          <h1 className="text-2xl font-bold text-white">مزاهر برو</h1>
+          <div className="w-16 h-16 bg-blue-500 rounded-2xl flex items-center justify-center text-white text-3xl font-bold mx-auto mb-4 shadow-lg">ت</div>
+          <h1 className="text-2xl font-bold text-white">تحسيب برو</h1>
           <p className="text-slate-400 mt-1 text-sm">نظام المحاسبة المتكامل</p>
         </div>
 

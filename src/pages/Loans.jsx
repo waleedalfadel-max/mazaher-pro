@@ -15,7 +15,7 @@ export default function Loans() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر-برو').single()
+    const { data: proj } = await supabase.from('projects').select('id').eq('name','تحسيب-برو').single()
     if (!proj) { setLoading(false); return }
 
     const { data: ledger } = await supabase.from('ledger_entries')
