@@ -17,7 +17,7 @@ export default function UsersManagement() {
   function confirmSave() {
     if (!editing) return
     const { role, value } = editing
-    if (!/^\d{4}$/.test(value)) { setErr('PIN يجب أن يكون 4 أرقام'); return }
+    if (!/^\d{5}$/.test(value)) { setErr('PIN يجب أن يكون 5 أرقام'); return }
     // Make sure PIN isn't already used by another role
     const conflict = ROLES.find(r => r !== role && pins[r] === value)
     if (conflict) { setErr(`هذا الـ PIN مستخدم بالفعل لـ ${ROLE_LABELS[conflict]}`); return }
@@ -49,7 +49,7 @@ export default function UsersManagement() {
                 <div>
                   <div className="font-semibold text-slate-800">{ROLE_LABELS[role]}</div>
                   <div className="text-xs text-slate-400 font-mono mt-0.5">
-                    PIN الحالي: <span className="text-slate-600">••••</span>
+                    PIN الحالي: <span className="text-slate-600">•••••</span>
                   </div>
                 </div>
               </div>
@@ -64,14 +64,14 @@ export default function UsersManagement() {
             {editing?.role === role && (
               <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
                 <div>
-                  <label className="text-xs text-slate-500 block mb-1">PIN الجديد (4 أرقام)</label>
+                  <label className="text-xs text-slate-500 block mb-1">PIN الجديد (5 أرقام)</label>
                   <input
-                    type="password" inputMode="numeric" maxLength={4}
-                    placeholder="••••"
+                    type="password" inputMode="numeric" maxLength={5}
+                    placeholder="•••••"
                     value={editing.value}
                     onChange={e => {
                       setErr('')
-                      setEditing(ed => ({ ...ed, value: e.target.value.replace(/\D/g, '').slice(0, 4) }))
+                      setEditing(ed => ({ ...ed, value: e.target.value.replace(/\D/g, '').slice(0, 5) }))
                     }}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 tracking-widest"
                     autoFocus
