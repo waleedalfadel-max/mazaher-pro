@@ -30,6 +30,7 @@ export default function CashierDashboard() {
   const [preview, setPreview]         = useState(null)
   const [uploading, setUploading]     = useState(false)
   const [invoiceDone, setInvoiceDone] = useState(false)
+  const [invoiceType, setInvoiceType] = useState('')
   const [invoiceErr, setInvoiceErr]   = useState('')
   const [dragOver, setDragOver]       = useState(false)
   const inputRef = useRef()
@@ -105,21 +106,43 @@ export default function CashierDashboard() {
     try {
       const base64 = await toBase64(file)
       const result = await analyzeDocument(base64, file.type, file.name)
-      const amount = Number(result.amount) || 0
 
-      const { error: e1 } = await supabase.from('ledger_entries').insert({
-        project_id:   projectId,
-        date:         result.date,
-        type:         result.transType || '🛒 مصروفات تشغيلية',
-        description:  result.description || file.name,
-        cash_out:     amount,
-        cash_in: 0, bank_in: 0, bank_out: 0, custody_in: 0, custody_out: 0,
-        vat_amount:   Number(result.vatAmount) || 0,
-        total_amount: amount,
-        status:       'auto',
-        file_url:     '',
-      })
-      if (e1) throw new Error(e1.message)
+      if (result.type === 'sales') {
+        // تقرير مبيعات → يحفظ في sales + قيدين في الدفتر
+        const cash    = Number(result.cashSales)    || 0
+        const network = Number(result.networkSales) || 0
+        const { error: e1 } = await supabase.from('sales').insert({
+          project_id:    projectId,
+          date:          result.date,
+          cash_sales:    cash,
+          network_sales: network,
+          description:   'تقرير POS — كاشير',
+        })
+        if (e1) throw new Error(e1.message)
+        const entries = []
+        if (cash > 0)    entries.push({ project_id: projectId, date: result.date, type: '💵 مبيعات كاش',   description: 'مبيعات كاش — POS',   cash_in: cash,    cash_out: 0, bank_in: 0, bank_out: 0, custody_in: 0, custody_out: 0, total_amount: cash,    status: 'auto' })
+        if (network > 0) entries.push({ project_id: projectId, date: result.date, type: '🏦 مبيعات شبكة', description: 'مبيعات شبكة — POS', cash_in: 0,       cash_out: 0, bank_in: network, bank_out: 0, custody_in: 0, custody_out: 0, total_amount: network, status: 'auto' })
+        if (entries.length) {
+          const { error: e2 } = await supabase.from('ledger_entries').insert(entries)
+          if (e2) throw new Error(e2.message)
+        }
+      } else {
+        // فاتورة مصروف → تخصم من الصندوق
+        const amount = Number(result.amount) || 0
+        const { error: e1 } = await supabase.from('ledger_entries').insert({
+          project_id:   projectId,
+          date:         result.date,
+          type:         result.transType || '🛒 مصروفات تشغيلية',
+          description:  result.description || file.name,
+          cash_out:     amount,
+          cash_in: 0, bank_in: 0, bank_out: 0, custody_in: 0, custody_out: 0,
+          vat_amount:   Number(result.vatAmount) || 0,
+          total_amount: amount,
+          status:       'auto',
+          file_url:     '',
+        })
+        if (e1) throw new Error(e1.message)
+      }
 
       await supabase.from('documents').insert({
         project_id:      projectId,
@@ -131,7 +154,9 @@ export default function CashierDashboard() {
         analysis_result: result,
       })
 
-      setInvoiceDone(true); setFile(null); setPreview(null)
+      setInvoiceDone(true)
+      setInvoiceType(result.type === 'sales' ? 'sales' : 'expense')
+      setFile(null); setPreview(null)
     } catch(e) { setInvoiceErr(e.message) }
     finally { setUploading(false) }
   }
@@ -220,9 +245,12 @@ export default function CashierDashboard() {
         {invoiceDone ? (
           <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center space-y-2">
             <div className="text-4xl">✅</div>
-            <p className="text-green-800 font-semibold">تم تسجيل الفاتورة وخصمها من الصندوق</p>
-            <button onClick={() => setInvoiceDone(false)}
-              className="text-xs text-green-700 underline">رفع فاتورة أخرى</button>
+            {invoiceType === 'sales'
+              ? <p className="text-green-800 font-semibold">تم تسجيل تقرير المبيعات — كاش → الصندوق · شبكة → البنك</p>
+              : <p className="text-green-800 font-semibold">تم تسجيل الفاتورة وخصمها من الصندوق</p>
+            }
+            <button onClick={() => { setInvoiceDone(false); setInvoiceType('') }}
+              className="text-xs text-green-700 underline">رفع مستند آخر</button>
           </div>
         ) : !file ? (
           <div
@@ -236,7 +264,7 @@ export default function CashierDashboard() {
             <div className="text-4xl mb-3">🧾</div>
             <p className="text-sm font-medium text-slate-600">اسحب الفاتورة أو انقر للاختيار</p>
             <p className="text-xs text-slate-400 mt-1">JPG · PNG · PDF (حتى 4MB)</p>
-            <input ref={inputRef} type="file" accept="image/*,.pdf" className="hidden"
+            <input ref={inputRef} type="file" accept="image/*,.pdf" capture="environment" className="hidden"
               onChange={e => handleFile(e.target.files[0])} />
           </div>
         ) : (
