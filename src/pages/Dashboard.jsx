@@ -62,26 +62,38 @@ export default function Dashboard() {
 
   useEffect(() => {
     async function init() {
-      const { data: proj } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').single()
-      if (!proj) { setLoading(false); return }
-      setPid(proj.id)
-      const r = getRange('month')
-      await Promise.all([loadBalances(proj.id), loadStats(r, proj.id)])
+      try {
+        const { data: proj } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').maybeSingle()
+        if (!proj) { setLoading(false); setBalances({ cash: 0, bank: 0, custody: 0 }); return }
+        setPid(proj.id)
+        const r = getRange('month')
+        await Promise.all([loadBalances(proj.id), loadStats(r, proj.id)])
+      } catch(e) {
+        console.error('init error:', e)
+        setBalances({ cash: 0, bank: 0, custody: 0 })
+        setLoading(false)
+      }
     }
     init()
   }, [])
 
   async function loadBalances(projectId) {
-    const { data } = await supabase.from('ledger_entries')
-      .select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out')
-      .eq('project_id', projectId)
-      .neq('status', 'cancelled')
-    if (!data) return
-    setBalances({
-      cash:    data.reduce((s, r) => s + (r.cash_in    || 0) - (r.cash_out    || 0), 0),
-      bank:    data.reduce((s, r) => s + (r.bank_in    || 0) - (r.bank_out    || 0), 0),
-      custody: data.reduce((s, r) => s + (r.custody_in || 0) - (r.custody_out || 0), 0),
-    })
+    try {
+      const { data, error } = await supabase.from('ledger_entries')
+        .select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out')
+        .eq('project_id', projectId)
+        .neq('status', 'cancelled')
+      if (error) throw error
+      const rows = data || []
+      setBalances({
+        cash:    rows.reduce((s, r) => s + (r.cash_in    || 0) - (r.cash_out    || 0), 0),
+        bank:    rows.reduce((s, r) => s + (r.bank_in    || 0) - (r.bank_out    || 0), 0),
+        custody: rows.reduce((s, r) => s + (r.custody_in || 0) - (r.custody_out || 0), 0),
+      })
+    } catch(e) {
+      console.error('loadBalances error:', e)
+      setBalances({ cash: 0, bank: 0, custody: 0 })
+    }
   }
 
   async function handlePeriod(key) {
