@@ -4,11 +4,12 @@ import { useAuth } from '../contexts/AuthContext'
 
 const NAV_ITEMS = [
   { to: '/',        label: 'لوحة التحكم',     icon: '📊', roles: ['owner', 'accountant'] },
-  { to: '/cashier', label: 'لوحة الكاشير',    icon: '💰', roles: ['cashier', 'owner', 'accountant'] },
+  { to: '/cashier', label: 'لوحة الكاشير',    icon: '💰', roles: ['cashier'] },
   { to: '/pending', label: 'مستندات جديدة',   icon: '🔔', roles: ['accountant'] },
   { to: '/ledger',  label: 'الدفتر',           icon: '📒', roles: ['owner', 'accountant'] },
   { to: '/sales',   label: 'المبيعات',         icon: '💵', roles: ['owner', 'accountant'] },
-  { to: '/journals',label: 'القيود المعلقة',  icon: '📋', roles: ['owner', 'accountant'] },
+  { to: '/journal',  label: 'سجل القيود',      icon: '📓', roles: ['owner', 'accountant'] },
+  { to: '/journals', label: 'القيود المعلقة', icon: '📋', roles: ['owner', 'accountant'] },
   { to: '/reports', label: 'التقارير',         icon: '📈', roles: ['owner', 'accountant'] },
   { to: '/loans',   label: 'القروض',           icon: '🏦', roles: ['owner', 'accountant'] },
   { to: '/invoice', label: 'رفع مستند',        icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },

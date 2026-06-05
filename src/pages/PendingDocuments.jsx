@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { analyzeDocument } from '../lib/claude'
 
@@ -17,25 +17,26 @@ const ROLE_COLOR = {
 }
 
 export default function PendingDocuments() {
-  const [docs, setDocs]           = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [projectId, setProjectId] = useState(null)
+  const [docs, setDocs]       = useState([])
+  const [loading, setLoading] = useState(true)
+  const pidRef                = useRef(null)   // always up-to-date project id for async callbacks
 
   useEffect(() => { init() }, [])
 
   async function init() {
     const { data: proj } = await supabase.from('projects').select('id').eq('name', 'مزاهر-برو').maybeSingle()
-    setProjectId(proj?.id || null)
+    pidRef.current = proj?.id || null
     await loadDocs(proj?.id || null)
     setLoading(false)
   }
 
   async function loadDocs(pid) {
-    const q = supabase.from('documents')
+    const projectId = pid ?? pidRef.current
+    let q = supabase.from('documents')
       .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by')
       .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
-    if (pid) q.eq('project_id', pid)
+    if (projectId) q = q.eq('project_id', projectId)
     const { data } = await q
     setDocs((data || []).map(d => ({
       ...d,
@@ -79,7 +80,7 @@ export default function PendingDocuments() {
 
       if (res.type === 'sales') {
         const { error: err } = await supabase.from('sales').insert({
-          project_id:    projectId,
+          project_id:    pidRef.current,
           date:          res.date,
           cash_sales:    Number(res.cashSales)    || 0,
           network_sales: Number(res.networkSales) || 0,
@@ -138,7 +139,7 @@ export default function PendingDocuments() {
           <h1 className="text-2xl font-bold text-slate-800">مستندات بانتظار المراجعة</h1>
           <p className="text-sm text-slate-500 mt-1">{docs.length} مستند</p>
         </div>
-        <button onClick={() => loadDocs(projectId)}
+        <button onClick={() => loadDocs(pidRef.current)}
           className="text-sm text-blue-600 hover:text-blue-800 font-medium">↻ تحديث</button>
       </div>
 
