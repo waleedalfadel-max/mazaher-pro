@@ -9,7 +9,7 @@ export default function Sales() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر').single()
+    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر-برو').single()
     if (!proj) { setLoading(false); return }
     const { data } = await supabase.from('sales')
       .select('*').eq('project_id', proj.id)

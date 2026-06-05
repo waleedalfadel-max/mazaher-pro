@@ -19,7 +19,7 @@ export default function PendingDocuments() {
   useEffect(() => { init() }, [])
 
   async function init() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر').maybeSingle()
+    const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر-برو').maybeSingle()
     setProjectId(proj?.id || null)
     await loadDocs(proj?.id || null)
     setLoading(false)

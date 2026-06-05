@@ -32,7 +32,7 @@ export default function InvoiceUpload() {
     setUploading(true); setError('')
     try {
       const base64 = await toBase64(file)
-      const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر').maybeSingle()
+      const { data: proj } = await supabase.from('projects').select('id').eq('name','مزاهر-برو').maybeSingle()
       const { error: err } = await supabase.from('documents').insert({
         project_id:  proj?.id || null,
         file_name:   file.name,

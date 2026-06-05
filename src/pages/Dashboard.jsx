@@ -32,7 +32,7 @@ export default function Dashboard() {
       const to    = now.toISOString().split('T')[0]
 
       const { data: proj } = await supabase
-        .from('projects').select('id').eq('name', 'مزاهر').single()
+        .from('projects').select('id').eq('name', 'مزاهر-برو').single()
       if (!proj) { setLoading(false); return }
 
       const pid = proj.id
