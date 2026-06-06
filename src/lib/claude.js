@@ -34,7 +34,12 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
 - networkSales: مبيعات الشبكة/البطاقة/المدى فقط — إذا لم يُذكر صراحةً ضعه 0
 - إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك networkSales صفراً
 - transType: يجب اختياره دائماً من القائمة — الافتراضي 🛒 مصروفات تشغيلية لأي فاتورة شراء
-- paySource: يجب تحديده دائماً — ${uploadedBy === 'cashier' ? 'الافتراضي cash لأن الكاشير يدفع من الصندوق النقدي' : 'الافتراضي custody للفواتير العادية'} ، bank للتحويلات والمدى
+- paySource: ثابت حسب من رفع المستند — ${
+  uploadedBy === 'cashier'    ? 'cash (الكاشير يدفع من الصندوق دائماً)' :
+  uploadedBy === 'purchasing' ? 'custody (مسؤول المشتريات يدفع من العهدة دائماً)' :
+  uploadedBy === 'owner'      ? 'bank (المالك يدفع من البنك دائماً)' :
+  'custody'
+} — لا تغيّره حتى لو ذُكر غيره في المستند
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
 - amount: الإجمالي شامل الضريبة
 - vatAmount: مبلغ الضريبة إذا مذكور صراحةً وإلا 0
