@@ -212,12 +212,12 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
           <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-red-700 text-sm">❌ {doc._error}</div>
         )}
 
-        {/* Image toggle */}
+        {/* File toggle */}
         <button onClick={onLoadImage} disabled={doc._loadingImg}
           className="flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">
           {doc._loadingImg
             ? <><div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"/>جارٍ التحميل...</>
-            : doc._showImage ? '🔼 إخفاء الصورة' : '👁 عرض الفاتورة'
+            : doc._showImage ? `🔼 إخفاء ${isImage ? 'الصورة' : 'الملف'}` : `👁 عرض ${isImage ? 'الصورة' : 'الملف PDF'}`
           }
         </button>
 
@@ -229,12 +229,22 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
           />
         )}
         {doc._showImage && doc._imageData && !isImage && (
-          <div className="bg-slate-50 rounded-xl p-6 text-center text-slate-400">
-            <span className="text-4xl">📄</span>
-            <p className="text-sm mt-2">{doc.file_name}</p>
+          <div className="space-y-2">
+            <iframe
+              src={`data:application/pdf;base64,${doc._imageData}`}
+              className="w-full rounded-xl border border-slate-200"
+              style={{ height: '500px' }}
+              title={doc.file_name}
+            />
+            <a
+              href={`data:application/pdf;base64,${doc._imageData}`}
+              download={doc.file_name}
+              className="flex items-center justify-center gap-2 w-full py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors"
+            >
+              ⬇️ تحميل الملف
+            </a>
           </div>
         )}
-
         {/* Analyze */}
         {doc.status === 'uploaded' && (
           <button onClick={onAnalyze} disabled={busy}
