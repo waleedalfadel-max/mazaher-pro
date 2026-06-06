@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
 export default function Layout({ children }) {
-  const { role, roleLabel, logout } = useAuth()
+  const { role, roleLabel, userName, logout } = useAuth()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [pendingCount, setPendingCount] = useState(0)
@@ -67,8 +67,8 @@ export default function Layout({ children }) {
         {/* Role Badge */}
         {sidebarOpen && (
           <div className="mx-3 mt-4 mb-2 px-3 py-2 bg-slate-800 rounded-lg">
-            <div className="text-slate-400 text-xs mb-1">الدور الحالي</div>
-            <div className="text-blue-400 font-medium text-sm">{roleLabel}</div>
+            <div className="text-white font-medium text-sm">{userName}</div>
+            <div className="text-blue-400 text-xs mt-0.5">{roleLabel}</div>
           </div>
         )}
 

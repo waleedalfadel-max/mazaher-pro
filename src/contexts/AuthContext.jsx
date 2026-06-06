@@ -1,11 +1,5 @@
-import React, { createContext, useContext, useState } from 'react'
-
-const DEFAULT_PINS = {
-  owner:      import.meta.env.VITE_PIN_OWNER      || '1111',
-  accountant: import.meta.env.VITE_PIN_ACCOUNTANT || '2222',
-  purchasing: import.meta.env.VITE_PIN_PURCHASING || '3333',
-  cashier:    import.meta.env.VITE_PIN_CASHIER    || '4444',
-}
+import React, { createContext, useContext, useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 
 export const ROLE_LABELS = {
   owner:      'المالك',
@@ -21,53 +15,54 @@ export const ROLE_ICONS = {
   cashier:    '💰',
 }
 
-function loadPins() {
-  try {
-    const stored = localStorage.getItem('mz_custom_pins')
-    if (stored) return { ...DEFAULT_PINS, ...JSON.parse(stored) }
-  } catch {}
-  return { ...DEFAULT_PINS }
-}
-
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
-  const [role, setRole]   = useState(() => sessionStorage.getItem('mz_role') || null)
-  const [pins, setPins]   = useState(loadPins)
+  const [role,     setRole]     = useState(() => sessionStorage.getItem('mz_role') || null)
+  const [userName, setUserName] = useState(() => sessionStorage.getItem('mz_user') || null)
+  const [projectId, setProjectId] = useState(null)
 
-  function login(pin) {
-    const map = {}
-    Object.entries(pins).forEach(([r, p]) => { map[p] = r })
-    const r = map[pin]
-    if (!r) return null
-    setRole(r)
-    sessionStorage.setItem('mz_role', r)
-    return r
+  useEffect(() => {
+    supabase.from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
+      .then(({ data }) => { if (data) setProjectId(data.id) })
+  }, [])
+
+  async function login(pin) {
+    const { data: proj } = await supabase
+      .from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
+    if (!proj) return null
+
+    const { data: user } = await supabase
+      .from('app_users')
+      .select('name, role')
+      .eq('project_id', proj.id)
+      .eq('pin', pin)
+      .maybeSingle()
+
+    if (!user) return null
+    setRole(user.role)
+    setUserName(user.name)
+    sessionStorage.setItem('mz_role', user.role)
+    sessionStorage.setItem('mz_user', user.name)
+    return user.role
   }
 
   function logout() {
     setRole(null)
+    setUserName(null)
     sessionStorage.removeItem('mz_role')
+    sessionStorage.removeItem('mz_user')
   }
-
-  function updatePin(roleName, newPin) {
-    const updated = { ...pins, [roleName]: newPin }
-    setPins(updated)
-    localStorage.setItem('mz_custom_pins', JSON.stringify(updated))
-  }
-
-  const canEdit      = role === 'accountant'
-  const isOwner      = role === 'owner'
-  const isPurchasing = role === 'purchasing'
-  const isCashier    = role === 'cashier'
 
   return (
     <AuthContext.Provider value={{
-      role,
-      roleLabel: ROLE_LABELS[role],
+      role, userName, projectId,
+      roleLabel:    ROLE_LABELS[role],
       login, logout,
-      canEdit, isOwner, isPurchasing, isCashier,
-      pins, updatePin,
+      canEdit:      role === 'accountant',
+      isOwner:      role === 'owner',
+      isPurchasing: role === 'purchasing',
+      isCashier:    role === 'cashier',
     }}>
       {children}
     </AuthContext.Provider>
