@@ -90,7 +90,7 @@ export default function PendingDocuments() {
         if (err) throw new Error(err.message)
       } else {
         const { error: err } = await supabase.from('ledger_entries').insert({
-          project_id:   projectId,
+          project_id:   pidRef.current,
           date:         res.date,
           type:         res.transType || '',
           description:  res.description || doc.file_name,
