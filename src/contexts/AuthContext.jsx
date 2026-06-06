@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState } from 'react'
 
 const DEFAULT_PINS = {
-  owner:      import.meta.env.VITE_PIN_OWNER      || '11111',
-  accountant: import.meta.env.VITE_PIN_ACCOUNTANT || '22222',
-  purchasing: import.meta.env.VITE_PIN_PURCHASING || '33333',
-  cashier:    import.meta.env.VITE_PIN_CASHIER    || '44444',
+  owner:      import.meta.env.VITE_PIN_OWNER      || '1111',
+  accountant: import.meta.env.VITE_PIN_ACCOUNTANT || '2222',
+  purchasing: import.meta.env.VITE_PIN_PURCHASING || '3333',
+  cashier:    import.meta.env.VITE_PIN_CASHIER    || '4444',
 }
 
 export const ROLE_LABELS = {

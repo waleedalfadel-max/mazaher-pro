@@ -17,7 +17,7 @@ export default function UsersManagement() {
   function confirmSave() {
     if (!editing) return
     const { role, value } = editing
-    if (!/^\d{5}$/.test(value)) { setErr('PIN يجب أن يكون 5 أرقام'); return }
+    if (!/^\d{4}$/.test(value)) { setErr('PIN يجب أن يكون 4 أرقام'); return }
     // Make sure PIN isn't already used by another role
     const conflict = ROLES.find(r => r !== role && pins[r] === value)
     if (conflict) { setErr(`هذا الـ PIN مستخدم بالفعل لـ ${ROLE_LABELS[conflict]}`); return }
@@ -66,8 +66,8 @@ export default function UsersManagement() {
                 <div>
                   <label className="text-xs text-slate-500 block mb-1">PIN الجديد (5 أرقام)</label>
                   <input
-                    type="password" inputMode="numeric" maxLength={5}
-                    placeholder="•••••"
+                    type="password" inputMode="numeric" maxLength={4}
+                    placeholder="••••"
                     value={editing.value}
                     onChange={e => {
                       setErr('')
