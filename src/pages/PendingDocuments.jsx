@@ -61,7 +61,7 @@ export default function PendingDocuments() {
     try {
       const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
       if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
-      const result = await analyzeDocument(data.file_data, doc.file_type, doc.file_name)
+      const result = await analyzeDocument(data.file_data, doc.file_type, doc.file_name, doc.uploaded_by)
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',

@@ -2,7 +2,7 @@
 const API_KEY = (import.meta.env.VITE_CLAUDE_API_KEY || '').trim().replace(/[^\x20-\x7E]/g, '')
 const MODEL   = (import.meta.env.VITE_CLAUDE_MODEL  || 'claude-opus-4-5').trim()
 
-export async function analyzeDocument(fileBase64, mimeType, fileName) {
+export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '') {
   const isImage = mimeType.startsWith('image/')
   const isPdf   = mimeType === 'application/pdf'
 
@@ -34,7 +34,7 @@ export async function analyzeDocument(fileBase64, mimeType, fileName) {
 - networkSales: مبيعات الشبكة/البطاقة/المدى فقط — إذا لم يُذكر صراحةً ضعه 0
 - إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك networkSales صفراً
 - transType: يجب اختياره دائماً من القائمة — الافتراضي 🛒 مصروفات تشغيلية لأي فاتورة شراء
-- paySource: يجب تحديده دائماً — الافتراضي custody للفواتير العادية، bank للتحويلات والمدى
+- paySource: يجب تحديده دائماً — ${uploadedBy === 'cashier' ? 'الافتراضي cash لأن الكاشير يدفع من الصندوق النقدي' : 'الافتراضي custody للفواتير العادية'} ، bank للتحويلات والمدى
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
 - amount: الإجمالي شامل الضريبة
 - vatAmount: مبلغ الضريبة إذا مذكور صراحةً وإلا 0
