@@ -35,9 +35,9 @@ export default function Reports() {
         .eq('project_id', proj.id).gte('date', from).lte('date', to),
       supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in')
         .eq('project_id', proj.id).gte('date', from).lte('date', to),
-      supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount')
+      supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,journal_number')
         .eq('project_id', proj.id).gte('date', from).lte('date', to).order('date'),
-      supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result')
+      supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number')
         .eq('project_id', proj.id).eq('status','approved')
         .gte('uploaded_at', from).lte('uploaded_at', to + 'T23:59:59')
         .order('uploaded_at'),
@@ -249,7 +249,7 @@ export default function Reports() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                 <thead>
                   <tr style={{ background: '#1e293b', color: '#fff' }}>
-                    {['#', 'التاريخ', 'النوع', 'الوصف', 'مدين', 'دائن'].map(h => (
+                    {['رقم القيد', 'التاريخ', 'النوع', 'الوصف', 'مدين', 'دائن'].map(h => (
                       <th key={h} style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
                     ))}
                   </tr>
@@ -260,10 +260,10 @@ export default function Reports() {
                     const credit = (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
                     return (
                       <tr key={e.id} style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0 ? '#fff' : '#f8fafc' }}>
-                        <td style={{ padding: '6px', color: '#94a3b8' }}>{i+1}</td>
+                        <td style={{ padding: '6px', color: '#2563eb', fontWeight: 'bold', fontFamily: 'monospace', fontSize: '10px' }}>{e.journal_number || '—'}</td>
                         <td style={{ padding: '6px' }}>{e.date}</td>
                         <td style={{ padding: '6px' }}>{e.type}</td>
-                        <td style={{ padding: '6px', maxWidth: '200px' }}>{e.description}</td>
+                        <td style={{ padding: '6px', maxWidth: '180px' }}>{e.description}</td>
                         <td style={{ padding: '6px', color: '#16a34a', fontWeight: debit > 0 ? 'bold' : 'normal' }}>{debit > 0 ? fmt(debit) : '—'}</td>
                         <td style={{ padding: '6px', color: '#dc2626', fontWeight: credit > 0 ? 'bold' : 'normal' }}>{credit > 0 ? fmt(credit) : '—'}</td>
                       </tr>
@@ -290,7 +290,7 @@ export default function Reports() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                 <thead>
                   <tr style={{ background: '#1e293b', color: '#fff' }}>
-                    {['#', 'اسم الملف', 'رُفع بواسطة', 'تاريخ الرفع', 'المبلغ'].map(h => (
+                    {['رقم القيد', 'اسم الملف', 'رُفع بواسطة', 'تاريخ الرفع', 'المبلغ'].map(h => (
                       <th key={h} style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
                     ))}
                   </tr>
@@ -303,7 +303,7 @@ export default function Reports() {
                       : (res?.amount || 0)
                     return (
                       <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0 ? '#fff' : '#f8fafc' }}>
-                        <td style={{ padding: '6px', color: '#94a3b8' }}>{i+1}</td>
+                        <td style={{ padding: '6px', color: '#2563eb', fontWeight: 'bold', fontFamily: 'monospace', fontSize: '10px' }}>{d.journal_number || '—'}</td>
                         <td style={{ padding: '6px' }}>{d.file_name}</td>
                         <td style={{ padding: '6px' }}>{ROLE_AR[d.uploaded_by] || d.uploaded_by}</td>
                         <td style={{ padding: '6px' }}>{fmtD(d.uploaded_at)}</td>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { nextJournalNumber } from '../lib/journalNumber'
 
 const TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
@@ -144,20 +145,22 @@ export default function Ledger() {
         .not('status', 'eq', 'cancelled')
       if (!entries || entries.length === 0) { setArchiveDone('لا توجد قيود لهذا اليوم'); setArchiving(false); return }
       const sum = (field) => entries.reduce((s, r) => s + (Number(r[field]) || 0), 0)
+      const jn  = await nextJournalNumber(projectId, '🔄 تحويل داخلي')
       const { error } = await supabase.from('ledger_entries').insert({
-        project_id:   projectId,
-        date:         archiveDate,
-        type:         '🔄 تحويل داخلي',
-        description:  `📦 قيد يومي موحد — ${archiveDate} (${entries.length} حركة)`,
-        cash_in:      sum('cash_in'),
-        cash_out:     sum('cash_out'),
-        bank_in:      sum('bank_in'),
-        bank_out:     sum('bank_out'),
-        custody_in:   sum('custody_in'),
-        custody_out:  sum('custody_out'),
-        total_amount: sum('total_amount'),
-        status:       'approved',
-        file_url:     '',
+        project_id:     projectId,
+        date:           archiveDate,
+        type:           '🔄 تحويل داخلي',
+        description:    `📦 قيد يومي موحد — ${archiveDate} (${entries.length} حركة)`,
+        cash_in:        sum('cash_in'),
+        cash_out:       sum('cash_out'),
+        bank_in:        sum('bank_in'),
+        bank_out:       sum('bank_out'),
+        custody_in:     sum('custody_in'),
+        custody_out:    sum('custody_out'),
+        total_amount:   sum('total_amount'),
+        status:         'approved',
+        file_url:       '',
+        journal_number: jn,
       })
       if (error) throw new Error(error.message)
       setArchiveDone(`تم إنشاء قيد موحد لـ ${entries.length} حركة`)
