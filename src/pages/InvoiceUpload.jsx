@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { uploadToStorage } from '../lib/storage'
 
-const MAX_SIZE_MB = 4
+const MAX_SIZE_MB = 10
 
 const ROLE_AR = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك' }
 
@@ -31,13 +32,14 @@ export default function InvoiceUpload() {
     if (!file) return
     setUploading(true); setError('')
     try {
-      const base64 = await toBase64(file)
       const { data: proj } = await supabase.from('projects').select('id').eq('name','تحسيب-برو').maybeSingle()
+      const pid = proj?.id || null
+      const fileUrl = await uploadToStorage(file, pid || 'shared')
       const { error: err } = await supabase.from('documents').insert({
-        project_id:  proj?.id || null,
+        project_id:  pid,
         file_name:   file.name,
         file_type:   file.type,
-        file_data:   base64,
+        file_url:    fileUrl,
         status:      'uploaded',
         uploaded_by: role,
       })
@@ -110,13 +112,4 @@ export default function InvoiceUpload() {
       {error && <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-red-700 text-sm font-medium">❌ {error}</div>}
     </div>
   )
-}
-
-function toBase64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader()
-    r.onload  = e => res(e.target.result.split(',')[1])
-    r.onerror = rej
-    r.readAsDataURL(file)
-  })
 }

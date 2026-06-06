@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { analyzeDocument } from '../lib/claude'
 import { nextJournalNumber } from '../lib/journalNumber'
+import { fetchAsBase64 } from '../lib/storage'
 
 const TRANS_TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
@@ -20,7 +21,7 @@ const ROLE_COLOR = {
 export default function PendingDocuments() {
   const [docs, setDocs]       = useState([])
   const [loading, setLoading] = useState(true)
-  const pidRef                = useRef(null)   // always up-to-date project id for async callbacks
+  const pidRef                = useRef(null)
 
   useEffect(() => { init() }, [])
 
@@ -34,7 +35,7 @@ export default function PendingDocuments() {
   async function loadDocs(pid) {
     const projectId = pid ?? pidRef.current
     let q = supabase.from('documents')
-      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by')
+      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,file_url')
       .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
     if (projectId) q = q.eq('project_id', projectId)
@@ -42,7 +43,7 @@ export default function PendingDocuments() {
     setDocs((data || []).map(d => ({
       ...d,
       _state: 'idle', _error: '', _edit: d.analysis_result || null,
-      _imageData: null, _showImage: false,
+      _imageData: null, _showImage: false, _isUrl: false,
     })))
   }
 
@@ -52,22 +53,38 @@ export default function PendingDocuments() {
 
   async function loadImage(doc) {
     if (doc._imageData) { updateDoc(doc.id, { _showImage: !doc._showImage }); return }
+
+    if (doc.file_url) {
+      updateDoc(doc.id, { _imageData: doc.file_url, _isUrl: true, _showImage: true })
+      return
+    }
+
+    // Legacy: fetch base64 from DB
     updateDoc(doc.id, { _loadingImg: true })
     const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
-    updateDoc(doc.id, { _imageData: data?.file_data || null, _showImage: true, _loadingImg: false })
+    updateDoc(doc.id, { _imageData: data?.file_data || null, _isUrl: false, _showImage: true, _loadingImg: false })
   }
 
   async function analyze(doc) {
     updateDoc(doc.id, { _state: 'analyzing', _error: '' })
     try {
-      const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
-      if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
-      const result = await analyzeDocument(data.file_data, doc.file_type, doc.file_name, doc.uploaded_by)
+      let fileBase64
+      if (doc.file_url) {
+        fileBase64 = await fetchAsBase64(doc.file_url)
+      } else {
+        const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
+        if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
+        fileBase64 = data.file_data
+      }
+
+      const result = await analyzeDocument(fileBase64, doc.file_type, doc.file_name, doc.uploaded_by)
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',
         analysis_result: result, _edit: result,
-        _imageData: data.file_data, _showImage: true,
+        _imageData: doc.file_url || fileBase64,
+        _isUrl: !!doc.file_url,
+        _showImage: true,
       })
     } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
   }
@@ -105,7 +122,6 @@ export default function PendingDocuments() {
         if (entries.length) {
           const { error: e2 } = await supabase.from('ledger_entries').insert(entries)
           if (e2) throw new Error(e2.message)
-          // ربط المستند بأول رقم قيد
           await supabase.from('documents').update({ journal_number: entries[0].journal_number }).eq('id', doc.id)
         }
       } else {
@@ -122,7 +138,7 @@ export default function PendingDocuments() {
           vat_amount:    Number(res.vatAmount) || 0,
           total_amount:  amount,
           status:        'approved',
-          file_url:      '',
+          file_url:      doc.file_url || '',
           journal_number: jn,
         })
         if (err) throw new Error(err.message)
@@ -188,13 +204,12 @@ export default function PendingDocuments() {
   )
 }
 
-function openPdf(base64, fileName) {
+function openPdfBlob(base64, fileName) {
   const bytes = atob(base64)
   const arr   = new Uint8Array(bytes.length)
   for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
   const blob = new Blob([arr], { type: 'application/pdf' })
-  const url  = URL.createObjectURL(blob)
-  window.open(url, '_blank')
+  window.open(URL.createObjectURL(blob), '_blank')
 }
 
 function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, timeAgo, TRANS_TYPES, ROLE_AR, ROLE_COLOR }) {
@@ -202,6 +217,14 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
   const busy    = ['analyzing','approving','rejecting'].includes(doc._state)
   const isImage = doc.file_type?.startsWith('image/')
   const fmt     = v => v ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
+
+  function openFile() {
+    if (doc._isUrl) {
+      window.open(doc._imageData, '_blank')
+    } else if (doc._imageData) {
+      openPdfBlob(doc._imageData, doc.file_name)
+    }
+  }
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -243,22 +266,20 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
         </button>
 
         {doc._showImage && doc._imageData && isImage && (
-          <img
-            src={`data:${doc.file_type};base64,${doc._imageData}`}
-            alt={doc.file_name}
-            className="w-full max-h-80 object-contain rounded-xl bg-slate-50 border border-slate-100"
-          />
+          doc._isUrl
+            ? <img src={doc._imageData} alt={doc.file_name}
+                className="w-full max-h-80 object-contain rounded-xl bg-slate-50 border border-slate-100"/>
+            : <img src={`data:${doc.file_type};base64,${doc._imageData}`} alt={doc.file_name}
+                className="w-full max-h-80 object-contain rounded-xl bg-slate-50 border border-slate-100"/>
         )}
+
         {doc._showImage && doc._imageData && !isImage && (
-          <div className="space-y-2">
-            <button
-              onClick={() => openPdf(doc._imageData, doc.file_name)}
-              className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
-            >
-              📄 فتح الملف
-            </button>
-          </div>
+          <button onClick={openFile}
+            className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
+            📄 فتح الملف
+          </button>
         )}
+
         {/* Analyze */}
         {doc.status === 'uploaded' && (
           <button onClick={onAnalyze} disabled={busy}

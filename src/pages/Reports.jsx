@@ -3,6 +3,14 @@ import { supabase } from '../lib/supabase'
 
 const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
 
+function cleanFileName(name) {
+  return (name || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function Row({ label, value, bold, indent, color }) {
   return (
     <div className={`flex justify-between items-center py-2 border-b border-slate-50 ${bold ? 'font-bold' : ''} ${indent ? 'pr-6' : ''}`}>
@@ -21,7 +29,8 @@ export default function Reports() {
   const [docs,     setDocs]     = useState([])
   const [loading,   setLoading]  = useState(false)
   const [exporting, setExporting] = useState(false)
-  const pdfRef = useRef()
+  const pdfRef      = useRef()
+  const docsRowRefs = useRef([])
 
   useEffect(() => { load() }, [])
 
@@ -37,7 +46,7 @@ export default function Reports() {
         .eq('project_id', proj.id).gte('date', from).lte('date', to),
       supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,journal_number')
         .eq('project_id', proj.id).gte('date', from).lte('date', to).order('date'),
-      supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number')
+      supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
         .eq('project_id', proj.id).eq('status','approved')
         .gte('uploaded_at', from).lte('uploaded_at', to + 'T23:59:59')
         .order('uploaded_at'),
@@ -80,16 +89,34 @@ export default function Reports() {
       const el = pdfRef.current
       el.style.display = 'block'
 
+      // Wait for browser layout
+      await new Promise(r => setTimeout(r, 150))
+
+      // Record positions of document rows that have file_url
+      const containerRect = el.getBoundingClientRect()
+      const containerH    = el.offsetHeight || containerRect.height
+      const linkData = docsRowRefs.current
+        .map((rowEl, i) => {
+          if (!rowEl || !docs[i]?.file_url) return null
+          const rowRect = rowEl.getBoundingClientRect()
+          return {
+            url:         docs[i].file_url,
+            topRatio:    (rowRect.top  - containerRect.top)  / containerH,
+            heightRatio: rowRect.height / containerH,
+          }
+        })
+        .filter(Boolean)
+
       const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
       el.style.display = 'none'
 
-      const imgData   = canvas.toDataURL('image/png')
-      const pdf       = new jsPDF('p', 'mm', 'a4')
-      const pageW     = pdf.internal.pageSize.getWidth()
-      const pageH     = pdf.internal.pageSize.getHeight()
-      const imgH      = (canvas.height * pageW) / canvas.width
+      const imgData = canvas.toDataURL('image/png')
+      const pdf     = new jsPDF('p', 'mm', 'a4')
+      const pageW   = pdf.internal.pageSize.getWidth()
+      const pageH   = pdf.internal.pageSize.getHeight()
+      const imgH    = (canvas.height * pageW) / canvas.width
 
-      let yOffset = 0
+      let yOffset   = 0
       let remaining = imgH
 
       while (remaining > 0) {
@@ -99,6 +126,20 @@ export default function Reports() {
         if (remaining > 0) pdf.addPage()
       }
 
+      // Add clickable link annotations over each document row
+      const totalPages = Math.ceil(imgH / pageH)
+      linkData.forEach(({ url, topRatio, heightRatio }) => {
+        const pdfYTotal = topRatio    * imgH
+        const pdfRowH   = Math.max(heightRatio * imgH, 5)
+        const pageNum   = Math.floor(pdfYTotal / pageH)
+        const pdfY      = pdfYTotal - pageNum * pageH
+
+        if (pageNum < totalPages) {
+          pdf.setPage(pageNum + 1)
+          pdf.link(0, pdfY, pageW, pdfRowH, { url })
+        }
+      })
+
       pdf.save(`تقرير-${from}-${to}.pdf`)
     } catch(e) { console.error(e) }
     setExporting(false)
@@ -106,6 +147,13 @@ export default function Reports() {
 
   const fmt  = v => (v||0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
   const fmtD = d => d ? new Date(d).toLocaleDateString('ar-SA') : ''
+
+  // Assign temp display numbers to entries without journal_number
+  let legacySeq = 0
+  const entriesDisplay = entries.map(e => ({
+    ...e,
+    _displayNum: e.journal_number || `OLD-${String(++legacySeq).padStart(3,'0')}`,
+  }))
 
   return (
     <div className="space-y-4">
@@ -241,10 +289,10 @@ export default function Reports() {
           </div>
 
           {/* Entries Table */}
-          {entries.length > 0 && (
+          {entriesDisplay.length > 0 && (
             <div style={{ marginBottom: '28px' }}>
               <div style={{ fontSize: '16px', fontWeight: 'bold', background: '#f1f5f9', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px' }}>
-                تفاصيل القيود ({entries.length} قيد)
+                تفاصيل القيود ({entriesDisplay.length} قيد)
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                 <thead>
@@ -255,12 +303,12 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((e, i) => {
+                  {entriesDisplay.map((e, i) => {
                     const debit  = (e.cash_in||0)  + (e.bank_in||0)  + (e.custody_in||0)
                     const credit = (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
                     return (
                       <tr key={e.id} style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0 ? '#fff' : '#f8fafc' }}>
-                        <td style={{ padding: '6px', color: '#2563eb', fontWeight: 'bold', fontFamily: 'monospace', fontSize: '10px' }}>{e.journal_number || '—'}</td>
+                        <td style={{ padding: '6px', color: e.journal_number ? '#2563eb' : '#94a3b8', fontWeight: 'bold', fontFamily: 'monospace', fontSize: '10px' }}>{e._displayNum}</td>
                         <td style={{ padding: '6px' }}>{e.date}</td>
                         <td style={{ padding: '6px' }}>{e.type}</td>
                         <td style={{ padding: '6px', maxWidth: '180px' }}>{e.description}</td>
@@ -290,21 +338,24 @@ export default function Reports() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                 <thead>
                   <tr style={{ background: '#1e293b', color: '#fff' }}>
-                    {['رقم القيد', 'اسم الملف', 'رُفع بواسطة', 'تاريخ الرفع', 'المبلغ'].map(h => (
+                    {['رقم القيد', 'اسم المستند', 'رُفع بواسطة', 'تاريخ الرفع', 'المبلغ'].map(h => (
                       <th key={h} style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {docs.map((d, i) => {
-                    const res = d.analysis_result
+                    const res    = d.analysis_result
                     const amount = res?.type === 'sales'
                       ? ((res.cashSales||0) + (res.networkSales||0))
                       : (res?.amount || 0)
                     return (
-                      <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0 ? '#fff' : '#f8fafc' }}>
+                      <tr key={i} ref={el => docsRowRefs.current[i] = el}
+                        style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0 ? '#fff' : '#f8fafc' }}>
                         <td style={{ padding: '6px', color: '#2563eb', fontWeight: 'bold', fontFamily: 'monospace', fontSize: '10px' }}>{d.journal_number || '—'}</td>
-                        <td style={{ padding: '6px' }}>{d.file_name}</td>
+                        <td style={{ padding: '6px', color: d.file_url ? '#2563eb' : '#1e293b', textDecoration: d.file_url ? 'underline' : 'none', cursor: d.file_url ? 'pointer' : 'default' }}>
+                          {cleanFileName(d.file_name)}
+                        </td>
                         <td style={{ padding: '6px' }}>{ROLE_AR[d.uploaded_by] || d.uploaded_by}</td>
                         <td style={{ padding: '6px' }}>{fmtD(d.uploaded_at)}</td>
                         <td style={{ padding: '6px', fontWeight: 'bold' }}>{amount > 0 ? fmt(amount) + ' ر.س' : '—'}</td>

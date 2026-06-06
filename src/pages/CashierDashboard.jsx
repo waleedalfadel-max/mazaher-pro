@@ -1,15 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-
-function toBase64(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader()
-    r.onload  = e => res(e.target.result.split(',')[1])
-    r.onerror = rej
-    r.readAsDataURL(file)
-  })
-}
+import { uploadToStorage } from '../lib/storage'
 
 export default function CashierDashboard() {
   const { role } = useAuth()
@@ -32,7 +24,7 @@ export default function CashierDashboard() {
     if (!f) return
     const allowed = ['image/jpeg','image/jpg','image/png','image/webp','image/heic','application/pdf']
     if (!allowed.includes(f.type)) { setError('صيغة غير مدعومة'); return }
-    if (f.size > 4 * 1024 * 1024) { setError('الحد الأقصى 4MB'); return }
+    if (f.size > 10 * 1024 * 1024) { setError('الحد الأقصى 10MB'); return }
     setFile(f); setDone(false); setError('')
     setPreview(f.type.startsWith('image/') ? URL.createObjectURL(f) : null)
   }
@@ -41,12 +33,12 @@ export default function CashierDashboard() {
     if (!file) return
     setUploading(true); setError('')
     try {
-      const base64 = await toBase64(file)
+      const fileUrl = await uploadToStorage(file, projectId || 'shared')
       const { error: err } = await supabase.from('documents').insert({
         project_id:  projectId,
         file_name:   file.name,
         file_type:   file.type,
-        file_data:   base64,
+        file_url:    fileUrl,
         status:      'uploaded',
         uploaded_by: role,
       })
@@ -87,7 +79,7 @@ export default function CashierDashboard() {
           <div className="text-5xl mb-4">📤</div>
           <p className="font-semibold text-slate-700 text-lg mb-2">اسحب الملف هنا أو انقر للاختيار</p>
           <p className="text-xs text-slate-400 mt-1">ملخص مبيعات أو فاتورة مشتريات</p>
-          <p className="text-xs text-slate-400 mt-0.5">JPG · PNG · PDF (حتى 4MB)</p>
+          <p className="text-xs text-slate-400 mt-0.5">JPG · PNG · PDF (حتى 10MB)</p>
           <input ref={inputRef} type="file" accept="image/*,.pdf" capture="environment" className="hidden"
             onChange={e => handleFile(e.target.files[0])} />
         </div>
