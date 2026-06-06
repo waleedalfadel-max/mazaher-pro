@@ -176,6 +176,15 @@ export default function PendingDocuments() {
   )
 }
 
+function openPdf(base64, fileName) {
+  const bytes = atob(base64)
+  const arr   = new Uint8Array(bytes.length)
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
+  const blob = new Blob([arr], { type: 'application/pdf' })
+  const url  = URL.createObjectURL(blob)
+  window.open(url, '_blank')
+}
+
 function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, timeAgo, TRANS_TYPES, ROLE_AR, ROLE_COLOR }) {
   const res     = doc._edit || doc.analysis_result
   const busy    = ['analyzing','approving','rejecting'].includes(doc._state)
@@ -230,19 +239,12 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
         )}
         {doc._showImage && doc._imageData && !isImage && (
           <div className="space-y-2">
-            <iframe
-              src={`data:application/pdf;base64,${doc._imageData}`}
-              className="w-full rounded-xl border border-slate-200"
-              style={{ height: '500px' }}
-              title={doc.file_name}
-            />
-            <a
-              href={`data:application/pdf;base64,${doc._imageData}`}
-              download={doc.file_name}
-              className="flex items-center justify-center gap-2 w-full py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors"
+            <button
+              onClick={() => openPdf(doc._imageData, doc.file_name)}
+              className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
             >
-              ⬇️ تحميل الملف
-            </a>
+              📄 فتح PDF في تبويب جديد
+            </button>
           </div>
         )}
         {/* Analyze */}
