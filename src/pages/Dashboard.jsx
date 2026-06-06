@@ -2,15 +2,20 @@ import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
-function BalanceCard({ label, icon, value, colorPos, colorNeg }) {
+function BalanceCard({ label, icon, value, bg, border, textColor }) {
   const neg = value < 0
+  const fmt = v => Math.abs(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
   return (
-    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
-      <div className="text-slate-400 text-xs mb-2">{icon} {label}</div>
-      <div className={`text-xl font-bold tabular-nums font-mono ${neg ? colorNeg : colorPos}`}>
-        {Math.abs(value).toLocaleString('ar-SA', { minimumFractionDigits: 2 })}
+    <div className={`rounded-xl p-5 border-2 transition-colors ${neg ? 'bg-red-50 border-red-200' : `${bg} ${border}`}`}>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-2xl">{icon}</span>
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
       </div>
-      <div className="text-slate-500 text-xs mt-0.5">ر.س</div>
+      <div className={`text-2xl font-bold font-mono tabular-nums ${neg ? 'text-red-600' : textColor}`}>
+        {fmt(value)}
+        <span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
+      </div>
+      {neg && <div className="text-xs text-red-500 font-semibold mt-2">⚠️ رصيد سالب</div>}
     </div>
   )
 }
@@ -151,14 +156,14 @@ export default function Dashboard() {
         <div>
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">الأرصدة الحالية</div>
           <div className="grid grid-cols-3 gap-3">
-            <BalanceCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    colorPos="text-green-400" colorNeg="text-red-400" />
-            <BalanceCard label="رصيد البنك"   icon="🏦" value={balances.bank}    colorPos="text-blue-400"  colorNeg="text-red-400" />
-            <BalanceCard label="رصيد العهدة"  icon="👤" value={balances.custody} colorPos="text-amber-400" colorNeg="text-red-400" />
+            <BalanceCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    bg="bg-green-50" border="border-green-200" textColor="text-green-700" />
+            <BalanceCard label="رصيد البنك"   icon="🏦" value={balances.bank}    bg="bg-blue-50"  border="border-blue-200"  textColor="text-blue-700"  />
+            <BalanceCard label="رصيد العهدة"  icon="👤" value={balances.custody} bg="bg-amber-50" border="border-amber-200" textColor="text-amber-700" />
           </div>
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-3">
-          {[0,1,2].map(i => <div key={i} className="bg-slate-800 rounded-xl p-4 border border-slate-700 h-20 animate-pulse"/>)}
+          {[0,1,2].map(i => <div key={i} className="bg-slate-100 rounded-xl p-4 border border-slate-200 h-24 animate-pulse"/>)}
         </div>
       )}
 

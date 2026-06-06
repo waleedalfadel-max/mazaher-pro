@@ -4,7 +4,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        arabic: ['Tajawal', 'Cairo', 'sans-serif'],
+        sans: ['Cairo', 'Tajawal', 'sans-serif'],
+        mono: ['IBM Plex Mono', 'ui-monospace', 'monospace'],
       },
       colors: {
         brand: {

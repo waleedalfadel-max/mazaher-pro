@@ -3,12 +3,17 @@
 @tailwind utilities;
 
 * {
-  font-family: 'Tajawal', sans-serif;
+  font-family: 'Cairo', 'Tajawal', sans-serif;
 }
 
 body {
   direction: rtl;
   background-color: #f1f5f9;
+}
+
+/* IBM Plex Mono for all numeric display elements */
+.font-mono, td.tabular-nums, .tabular-nums {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
 @layer utilities {

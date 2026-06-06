@@ -33,21 +33,27 @@ const TABS = [
 ]
 
 function BalanceSummary({ cash, bank, custody }) {
-  const fmt = v => (v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
-  const card = (label, value, posColor, negColor) => (
-    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
-      <div className="text-slate-400 text-xs mb-1">{label}</div>
-      <div className={`text-lg font-bold tabular-nums font-mono ${value < 0 ? negColor : posColor}`}>
-        {fmt(value)}
+  const fmt = v => Math.abs(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
+  const card = (label, icon, value, bg, border, textColor) => {
+    const neg = value < 0
+    return (
+      <div className={`rounded-xl p-5 border-2 ${neg ? 'bg-red-50 border-red-200' : `${bg} ${border}`}`}>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-2xl">{icon}</span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+        </div>
+        <div className={`text-2xl font-bold font-mono tabular-nums ${neg ? 'text-red-600' : textColor}`}>
+          {fmt(value)}<span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
+        </div>
+        {neg && <div className="text-xs text-red-500 font-semibold mt-2">⚠️ رصيد سالب</div>}
       </div>
-      <div className="text-slate-500 text-xs">ر.س</div>
-    </div>
-  )
+    )
+  }
   return (
     <div className="grid grid-cols-3 gap-3">
-      {card('🏧 رصيد الصندوق', cash,    'text-green-400', 'text-red-400')}
-      {card('🏦 رصيد البنك',   bank,    'text-blue-400',  'text-red-400')}
-      {card('👤 رصيد العهدة',  custody, 'text-amber-400', 'text-red-400')}
+      {card('رصيد الصندوق', '🏧', cash,    'bg-green-50', 'border-green-200', 'text-green-700')}
+      {card('رصيد البنك',   '🏦', bank,    'bg-blue-50',  'border-blue-200',  'text-blue-700')}
+      {card('رصيد العهدة',  '👤', custody, 'bg-amber-50', 'border-amber-200', 'text-amber-700')}
     </div>
   )
 }
@@ -63,6 +69,8 @@ export default function Ledger() {
   const [archiveDate, setArchiveDate] = useState('')
   const [archiving, setArchiving]     = useState(false)
   const [archiveDone, setArchiveDone] = useState('')
+  const [newRow, setNewRow]           = useState(null)
+  const [saving, setSaving]           = useState(false)
 
   useEffect(() => { init() }, [])
 
@@ -136,6 +144,33 @@ export default function Ledger() {
     load(projectId)
   }
 
+  async function saveNew() {
+    if (!newRow || !projectId) return
+    setSaving(true)
+    const jn = await nextJournalNumber(projectId, newRow.type)
+    const amounts = ['cash_in','cash_out','bank_in','bank_out','custody_in','custody_out']
+      .map(k => Number(newRow[k]) || 0)
+    const total = Math.max(...amounts)
+    const { error } = await supabase.from('ledger_entries').insert({
+      project_id:    projectId,
+      date:          newRow.date,
+      type:          newRow.type,
+      description:   newRow.description,
+      cash_in:       Number(newRow.cash_in)     || 0,
+      cash_out:      Number(newRow.cash_out)    || 0,
+      bank_in:       Number(newRow.bank_in)     || 0,
+      bank_out:      Number(newRow.bank_out)    || 0,
+      custody_in:    Number(newRow.custody_in)  || 0,
+      custody_out:   Number(newRow.custody_out) || 0,
+      total_amount:  total,
+      status:        'approved',
+      file_url:      '',
+      journal_number: jn,
+    })
+    setSaving(false)
+    if (!error) { setNewRow(null); load(projectId) }
+  }
+
   async function archiveDay() {
     if (!archiveDate || !projectId) return
     setArchiving(true); setArchiveDone('')
@@ -177,7 +212,13 @@ export default function Ledger() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-800">الدفتر</h1>
-        {!canEdit && <span className="text-xs bg-slate-100 text-slate-500 px-3 py-1 rounded-full">عرض فقط</span>}
+        {canEdit
+          ? <button onClick={() => setNewRow({ date: new Date().toISOString().split('T')[0], type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'' })}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2">
+              + إضافة قيد
+            </button>
+          : <span className="text-xs bg-slate-100 text-slate-500 px-3 py-1 rounded-full">عرض فقط</span>
+        }
       </div>
 
       {/* Balance Summary — all time */}
@@ -327,6 +368,52 @@ export default function Ledger() {
       {/* Row count */}
       {!loading && filteredRows.length > 0 && (
         <div className="text-xs text-slate-400 text-left">{filteredRows.length} صف معروض من {allRows.length} إجمالي</div>
+      )}
+
+      {/* New Entry Modal */}
+      {newRow && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-slate-800">إضافة قيد جديد</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">التاريخ</label>
+                <input type="date" value={newRow.date} onChange={e => setNewRow(r => ({ ...r, date: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">النوع</label>
+                <select value={newRow.type} onChange={e => setNewRow(r => ({ ...r, type: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <option value="">— اختر —</option>
+                  {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-500 block mb-1">الوصف</label>
+                <input value={newRow.description} onChange={e => setNewRow(r => ({ ...r, description: e.target.value }))}
+                  placeholder="اختياري" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              </div>
+              {['cash_out','cash_in','bank_out','bank_in','custody_out','custody_in'].map(k => (
+                <div key={k}>
+                  <label className="text-xs text-slate-500 block mb-1">
+                    {{ cash_out:'خرج صندوق', cash_in:'دخل صندوق', bank_out:'خرج بنك', bank_in:'دخل بنك', custody_out:'خرج عهدة', custody_in:'دخل عهدة' }[k]}
+                  </label>
+                  <input type="number" value={newRow[k]} onChange={e => setNewRow(r => ({ ...r, [k]: e.target.value }))}
+                    placeholder="0" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button onClick={saveNew} disabled={saving || !newRow.date || !newRow.type}
+                className="flex-1 bg-blue-600 text-white rounded-lg py-2.5 font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {saving ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></> : 'حفظ القيد'}
+              </button>
+              <button onClick={() => setNewRow(null)}
+                className="flex-1 bg-slate-100 text-slate-700 rounded-lg py-2.5 font-medium hover:bg-slate-200 transition-colors">إلغاء</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Edit Modal */}
