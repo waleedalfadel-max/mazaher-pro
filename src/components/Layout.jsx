@@ -1,25 +1,46 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-
-const NAV_ITEMS = [
-  { to: '/',        label: 'لوحة التحكم',     icon: '📊', roles: ['owner', 'accountant'] },
-  { to: '/cashier', label: 'لوحة الكاشير',    icon: '💰', roles: ['cashier'] },
-  { to: '/pending', label: 'مستندات جديدة',   icon: '🔔', roles: ['accountant'] },
-  { to: '/ledger',  label: 'الدفتر',           icon: '📒', roles: ['owner', 'accountant'] },
-  { to: '/sales',   label: 'المبيعات',         icon: '💵', roles: ['owner', 'accountant'] },
-  { to: '/journal',  label: 'سجل القيود',      icon: '📓', roles: ['owner', 'accountant'] },
-  { to: '/journals', label: 'القيود المعلقة', icon: '📋', roles: ['owner', 'accountant'] },
-  { to: '/reports', label: 'التقارير',         icon: '📈', roles: ['owner', 'accountant'] },
-  { to: '/loans',   label: 'القروض',           icon: '🏦', roles: ['owner', 'accountant'] },
-  { to: '/invoice', label: 'رفع مستند',        icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },
-  { to: '/users',   label: 'المستخدمون',       icon: '👥', roles: ['owner'] },
-]
+import { supabase } from '../lib/supabase'
 
 export default function Layout({ children }) {
   const { role, roleLabel, logout } = useAuth()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    if (role !== 'accountant') return
+    fetchPendingCount()
+    const timer = setInterval(fetchPendingCount, 30000)
+    return () => clearInterval(timer)
+  }, [role])
+
+  async function fetchPendingCount() {
+    const { data: proj } = await supabase
+      .from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
+    if (!proj) return
+    const { count } = await supabase
+      .from('documents')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['uploaded', 'analyzed'])
+      .eq('project_id', proj.id)
+    setPendingCount(count || 0)
+  }
+
+  const NAV_ITEMS = [
+    { to: '/',        label: 'لوحة التحكم',    icon: '📊', roles: ['owner', 'accountant'] },
+    { to: '/cashier', label: 'لوحة الكاشير',   icon: '💰', roles: ['cashier'] },
+    { to: '/pending', label: 'مستندات جديدة',  icon: '🔔', roles: ['accountant'], badge: pendingCount },
+    { to: '/ledger',  label: 'الدفتر',          icon: '📒', roles: ['owner', 'accountant'] },
+    { to: '/sales',   label: 'المبيعات',        icon: '💵', roles: ['owner', 'accountant'] },
+    { to: '/journal', label: 'سجل القيود',      icon: '📓', roles: ['owner', 'accountant'] },
+    { to: '/journals',label: 'القيود المعلقة', icon: '📋', roles: ['owner', 'accountant'] },
+    { to: '/reports', label: 'التقارير',        icon: '📈', roles: ['owner', 'accountant'] },
+    { to: '/loans',   label: 'القروض',          icon: '🏦', roles: ['owner', 'accountant'] },
+    { to: '/invoice', label: 'رفع مستند',       icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },
+    { to: '/users',   label: 'المستخدمون',      icon: '👥', roles: ['owner'] },
+  ]
 
   const visibleItems = NAV_ITEMS.filter(item => item.roles.includes(role))
 
@@ -67,7 +88,14 @@ export default function Layout({ children }) {
               }
             >
               <span className="text-base shrink-0">{item.icon}</span>
-              {sidebarOpen && <span>{item.label}</span>}
+              {sidebarOpen && (
+                <span className="flex-1">{item.label}</span>
+              )}
+              {item.badge > 0 && (
+                <span className={`${sidebarOpen ? '' : 'absolute right-1 top-1'} bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1`}>
+                  {item.badge}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

@@ -22,13 +22,17 @@ export async function analyzeDocument(fileBase64, mimeType, fileName) {
 
 مصادر الدفع: cash=صندوق نقدي | bank=بنك أو مدى أو تحويل | custody=عهدة موظف
 
-١. تقرير POS (مبيعات يومية كاش+شبكة):
+١. تقرير مبيعات (POS أو ملخص مبيعات يومي):
 {"type":"sales","date":"YYYY-MM-DD","cashSales":0.00,"networkSales":0.00,"totalSales":0.00}
 
-٢. أي مستند آخر (فاتورة، إيصال، سند، كشف):
+٢. أي مستند آخر (فاتورة شراء، إيصال، سند، كشف):
 {"type":"auto","date":"YYYY-MM-DD","amount":0.00,"vatAmount":0.00,"transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"وصف مختصر"}
 
 قواعد صارمة — لا استثناء:
+- إذا كان المستند ملخص مبيعات أو تقرير مبيعات استخدم النوع الأول (sales) دائماً
+- cashSales: مبيعات الكاش/النقد فقط — إذا لم يُذكر صراحةً ضعه 0
+- networkSales: مبيعات الشبكة/البطاقة/المدى فقط — إذا لم يُذكر صراحةً ضعه 0
+- إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك networkSales صفراً
 - transType: يجب اختياره دائماً من القائمة — الافتراضي 🛒 مصروفات تشغيلية لأي فاتورة شراء
 - paySource: يجب تحديده دائماً — الافتراضي custody للفواتير العادية، bank للتحويلات والمدى
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
