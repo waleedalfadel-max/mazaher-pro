@@ -4,6 +4,13 @@ import { analyzeDocument } from '../lib/claude'
 import { nextJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64 } from '../lib/storage'
 
+function readableName(doc, res) {
+  if (res?.description?.trim()) return res.description.trim()
+  // clean raw file name or Storage path
+  const base = (doc.file_name || '').split('/').pop()
+  return base.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim() || doc.file_name
+}
+
 const TRANS_TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
   '💳 قسط سيارة','💳 قسط شراء أرض','💳 قرض ١','💳 قرض ٢',
@@ -145,7 +152,8 @@ export default function PendingDocuments() {
         await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
       }
 
-      await supabase.from('documents').update({ status: 'approved' }).eq('id', doc.id)
+      const newName = readableName(doc, res)
+      await supabase.from('documents').update({ status: 'approved', file_name: newName }).eq('id', doc.id)
       setDocs(ds => ds.filter(d => d.id !== doc.id))
     } catch(e) { updateDoc(doc.id, { _state: 'analyzed', _error: e.message }) }
   }
