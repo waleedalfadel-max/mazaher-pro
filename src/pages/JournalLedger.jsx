@@ -38,7 +38,7 @@ export default function JournalLedger() {
   async function load(pid, f) {
     setLoading(true)
     let q = supabase.from('ledger_entries')
-      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_no,created_at')
+      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at')
       .eq('project_id', pid || projectId)
       .not('status', 'eq', 'cancelled')
       .order('date', { ascending: true })
@@ -216,7 +216,7 @@ export default function JournalLedger() {
           <table className="w-full text-sm">
             <thead className="bg-slate-800 text-white">
               <tr>
-                <th className="px-4 py-3 text-right text-xs font-semibold w-12">#</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold">رقم القيد</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold">التاريخ</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold">نوع الحركة</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold">البيان</th>
@@ -234,9 +234,9 @@ export default function JournalLedger() {
                 const credit = (r.cash_out || 0) + (r.bank_out || 0) + (r.custody_out || 0)
                 return (
                   <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 text-center">
-                      <span className="text-xs font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full tabular-nums">
-                        {idx + 1}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="text-xs font-bold font-mono text-blue-600">
+                        {r.journal_number || `#${idx + 1}`}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-mono text-xs">{r.date}</td>
