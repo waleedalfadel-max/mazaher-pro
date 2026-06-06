@@ -79,15 +79,26 @@ export default function PendingDocuments() {
       const pay    = res.paySource || 'custody'
 
       if (res.type === 'sales') {
-        const { error: err } = await supabase.from('sales').insert({
+        const cash    = Number(res.cashSales)    || 0
+        const network = Number(res.networkSales) || 0
+        const date    = res.date
+
+        const { error: e1 } = await supabase.from('sales').insert({
           project_id:    pidRef.current,
-          date:          res.date,
-          cash_sales:    Number(res.cashSales)    || 0,
-          network_sales: Number(res.networkSales) || 0,
+          date,
+          cash_sales:    cash,
+          network_sales: network,
           description:   'تقرير POS',
-          file_url:      '',
         })
-        if (err) throw new Error(err.message)
+        if (e1) throw new Error(e1.message)
+
+        const entries = []
+        if (cash > 0)    entries.push({ project_id: pidRef.current, date, type: '💵 مبيعات كاش',   description: 'مبيعات كاش — POS',   cash_in: cash,    cash_out: 0, bank_in: 0,       bank_out: 0, custody_in: 0, custody_out: 0, total_amount: cash,    status: 'approved' })
+        if (network > 0) entries.push({ project_id: pidRef.current, date, type: '🏦 مبيعات شبكة', description: 'مبيعات شبكة — POS', cash_in: 0,       cash_out: 0, bank_in: network, bank_out: 0, custody_in: 0, custody_out: 0, total_amount: network, status: 'approved' })
+        if (entries.length) {
+          const { error: e2 } = await supabase.from('ledger_entries').insert(entries)
+          if (e2) throw new Error(e2.message)
+        }
       } else {
         const { error: err } = await supabase.from('ledger_entries').insert({
           project_id:   pidRef.current,
