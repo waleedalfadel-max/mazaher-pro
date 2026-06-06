@@ -243,7 +243,7 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
               onClick={() => openPdf(doc._imageData, doc.file_name)}
               className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors"
             >
-              📄 فتح PDF في تبويب جديد
+              📄 فتح الملف
             </button>
           </div>
         )}
