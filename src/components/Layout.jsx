@@ -29,17 +29,16 @@ export default function Layout({ children }) {
   }
 
   const NAV_ITEMS = [
-    { to: '/',        label: 'لوحة التحكم',    icon: '📊', roles: ['owner', 'accountant'] },
-    { to: '/cashier', label: 'لوحة الكاشير',   icon: '💰', roles: ['cashier'] },
-    { to: '/pending', label: 'مستندات جديدة',  icon: '🔔', roles: ['accountant'], badge: pendingCount },
-    { to: '/ledger',  label: 'الدفتر',          icon: '📒', roles: ['owner', 'accountant'] },
-    { to: '/sales',   label: 'المبيعات',        icon: '💵', roles: ['owner', 'accountant'] },
-    { to: '/journal', label: 'سجل القيود',      icon: '📓', roles: ['owner', 'accountant'] },
-    { to: '/journals',label: 'القيود المعلقة', icon: '📋', roles: ['owner', 'accountant'] },
-    { to: '/reports', label: 'التقارير',        icon: '📈', roles: ['owner', 'accountant'] },
-    { to: '/loans',   label: 'القروض',          icon: '🏦', roles: ['owner', 'accountant'] },
-    { to: '/invoice', label: 'رفع مستند',       icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },
-    { to: '/users',   label: 'المستخدمون',      icon: '👥', roles: ['owner'] },
+    { to: '/',        label: 'لوحة التحكم',   icon: '📊', roles: ['owner', 'accountant'] },
+    { to: '/cashier', label: 'لوحة الكاشير',  icon: '💰', roles: ['cashier'] },
+    { to: '/reports', label: 'التقارير',       icon: '📈', roles: ['owner', 'accountant'] },
+    { to: '/sales',   label: 'المبيعات',       icon: '💵', roles: ['owner', 'accountant'] },
+    { to: '/ledger',  label: 'الدفتر',         icon: '📒', roles: ['owner', 'accountant'] },
+    { to: '/journal', label: 'سجل القيود',     icon: '📓', roles: ['owner', 'accountant'] },
+    { to: '/loans',   label: 'القروض',         icon: '🏦', roles: ['owner', 'accountant'] },
+    { to: '/pending', label: 'مستندات جديدة', icon: '🔔', roles: ['accountant'], badge: pendingCount },
+    { to: '/invoice', label: 'رفع مستند',      icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },
+    { to: '/users',   label: 'المستخدمون',     icon: '👥', roles: ['owner'] },
   ]
 
   const visibleItems = NAV_ITEMS.filter(item => item.roles.includes(role))
