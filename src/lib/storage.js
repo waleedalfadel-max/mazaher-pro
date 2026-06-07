@@ -14,13 +14,18 @@ export async function uploadToStorage(file, projectId) {
   return data.publicUrl
 }
 
+// Returns { base64, mimeType } — mimeType taken from the actual response, not what's stored in DB
 export async function fetchAsBase64(url) {
   const res  = await fetch(url)
+  if (!res.ok) throw new Error(`فشل تحميل الملف: ${res.status}`)
   const blob = await res.blob()
-  return new Promise((resolve, reject) => {
+  // Use the real Content-Type from the response (fixes image/jpg → image/jpeg issues)
+  const mimeType = blob.type || res.headers.get('content-type') || ''
+  const base64 = await new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onloadend = () => resolve(reader.result.split(',')[1])
     reader.onerror  = reject
     reader.readAsDataURL(blob)
   })
+  return { base64, mimeType }
 }

@@ -75,16 +75,19 @@ export default function PendingDocuments() {
   async function analyze(doc) {
     updateDoc(doc.id, { _state: 'analyzing', _error: '' })
     try {
-      let fileBase64
+      let fileBase64, fileMime
       if (doc.file_url) {
-        fileBase64 = await fetchAsBase64(doc.file_url)
+        const fetched = await fetchAsBase64(doc.file_url)
+        fileBase64 = fetched.base64
+        fileMime   = fetched.mimeType || doc.file_type   // prefer real MIME from response
       } else {
         const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
         if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
         fileBase64 = data.file_data
+        fileMime   = doc.file_type
       }
 
-      const result = await analyzeDocument(fileBase64, doc.file_type, doc.file_name, doc.uploaded_by)
+      const result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by)
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',

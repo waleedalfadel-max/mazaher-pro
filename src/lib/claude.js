@@ -2,13 +2,39 @@
 const API_KEY = (import.meta.env.VITE_CLAUDE_API_KEY || '').trim().replace(/[^\x20-\x7E]/g, '')
 const MODEL   = (import.meta.env.VITE_CLAUDE_MODEL  || 'claude-opus-4-5').trim()
 
+// Claude only accepts these image MIME types
+const VALID_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+
+function normalizeMimeType(mimeType, fileName = '') {
+  if (!mimeType) {
+    // infer from extension
+    const ext = (fileName.split('.').pop() || '').toLowerCase()
+    if (ext === 'pdf')               return 'application/pdf'
+    if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg'
+    if (ext === 'png')               return 'image/png'
+    if (ext === 'gif')               return 'image/gif'
+    if (ext === 'webp')              return 'image/webp'
+    return 'application/pdf'
+  }
+  const t = mimeType.toLowerCase().trim()
+  if (t === 'image/jpg')  return 'image/jpeg'
+  if (t === 'image/jfif') return 'image/jpeg'
+  if (t === 'image/pjpeg') return 'image/jpeg'
+  return t
+}
+
 export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '') {
-  const isImage = mimeType.startsWith('image/')
-  const isPdf   = mimeType === 'application/pdf'
+  const mime    = normalizeMimeType(mimeType, fileName)
+  const isImage = VALID_IMAGE_TYPES.includes(mime)
+  const isPdf   = mime === 'application/pdf'
+
+  if (!isImage && !isPdf) {
+    throw new Error(`نوع الملف غير مدعوم: ${mime} — المدعوم: PDF أو صورة (JPEG/PNG/WEBP/GIF)`)
+  }
 
   const contentBlock = isImage
-    ? { type: 'image', source: { type: 'base64', media_type: mimeType, data: fileBase64 } }
-    : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileBase64 } }
+    ? { type: 'image',    source: { type: 'base64', media_type: mime,               data: fileBase64 } }
+    : { type: 'document', source: { type: 'base64', media_type: 'application/pdf',  data: fileBase64 } }
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -63,7 +89,12 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
     }),
   })
 
-  if (!res.ok) throw new Error(`Claude API error: ${res.status}`)
+  if (!res.ok) {
+    let detail = ''
+    try { const e = await res.json(); detail = e?.error?.message || JSON.stringify(e) } catch {}
+    throw new Error(`Claude API error ${res.status}: ${detail}`)
+  }
+
   const data = await res.json()
   const text = data.content[0].text.trim()
 
