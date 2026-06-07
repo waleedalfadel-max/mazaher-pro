@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import logo from '../assets/logo.png'
 
 export default function Layout({ children }) {
   const { role, roleLabel, userName, logout } = useAuth()
@@ -55,14 +56,11 @@ export default function Layout({ children }) {
       {/* Sidebar */}
       <aside className={`${sidebarOpen ? 'w-64' : 'w-16'} transition-all duration-300 bg-slate-900 flex flex-col shrink-0`}>
         {/* Logo */}
-        <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-700">
-          <div className="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-lg shrink-0">ت</div>
-          {sidebarOpen && (
-            <div>
-              <div className="text-white font-bold text-sm leading-tight">تحسيب برو</div>
-              <div className="text-slate-400 text-xs">نظام المحاسبة</div>
-            </div>
-          )}
+        <div className="flex items-center justify-center px-4 py-4 border-b border-slate-700">
+          {sidebarOpen
+            ? <img src={logo} alt="تحسيب برو" className="h-14 w-auto object-contain" />
+            : <img src={logo} alt="تحسيب برو" className="h-9 w-9 object-contain" />
+          }
         </div>
 
         {/* Role Badge */}
