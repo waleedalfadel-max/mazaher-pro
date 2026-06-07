@@ -15,6 +15,7 @@ const QUICK_PERIODS = [
 
 const TABS = [
   { key: 'income',  label: 'قائمة الدخل',   icon: '📊' },
+  { key: 'vat',     label: 'ضريبة القيمة المضافة', icon: '🏛️' },
   { key: 'balance', label: 'الأرصدة',        icon: '⚖️' },
   { key: 'trial',   label: 'ميزان المراجعة', icon: '📋' },
 ]
@@ -117,7 +118,7 @@ export default function Reports() {
     ] = await Promise.all([
       supabase.from('sales').select('cash_sales,network_sales')
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate),
-      supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in')
+      supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate),
       supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,journal_number')
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate).order('date'),
@@ -146,7 +147,16 @@ export default function Reports() {
     const totalIn      = (ledgerFull||[]).reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
     const totalOut     = (ledgerFull||[]).reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
 
-    setData({ cashSales, networkSales, totalSales, opEx, fixEx, loans, draws, grossProfit, netProfit, netFlow, margin, totalIn, totalOut })
+    // حسابات ضريبة القيمة المضافة
+    const outputVat    = totalSales / 1.15 * 0.15                                          // ضريبة المخرجات من المبيعات
+    const netSales     = totalSales - outputVat                                             // المبيعات الصافية بدون ضريبة
+    const inputVat     = (ledger||[]).reduce((s,r) => s+(Number(r.vat_amount)||0), 0)      // ضريبة المدخلات من الفواتير
+    const netVat       = outputVat - inputVat                                               // الصافي المستحق لهيئة الزكاة
+
+    // تفصيل فواتير المشتريات التي تحتوي ضريبة
+    const vatEntries   = (ledgerFull||[]).filter(r => (r.vat_amount||0) > 0)
+
+    setData({ cashSales, networkSales, totalSales, opEx, fixEx, loans, draws, grossProfit, netProfit, netFlow, margin, totalIn, totalOut, outputVat, netSales, inputVat, netVat, vatEntries })
     setEntries(ledgerFull || [])
     setDocs(documents || [])
 
@@ -374,7 +384,114 @@ export default function Reports() {
             </div>
           )}
 
-          {/* ══════════════════ TAB 2: الأرصدة ══════════════════ */}
+          {/* ══════════════════ TAB 2: ضريبة القيمة المضافة ══════════════════ */}
+          {activeTab === 'vat' && (
+            <div className="space-y-4">
+
+              {/* بطاقات الملخص */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { label: 'ضريبة المخرجات', sub: 'المبيعات ÷ 1.15 × 15%', value: data.outputVat, icon: '📤', bg: '#f0fdf4', border: '#bbf7d0', color: '#16a34a' },
+                  { label: 'ضريبة المدخلات', sub: 'من فواتير المشتريات', value: data.inputVat,  icon: '📥', bg: '#fef2f2', border: '#fecaca', color: '#dc2626' },
+                  { label: 'الصافي المستحق', sub: data.netVat >= 0 ? 'تُدفع لهيئة الزكاة' : 'مبلغ قابل للاسترداد', value: Math.abs(data.netVat), icon: '🏛️',
+                    bg: data.netVat >= 0 ? '#fffbeb' : '#eff6ff',
+                    border: data.netVat >= 0 ? '#fde68a' : '#bfdbfe',
+                    color: data.netVat >= 0 ? '#b45309' : '#1d4ed8' },
+                ].map(c => (
+                  <div key={c.label} className="rounded-2xl p-5 shadow-sm" style={{ background: c.bg, border: `2px solid ${c.border}` }}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-2xl">{c.icon}</span>
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{c.label}</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mb-2">{c.sub}</div>
+                    <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: c.color }}>
+                      {(c.value||0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })}
+                      <span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* جدول الحساب التفصيلي */}
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={{ border: '1px solid #e8e5dc' }}>
+                <div className="px-5 py-4" style={{ background: NAVY }}>
+                  <h2 className="font-bold text-white text-sm">🏛️ تفاصيل حساب الضريبة</h2>
+                  <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+                </div>
+                <div className="p-5 space-y-0">
+                  <IncomeRow label="إجمالي المبيعات (شامل الضريبة)"   value={data.totalSales}  indent />
+                  <IncomeRow label="المبيعات الصافية (÷ 1.15)"         value={data.netSales}    indent />
+                  <IncomeRow label="ضريبة المخرجات (15%)"              value={data.outputVat}   bold  line color="#16a34a" />
+                  <IncomeRow label="ضريبة المدخلات (من الفواتير)"      value={-data.inputVat}   bold  color="#dc2626" />
+                  <IncomeRow label={data.netVat >= 0 ? 'صافي الضريبة المستحقة لهيئة الزكاة' : 'فائض ضريبي قابل للاسترداد'}
+                    value={data.netVat} bold line color={data.netVat >= 0 ? '#b45309' : '#1d4ed8'} />
+                </div>
+                {data.netVat > 0 && (
+                  <div className="mx-5 mb-5 p-3 rounded-xl text-sm font-semibold" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+                    ⚠️ يجب تحويل <span className="font-mono">{(data.netVat).toLocaleString('ar-SA', { minimumFractionDigits: 2 })}</span> ر.س لهيئة الزكاة والضريبة والجمارك
+                  </div>
+                )}
+                {data.netVat < 0 && (
+                  <div className="mx-5 mb-5 p-3 rounded-xl text-sm font-semibold" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af' }}>
+                    ✅ لديك فائض ضريبي بقيمة <span className="font-mono">{Math.abs(data.netVat).toLocaleString('ar-SA', { minimumFractionDigits: 2 })}</span> ر.س قابل للاسترداد
+                  </div>
+                )}
+              </div>
+
+              {/* فواتير المشتريات التي تحتوي ضريبة */}
+              {data.vatEntries?.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={{ border: '1px solid #e8e5dc' }}>
+                  <div className="px-5 py-4 flex items-center justify-between" style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca' }}>
+                    <h2 className="font-bold text-sm text-red-800">📥 فواتير المشتريات — ضريبة المدخلات ({data.vatEntries.length})</h2>
+                    <span className="font-mono font-bold text-red-700 text-sm">{fmt(data.inputVat)} ر.س</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
+                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>التاريخ</th>
+                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>البند</th>
+                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الوصف</th>
+                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>المبلغ الإجمالي</th>
+                          <th className="px-4 py-3 text-right text-xs font-bold text-red-600">الضريبة</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y" style={{ borderColor: '#f5f4f0' }}>
+                        {data.vatEntries.map((e, i) => {
+                          const total = (e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0)
+                          return (
+                            <tr key={e.id || i} className="hover:bg-amber-50/30 transition-colors">
+                              <td className="px-4 py-3 text-xs text-slate-500">{e.date}</td>
+                              <td className="px-4 py-3 text-xs font-medium" style={{ color: NAVY }}>{e.type || '—'}</td>
+                              <td className="px-4 py-3 text-xs text-slate-500 max-w-48 truncate">{e.description || '—'}</td>
+                              <td className="px-4 py-3 text-xs font-mono tabular-nums text-right" style={{ color: NAVY }}>{fmt(total)}</td>
+                              <td className="px-4 py-3 text-xs font-mono tabular-nums font-bold text-right text-red-600">{fmt(e.vat_amount)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: NAVY }}>
+                          <td colSpan={3} className="px-4 py-3 text-xs font-bold text-white">إجمالي ضريبة المدخلات</td>
+                          <td className="px-4 py-3 text-xs font-mono text-right font-bold" style={{ color: '#e5e7eb' }}>{fmt(data.vatEntries.reduce((s,e)=>{const t=(e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0);return s+t},0))}</td>
+                          <td className="px-4 py-3 text-xs font-mono tabular-nums font-bold text-right" style={{ color: '#fca5a5' }}>{fmt(data.inputVat)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {data.vatEntries?.length === 0 && (
+                <div className="bg-white rounded-2xl p-8 text-center text-slate-400 shadow-sm" style={{ border: '1px solid #e8e5dc' }}>
+                  <span className="text-3xl block mb-2">📭</span>
+                  <p className="text-sm">لا توجد فواتير مشتريات تحتوي ضريبة في هذه الفترة</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════════════════ TAB 3: الأرصدة ══════════════════ */}
           {activeTab === 'balance' && balances && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

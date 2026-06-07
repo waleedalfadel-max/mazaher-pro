@@ -41,8 +41,8 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
   'custody'
 } — لا تغيّره حتى لو ذُكر غيره في المستند
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
-- amount: الإجمالي شامل الضريبة
-- vatAmount: مبلغ الضريبة إذا مذكور صراحةً وإلا 0
+- amount: الإجمالي شامل الضريبة (المبلغ الكامل المدفوع)
+- vatAmount: مبلغ ضريبة القيمة المضافة (VAT/ضريبة) كما هو مذكور في الفاتورة — ابحث عن كلمات: ضريبة، VAT، الضريبة، ض.ق.م — إذا غير مذكور ضعه 0
 - JSON فقط بدون أي نص قبله أو بعده`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {

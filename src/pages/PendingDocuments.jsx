@@ -306,11 +306,22 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
             <div className="bg-slate-50 rounded-xl p-3 grid grid-cols-2 gap-2 text-sm">
               <div><span className="text-slate-400 text-xs block">التاريخ</span><span className="font-medium">{res.date}</span></div>
               {res.type === 'sales'
-                ? <div><span className="text-slate-400 text-xs block">الإجمالي</span><span className="font-semibold text-green-700">{fmt(res.totalSales || ((res.cashSales || 0) + (res.networkSales || 0)))} ر.س</span></div>
-                : <div><span className="text-slate-400 text-xs block">المبلغ</span><span className="font-semibold text-red-700">{fmt(res.amount)} ر.س</span></div>
+                ? <>
+                    <div><span className="text-slate-400 text-xs block">الإجمالي (شامل الضريبة)</span><span className="font-semibold text-green-700">{fmt(res.totalSales || ((res.cashSales || 0) + (res.networkSales || 0)))} ر.س</span></div>
+                    <div><span className="text-slate-400 text-xs block">ضريبة المخرجات (15%)</span><span className="font-semibold" style={{color:'#b45309'}}>{fmt(((res.totalSales || (res.cashSales||0)+(res.networkSales||0)) / 1.15 * 0.15))} ر.س</span></div>
+                    <div><span className="text-slate-400 text-xs block">المبيعات الصافية</span><span className="font-semibold text-slate-700">{fmt(((res.totalSales || (res.cashSales||0)+(res.networkSales||0)) / 1.15))} ر.س</span></div>
+                  </>
+                : <>
+                    <div><span className="text-slate-400 text-xs block">المبلغ الإجمالي</span><span className="font-semibold text-red-700">{fmt(res.amount)} ر.س</span></div>
+                    <div><span className="text-slate-400 text-xs block">ضريبة المدخلات</span>
+                      <span className="font-semibold" style={{color: res.vatAmount > 0 ? '#dc2626' : '#94a3b8'}}>
+                        {res.vatAmount > 0 ? `${fmt(res.vatAmount)} ر.س` : '—'}
+                      </span>
+                    </div>
+                    <div><span className="text-slate-400 text-xs block">البند</span><span className="font-medium">{res.transType || '—'}</span></div>
+                    <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{ cash: 'الصندوق', bank: 'البنك', custody: 'العهدة' }[res.paySource] || res.paySource || '—'}</span></div>
+                  </>
               }
-              {res.type !== 'sales' && <div><span className="text-slate-400 text-xs block">البند</span><span className="font-medium">{res.transType || '—'}</span></div>}
-              {res.type !== 'sales' && <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{ cash: 'الصندوق', bank: 'البنك', custody: 'العهدة' }[res.paySource] || res.paySource || '—'}</span></div>}
               {res.description && <div className="col-span-2"><span className="text-slate-400 text-xs block">الوصف</span><span>{res.description}</span></div>}
             </div>
 
@@ -326,9 +337,17 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
                 </div>
                 {res.type !== 'sales' && (
                   <div>
-                    <label className="text-xs text-slate-400 block mb-1">المبلغ</label>
+                    <label className="text-xs text-slate-400 block mb-1">المبلغ الإجمالي</label>
                     <input type="number" value={res.amount || ''} onChange={e => onEdit('amount', e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+                  </div>
+                )}
+                {res.type !== 'sales' && (
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">🏛️ ضريبة القيمة المضافة</label>
+                    <input type="number" value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)}
+                      placeholder="0.00"
+                      className="w-full border border-amber-200 bg-amber-50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
                   </div>
                 )}
                 {res.type !== 'sales' && (
