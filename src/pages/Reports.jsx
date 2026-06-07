@@ -120,7 +120,7 @@ export default function Reports() {
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate),
       supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate),
-      supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,journal_number')
+      supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,vat_amount,journal_number')
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate).order('date'),
       supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
         .eq('project_id', proj.id).eq('status','approved')
