@@ -147,7 +147,7 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-800">لوحة التحكم</h1>
-        <p className="text-slate-500 text-sm mt-1">مرحباً — {roleLabel} | مقهى ديوانية مزاهر</p>
+        <p className="text-slate-500 text-sm mt-1">مرحباً — {roleLabel} | تحسيب برو</p>
 
       </div>
 
