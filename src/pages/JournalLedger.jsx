@@ -25,6 +25,7 @@ export default function JournalLedger() {
   const [loading, setLoading]       = useState(true)
   const [projectId, setProjectId]   = useState(null)
   const [filter, setFilter]         = useState({ from: thisMonthStart, to: today })
+  const [search, setSearch]         = useState('')
 
   useEffect(() => { init() }, [])
 
@@ -38,7 +39,7 @@ export default function JournalLedger() {
   async function load(pid, f) {
     setLoading(true)
     let q = supabase.from('ledger_entries')
-      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at')
+      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url')
       .eq('project_id', pid || projectId)
       .not('status', 'eq', 'cancelled')
       .order('date', { ascending: true })
@@ -47,7 +48,25 @@ export default function JournalLedger() {
     if (f.from) q = q.gte('date', f.from)
     if (f.to)   q = q.lte('date', f.to)
     const { data } = await q
-    setRows(data || [])
+    const entries = data || []
+
+    // للقيود التي ليس لها file_url، نجلب من جدول documents بناءً على journal_number
+    const missing = entries.filter(r => !r.file_url && r.journal_number).map(r => r.journal_number)
+    let docMap = {}
+    if (missing.length) {
+      const { data: docs } = await supabase
+        .from('documents')
+        .select('journal_number,file_url,file_name')
+        .in('journal_number', missing)
+        .not('file_url', 'is', null)
+      if (docs) docs.forEach(d => { if (d.file_url) docMap[d.journal_number] = d })
+    }
+
+    setRows(entries.map(r =>
+      (!r.file_url && docMap[r.journal_number])
+        ? { ...r, file_url: docMap[r.journal_number].file_url, _doc_name: docMap[r.journal_number].file_name }
+        : r
+    ))
     setLoading(false)
   }
 
@@ -85,12 +104,22 @@ export default function JournalLedger() {
 
   const fmt = v => v ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
 
+  const visibleRows = useMemo(() => {
+    if (!search.trim()) return rows
+    const s = search.trim().toLowerCase()
+    return rows.filter(r =>
+      (r.description || '').toLowerCase().includes(s) ||
+      (r.type        || '').toLowerCase().includes(s) ||
+      (r.journal_number || '').toString().includes(s)
+    )
+  }, [rows, search])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">سجل القيود اليومية</h1>
-          <p className="text-sm text-slate-500 mt-1">{rows.length} قيد</p>
+          <p className="text-sm text-slate-500 mt-1">{visibleRows.length} قيد {search && rows.length !== visibleRows.length ? `(من ${rows.length})` : ''}</p>
         </div>
       </div>
 
@@ -109,23 +138,35 @@ export default function JournalLedger() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">من تاريخ</label>
-            <input type="date" value={filter.from}
-              onChange={e => setFilter(f => ({ ...f, from: e.target.value }))}
-              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+        <div className="flex flex-wrap gap-3 items-end justify-between">
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">من تاريخ</label>
+              <input type="date" value={filter.from}
+                onChange={e => setFilter(f => ({ ...f, from: e.target.value }))}
+                className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">إلى تاريخ</label>
+              <input type="date" value={filter.to}
+                onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
+                className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <button onClick={() => load(projectId, filter)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+              بحث
+            </button>
           </div>
           <div>
-            <label className="text-xs text-slate-500 block mb-1">إلى تاريخ</label>
-            <input type="date" value={filter.to}
-              onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
-              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            <label className="text-xs text-slate-500 block mb-1">بحث بالبيان أو رقم القيد</label>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="مثال: فاتورة كهرباء أو 15..."
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
           </div>
-          <button onClick={() => load(projectId, filter)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-            بحث
-          </button>
         </div>
       </div>
 
@@ -223,13 +264,16 @@ export default function JournalLedger() {
                 <th className="px-4 py-3 text-right text-xs font-semibold text-green-300">مدين (دخل)</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-red-300">دائن (خرج)</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold">الحالة</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold">مرفق</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {rows.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-12 text-slate-400">لا توجد قيود في هذه الفترة</td></tr>
+              {visibleRows.length === 0 && (
+                <tr><td colSpan={8} className="text-center py-12 text-slate-400">
+                  {search ? 'لا توجد نتائج للبحث' : 'لا توجد قيود في هذه الفترة'}
+                </td></tr>
               )}
-              {rows.map((r, idx) => {
+              {visibleRows.map((r, idx) => {
                 const debit  = (r.cash_in  || 0) + (r.bank_in  || 0) + (r.custody_in  || 0)
                 const credit = (r.cash_out || 0) + (r.bank_out || 0) + (r.custody_out || 0)
                 return (
@@ -259,17 +303,27 @@ export default function JournalLedger() {
                         {STATUS_LABEL[r.status] || r.status}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-center">
+                      {r.file_url
+                        ? <a href={r.file_url} target="_blank" rel="noreferrer"
+                            title={r._doc_name || 'فتح المستند'}
+                            className="inline-flex items-center justify-center w-7 h-7 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors text-base">
+                            📎
+                          </a>
+                        : <span className="text-slate-200 text-xs">—</span>
+                      }
+                    </td>
                   </tr>
                 )
               })}
             </tbody>
-            {rows.length > 0 && (
+            {visibleRows.length > 0 && (
               <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                 <tr>
-                  <td colSpan={4} className="px-4 py-3 text-sm font-bold text-slate-700 text-left">الإجمالي ({rows.length} قيد)</td>
+                  <td colSpan={4} className="px-4 py-3 text-sm font-bold text-slate-700 text-left">الإجمالي ({visibleRows.length} قيد)</td>
                   <td className="px-4 py-3 text-right font-bold text-green-700 tabular-nums">{fmt(totals.debit)}</td>
                   <td className="px-4 py-3 text-right font-bold text-red-600 tabular-nums">{fmt(totals.credit)}</td>
-                  <td/>
+                  <td/><td/>
                 </tr>
               </tfoot>
             )}

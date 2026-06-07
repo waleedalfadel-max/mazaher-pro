@@ -1,25 +1,36 @@
 import { supabase } from './supabase'
 
-function prefix(type) {
-  if (!type) return 'JV'
-  if (type.includes('مبيعات')) return 'POS'
-  if (type.includes('مصروفات')) return 'EXP'
-  return 'JV'
-}
-
-export async function nextJournalNumber(projectId, type) {
-  const pre  = prefix(type)
-  const year = new Date().getFullYear()
-
-  const { data } = await supabase
+export async function getOrCreateJournalNumber(projectId, date) {
+  // إذا وُجد قيد لهذا اليوم بنفس المشروع → أعد نفس الرقم
+  const { data: existing } = await supabase
     .from('ledger_entries')
     .select('journal_number')
     .eq('project_id', projectId)
-    .like('journal_number', `${pre}-${year}-%`)
+    .eq('date', date)
+    .like('journal_number', 'QD-%')
+    .not('journal_number', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+
+  if (existing?.[0]?.journal_number) return existing[0].journal_number
+
+  // قيد جديد لهذا اليوم → رقم تسلسلي جديد
+  const year = new Date(date).getFullYear()
+  const { data: last } = await supabase
+    .from('ledger_entries')
+    .select('journal_number')
+    .eq('project_id', projectId)
+    .like('journal_number', `QD-${year}-%`)
     .order('journal_number', { ascending: false })
     .limit(1)
 
-  const last = data?.[0]?.journal_number
-  const seq  = last ? (parseInt(last.split('-').pop()) || 0) + 1 : 1
-  return `${pre}-${year}-${String(seq).padStart(3, '0')}`
+  const seq = last?.[0]?.journal_number
+    ? (parseInt(last[0].journal_number.split('-').pop()) || 0) + 1
+    : 1
+  return `QD-${year}-${String(seq).padStart(3, '0')}`
+}
+
+// احتفظ بالاسم القديم للتوافق مع أي استخدام مباشر
+export async function nextJournalNumber(projectId, _type, date) {
+  return getOrCreateJournalNumber(projectId, date || new Date().toISOString().split('T')[0])
 }

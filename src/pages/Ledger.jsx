@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { nextJournalNumber } from '../lib/journalNumber'
+import { getOrCreateJournalNumber } from '../lib/journalNumber'
 
 const TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
@@ -66,9 +66,6 @@ export default function Ledger() {
   const [editRow, setEditRow]       = useState(null)
   const [activeTab, setActiveTab]   = useState('')
   const [filter, setFilter]         = useState({ from: '', to: '', type: '' })
-  const [archiveDate, setArchiveDate] = useState('')
-  const [archiving, setArchiving]     = useState(false)
-  const [archiveDone, setArchiveDone] = useState('')
   const [newRow, setNewRow]           = useState(null)
   const [saving, setSaving]           = useState(false)
 
@@ -147,7 +144,7 @@ export default function Ledger() {
   async function saveNew() {
     if (!newRow || !projectId) return
     setSaving(true)
-    const jn = await nextJournalNumber(projectId, newRow.type)
+    const jn = await getOrCreateJournalNumber(projectId, newRow.date)
     const amounts = ['cash_in','cash_out','bank_in','bank_out','custody_in','custody_out']
       .map(k => Number(newRow[k]) || 0)
     const total = Math.max(...amounts)
@@ -169,40 +166,6 @@ export default function Ledger() {
     })
     setSaving(false)
     if (!error) { setNewRow(null); load(projectId) }
-  }
-
-  async function archiveDay() {
-    if (!archiveDate || !projectId) return
-    setArchiving(true); setArchiveDone('')
-    try {
-      const { data: entries } = await supabase.from('ledger_entries')
-        .select('*').eq('project_id', projectId).eq('date', archiveDate)
-        .not('status', 'eq', 'cancelled')
-      if (!entries || entries.length === 0) { setArchiveDone('لا توجد قيود لهذا اليوم'); setArchiving(false); return }
-      const sum = (field) => entries.reduce((s, r) => s + (Number(r[field]) || 0), 0)
-      const jn  = await nextJournalNumber(projectId, '🔄 تحويل داخلي')
-      const { error } = await supabase.from('ledger_entries').insert({
-        project_id:     projectId,
-        date:           archiveDate,
-        type:           '🔄 تحويل داخلي',
-        description:    `📦 قيد يومي موحد — ${archiveDate} (${entries.length} حركة)`,
-        cash_in:        sum('cash_in'),
-        cash_out:       sum('cash_out'),
-        bank_in:        sum('bank_in'),
-        bank_out:       sum('bank_out'),
-        custody_in:     sum('custody_in'),
-        custody_out:    sum('custody_out'),
-        total_amount:   sum('total_amount'),
-        status:         'approved',
-        file_url:       '',
-        journal_number: jn,
-      })
-      if (error) throw new Error(error.message)
-      setArchiveDone(`تم إنشاء قيد موحد لـ ${entries.length} حركة`)
-      setArchiveDate('')
-      load(projectId)
-    } catch(e) { setArchiveDone(`خطأ: ${e.message}`) }
-    finally { setArchiving(false) }
   }
 
   const fmt = v => v != null && v !== 0 ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
@@ -266,32 +229,6 @@ export default function Ledger() {
           مسح الفلتر
         </button>
       </div>
-
-      {/* Archive section — accountant only */}
-      {canEdit && (
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">📦 أرشفة يوم — إنشاء قيد موحد</label>
-              <input type="date" value={archiveDate}
-                onChange={e => { setArchiveDate(e.target.value); setArchiveDone('') }}
-                className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-            </div>
-            <button onClick={archiveDay} disabled={!archiveDate || archiving}
-              className="px-4 py-2 bg-slate-700 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2">
-              {archiving
-                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
-                : '📦 إنشاء قيد موحد'
-              }
-            </button>
-            {archiveDone && (
-              <span className={`text-sm font-medium ${archiveDone.startsWith('خطأ') ? 'text-red-600' : 'text-green-600'}`}>
-                {archiveDone.startsWith('خطأ') ? '❌' : '✅'} {archiveDone}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto">

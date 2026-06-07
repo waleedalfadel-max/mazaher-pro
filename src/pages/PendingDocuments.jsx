@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { analyzeDocument } from '../lib/claude'
-import { nextJournalNumber } from '../lib/journalNumber'
+import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64 } from '../lib/storage'
 
 function readableName(doc, res) {
@@ -117,22 +117,21 @@ export default function PendingDocuments() {
         })
         if (e1) throw new Error(e1.message)
 
+        const jn = await getOrCreateJournalNumber(pidRef.current, date)
         const entries = []
         if (cash > 0) {
-          const jn = await nextJournalNumber(pidRef.current, '💵 مبيعات كاش')
-          entries.push({ project_id: pidRef.current, date, type: '💵 مبيعات كاش',   description: 'مبيعات كاش — POS',   cash_in: cash,    cash_out: 0, bank_in: 0,       bank_out: 0, custody_in: 0, custody_out: 0, total_amount: cash,    status: 'approved', journal_number: jn })
+          entries.push({ project_id: pidRef.current, date, type: '💵 مبيعات كاش',   description: 'مبيعات كاش — POS',   cash_in: cash,    cash_out: 0, bank_in: 0,       bank_out: 0, custody_in: 0, custody_out: 0, total_amount: cash,    status: 'approved', journal_number: jn, file_url: doc.file_url || '' })
         }
         if (network > 0) {
-          const jn = await nextJournalNumber(pidRef.current, '🏦 مبيعات شبكة')
-          entries.push({ project_id: pidRef.current, date, type: '🏦 مبيعات شبكة', description: 'مبيعات شبكة — POS', cash_in: 0,       cash_out: 0, bank_in: network, bank_out: 0, custody_in: 0, custody_out: 0, total_amount: network, status: 'approved', journal_number: jn })
+          entries.push({ project_id: pidRef.current, date, type: '🏦 مبيعات شبكة', description: 'مبيعات شبكة — POS', cash_in: 0,       cash_out: 0, bank_in: network, bank_out: 0, custody_in: 0, custody_out: 0, total_amount: network, status: 'approved', journal_number: jn, file_url: doc.file_url || '' })
         }
         if (entries.length) {
           const { error: e2 } = await supabase.from('ledger_entries').insert(entries)
           if (e2) throw new Error(e2.message)
-          await supabase.from('documents').update({ journal_number: entries[0].journal_number }).eq('id', doc.id)
+          await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
         }
       } else {
-        const jn = await nextJournalNumber(pidRef.current, res.transType)
+        const jn = await getOrCreateJournalNumber(pidRef.current, res.date)
         const { error: err } = await supabase.from('ledger_entries').insert({
           project_id:    pidRef.current,
           date:          res.date,

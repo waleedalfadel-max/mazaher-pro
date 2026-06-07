@@ -14,6 +14,7 @@ import PendingDocuments from './pages/PendingDocuments'
 import CashierDashboard from './pages/CashierDashboard'
 import UsersManagement from './pages/UsersManagement'
 import JournalLedger from './pages/JournalLedger'
+import JournalArchive from './pages/JournalArchive'
 
 function defaultPath(role) {
   if (role === 'purchasing') return '/invoice'
@@ -100,6 +101,12 @@ function AppRoutes() {
       <Route path="/journal" element={
         <ProtectedRoute allowedRoles={['owner', 'accountant']}>
           <JournalLedger />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/archive" element={
+        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+          <JournalArchive />
         </ProtectedRoute>
       } />
 

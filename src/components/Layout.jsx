@@ -33,13 +33,15 @@ export default function Layout({ children }) {
     { to: '/cashier', label: 'لوحة الكاشير',  icon: '💰', roles: ['cashier'] },
     { to: '/reports', label: 'التقارير',       icon: '📈', roles: ['owner', 'accountant'] },
     { to: '/sales',   label: 'المبيعات',       icon: '💵', roles: ['owner', 'accountant'] },
-    { to: '/ledger',  label: 'الدفتر',         icon: '📒', roles: ['owner', 'accountant'] },
-    { to: '/journal', label: 'سجل القيود',     icon: '📓', roles: ['owner', 'accountant'] },
-    { to: '/loans',   label: 'القروض',         icon: '🏦', roles: ['owner', 'accountant'] },
+    { to: '/ledger',  label: 'سجل الدفتر',    icon: '📒', roles: ['owner', 'accountant'] },
+    { to: '/journal',  label: 'سجل القيود',    icon: '📓', roles: ['owner', 'accountant'] },
+    { to: '/archive',  label: 'أرشيف القيود',  icon: '🗂️', roles: ['owner', 'accountant'] },
+    { to: '/loans',    label: 'القروض',        icon: '🏦', roles: ['owner', 'accountant'] },
     { to: '/pending', label: 'مستندات جديدة', icon: '🔔', roles: ['accountant'], badge: pendingCount },
-    { to: '/invoice', label: 'رفع مستند',      icon: '📤', roles: ['purchasing', 'accountant', 'owner', 'cashier'] },
     { to: '/users',   label: 'المستخدمون',     icon: '👥', roles: ['owner'] },
   ]
+
+  const UPLOAD_ROLES = ['purchasing', 'accountant', 'owner', 'cashier']
 
   const visibleItems = NAV_ITEMS.filter(item => item.roles.includes(role))
 
@@ -101,6 +103,21 @@ export default function Layout({ children }) {
 
         {/* Bottom */}
         <div className="px-2 pb-4 border-t border-slate-700 pt-3 space-y-1">
+          {UPLOAD_ROLES.includes(role) && (
+            <NavLink
+              to="/invoice"
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm font-bold w-full
+                ${isActive
+                  ? 'bg-emerald-700 text-white'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-white'
+                }`
+              }
+            >
+              <span className="text-base shrink-0">📤</span>
+              {sidebarOpen && <span className="flex-1">رفع مستند</span>}
+            </NavLink>
+          )}
           <button
             onClick={() => setSidebarOpen(v => !v)}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors text-sm"
