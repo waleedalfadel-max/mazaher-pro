@@ -49,22 +49,27 @@ export default function Login() {
 
   const DIGITS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
 
+  const NAVY = '#0f2444'
+  const GOLD = '#c9a227'
+
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4" dir="rtl">
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#f0ede6' }} dir="rtl">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <img src={logo} alt="تحسيب برو" className="h-24 w-auto mx-auto mb-4 drop-shadow-lg" />
-          <p className="text-slate-400 mt-1 text-sm">نظام المحاسبة المتكامل</p>
+          <img src={logo} alt="تحسيب برو" className="h-28 w-auto mx-auto mb-4 drop-shadow-lg" />
+          <p className="text-sm font-semibold" style={{ color: '#8a7a5a' }}>نظام المحاسبة المتكامل</p>
         </div>
 
-        <div className="bg-slate-800 rounded-2xl p-6 shadow-2xl">
-          <p className="text-center text-slate-300 mb-5 font-medium">أدخل رمز الدخول</p>
+        <div className="rounded-2xl p-6 shadow-xl" style={{ background: NAVY }}>
+          <p className="text-center text-sm font-semibold mb-5" style={{ color: 'rgba(255,255,255,0.7)' }}>
+            أدخل رمز الدخول
+          </p>
 
           <div className={`flex justify-center gap-4 mb-6 ${shake ? 'animate-bounce' : ''}`}>
             {[0,1,2,3].map(i => (
-              <div key={i} className={`w-4 h-4 rounded-full transition-all duration-200 ${
-                i < pin.length ? 'bg-blue-500 scale-110' : 'bg-slate-600'
-              }`}/>
+              <div key={i} className="w-4 h-4 rounded-full transition-all duration-200"
+                style={{ background: i < pin.length ? GOLD : 'rgba(255,255,255,0.15)', transform: i < pin.length ? 'scale(1.15)' : 'scale(1)' }}
+              />
             ))}
           </div>
 
@@ -72,7 +77,8 @@ export default function Login() {
 
           {loading && (
             <div className="flex justify-center mb-4">
-              <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/>
+              <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
+                style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
             </div>
           )}
 
@@ -82,13 +88,16 @@ export default function Login() {
                 key={i}
                 onClick={() => d === '⌫' ? handleBackspace() : d !== '' ? handleDigit(d) : null}
                 disabled={d === '' || loading}
-                className={`h-14 rounded-xl text-xl font-semibold transition-all duration-150 active:scale-95
-                  ${d === '' ? 'invisible' : ''}
-                  ${d === '⌫'
-                    ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                    : 'bg-slate-700 text-white hover:bg-blue-600 disabled:opacity-40'
-                  }
-                `}
+                className="h-14 rounded-xl text-xl font-semibold transition-all duration-150 active:scale-95"
+                style={{
+                  visibility: d === '' ? 'hidden' : 'visible',
+                  background: d === '⌫' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.1)',
+                  color: d === '⌫' ? 'rgba(255,255,255,0.5)' : '#fff',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  opacity: loading ? 0.5 : 1,
+                }}
+                onMouseEnter={e => { if (d && !loading) e.currentTarget.style.background = GOLD; e.currentTarget.style.color = NAVY }}
+                onMouseLeave={e => { e.currentTarget.style.background = d === '⌫' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = d === '⌫' ? 'rgba(255,255,255,0.5)' : '#fff' }}
               >
                 {d}
               </button>

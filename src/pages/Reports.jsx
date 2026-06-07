@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 
+const NAVY = '#0f2444'
+const GOLD = '#c9a227'
+
 const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
 
 const QUICK_PERIODS = [
@@ -11,9 +14,9 @@ const QUICK_PERIODS = [
 ]
 
 const TABS = [
-  { key: 'income',  label: 'قائمة الدخل',     icon: '📊' },
-  { key: 'balance', label: 'الأرصدة',          icon: '⚖️' },
-  { key: 'trial',   label: 'ميزان المراجعة',   icon: '📋' },
+  { key: 'income',  label: 'قائمة الدخل',   icon: '📊' },
+  { key: 'balance', label: 'الأرصدة',        icon: '⚖️' },
+  { key: 'trial',   label: 'ميزان المراجعة', icon: '📋' },
 ]
 
 function getPeriodRange(key) {
@@ -34,46 +37,59 @@ function getPeriodRange(key) {
 }
 
 function cleanFileName(name) {
-  return (name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return (name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim()
 }
 
-function Row({ label, value, bold, indent, color }) {
+function KpiCard({ label, value, icon, positive, neutral }) {
+  const fmt = v => Math.abs(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
+  const neg  = !neutral && value < 0
+  const color = neutral ? NAVY : neg ? '#dc2626' : positive ? '#16a34a' : NAVY
   return (
-    <div className={`flex justify-between items-center py-2.5 border-b border-slate-50 ${bold ? 'font-bold' : ''} ${indent ? 'pr-5' : ''}`}>
-      <span className={`text-sm ${color || 'text-slate-700'}`}>{label}</span>
-      <span className={`text-sm font-mono tabular-nums ${bold ? 'text-slate-900' : 'text-slate-600'} ${color || ''}`}>{value} ر.س</span>
+    <div className="bg-white rounded-2xl p-4 shadow-sm flex flex-col gap-2"
+      style={{ border: `1px solid #e8e5dc` }}>
+      <div className="flex items-center gap-2">
+        <span className="text-xl">{icon}</span>
+        <span className="text-xs font-semibold text-slate-500">{label}</span>
+      </div>
+      <div className="text-xl font-bold font-mono tabular-nums" style={{ color }}>
+        {fmt(value)}
+        <span className="text-xs font-normal text-slate-400 mr-1">ر.س</span>
+      </div>
+      {neg && <div className="text-xs text-red-500 font-semibold">⚠️ رصيد سالب</div>}
     </div>
   )
 }
 
-function BalCard({ label, icon, value, bg, border, textColor }) {
-  const neg = value < 0
-  const fmt = v => Math.abs(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
+function IncomeRow({ label, value, bold, indent, color, line }) {
+  const fmt = v => (v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
   return (
-    <div className={`rounded-xl p-5 border-2 ${neg ? 'bg-red-50 border-red-200' : `${bg} ${border}`}`}>
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-2xl">{icon}</span>
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+    <>
+      {line && <div className="border-t my-2" style={{ borderColor: '#e8e5dc' }} />}
+      <div className={`flex justify-between items-center py-2 ${indent ? 'pr-4' : ''}`}>
+        <span className={`text-sm ${bold ? 'font-bold' : 'font-medium'}`}
+          style={{ color: color || (bold ? NAVY : '#4b5563') }}>
+          {label}
+        </span>
+        <span className={`text-sm font-mono tabular-nums ${bold ? 'font-bold' : ''}`}
+          style={{ color: color || (bold ? NAVY : '#6b7280') }}>
+          {fmt(value)} ر.س
+        </span>
       </div>
-      <div className={`text-2xl font-bold font-mono tabular-nums ${neg ? 'text-red-600' : textColor}`}>
-        {fmt(value)}<span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
-      </div>
-      {neg && <div className="text-xs text-red-500 font-semibold mt-2">⚠️ رصيد سالب</div>}
-    </div>
+    </>
   )
 }
 
 export default function Reports() {
   const init = getPeriodRange('month')
-  const [from, setFrom]               = useState(init.from)
-  const [to,   setTo]                 = useState(init.to)
+  const [from, setFrom]                 = useState(init.from)
+  const [to,   setTo]                   = useState(init.to)
   const [activePeriod, setActivePeriod] = useState('month')
   const [activeTab,    setActiveTab]    = useState('income')
   const [data,     setData]     = useState(null)
   const [entries,  setEntries]  = useState([])
   const [docs,     setDocs]     = useState([])
   const [balances, setBalances] = useState(null)
-  const [loading,   setLoading]  = useState(false)
+  const [loading,  setLoading]  = useState(false)
   const [exporting, setExporting] = useState(false)
   const pdfRef      = useRef()
   const docsRowRefs = useRef([])
@@ -107,8 +123,7 @@ export default function Reports() {
         .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate).order('date'),
       supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
         .eq('project_id', proj.id).eq('status','approved')
-        .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59')
-        .order('uploaded_at'),
+        .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59').order('uploaded_at'),
       supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out')
         .eq('project_id', proj.id).lte('date', toDate).neq('status', 'cancelled')
     ])
@@ -160,8 +175,7 @@ export default function Reports() {
     setExporting(true)
     try {
       const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import('jspdf'),
-        import('html2canvas'),
+        import('jspdf'), import('html2canvas'),
       ])
       const el = pdfRef.current
       el.style.display = 'block'
@@ -174,13 +188,13 @@ export default function Reports() {
           const rowRect = rowEl.getBoundingClientRect()
           return { url: docs[i].file_url, topRatio: (rowRect.top - containerRect.top) / containerH, heightRatio: rowRect.height / containerH }
         }).filter(Boolean)
-      const canvas  = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
       el.style.display = 'none'
       const imgData = canvas.toDataURL('image/png')
-      const pdf     = new jsPDF('p', 'mm', 'a4')
-      const pageW   = pdf.internal.pageSize.getWidth()
-      const pageH   = pdf.internal.pageSize.getHeight()
-      const imgH    = (canvas.height * pageW) / canvas.width
+      const pdf   = new jsPDF('p', 'mm', 'a4')
+      const pageW = pdf.internal.pageSize.getWidth()
+      const pageH = pdf.internal.pageSize.getHeight()
+      const imgH  = (canvas.height * pageW) / canvas.width
       let yOffset = 0, remaining = imgH
       while (remaining > 0) {
         pdf.addImage(imgData, 'PNG', 0, -yOffset, pageW, imgH)
@@ -206,24 +220,42 @@ export default function Reports() {
 
   let legacySeq = 0
   const entriesDisplay = entries.map(e => ({
-    ...e,
-    _displayNum: e.journal_number || `OLD-${String(++legacySeq).padStart(3,'0')}`,
+    ...e, _displayNum: e.journal_number || `OLD-${String(++legacySeq).padStart(3,'0')}`,
   }))
 
-  return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-slate-800">التقارير المالية</h1>
+  const cardBorder = { border: '1px solid #e8e5dc' }
 
-      {/* Period selector */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 space-y-3">
-        <div className="flex flex-wrap gap-2">
+  return (
+    <div className="space-y-5">
+
+      {/* ── رأس الصفحة ── */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: NAVY }}>التقارير المالية</h1>
+          <p className="text-sm text-slate-500 mt-0.5">الفترة: {from} — {to}</p>
+        </div>
+        {data && activeTab === 'income' && (
+          <button onClick={exportPdf} disabled={exporting}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
+            style={{ background: NAVY, color: '#fff' }}>
+            {exporting
+              ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>جارٍ التصدير...</>
+              : <>📄 تصدير PDF</>
+            }
+          </button>
+        )}
+      </div>
+
+      {/* ── فلتر الفترة ── */}
+      <div className="bg-white rounded-2xl p-4 shadow-sm" style={cardBorder}>
+        <div className="flex flex-wrap gap-2 mb-3">
           {QUICK_PERIODS.map(p => (
             <button key={p.key} onClick={() => applyPreset(p.key)}
-              className={`px-4 py-1.5 text-sm rounded-lg font-semibold transition-colors ${
-                activePeriod === p.key
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-700'
-              }`}>
+              className="px-4 py-1.5 text-sm rounded-xl font-semibold transition-all"
+              style={activePeriod === p.key
+                ? { background: GOLD, color: NAVY }
+                : { background: '#f5f4f0', color: '#4b5563' }
+              }>
               {p.label}
             </button>
           ))}
@@ -233,228 +265,279 @@ export default function Reports() {
             <label className="text-xs text-slate-500 block mb-1">من تاريخ</label>
             <input type="date" value={from}
               onChange={e => { setFrom(e.target.value); setActivePeriod('custom') }}
-              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              className="border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2"
+              style={{ borderColor: '#d1c9b8', '--tw-ring-color': GOLD }} />
           </div>
           <div>
             <label className="text-xs text-slate-500 block mb-1">إلى تاريخ</label>
             <input type="date" value={to}
               onChange={e => { setTo(e.target.value); setActivePeriod('custom') }}
-              className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              className="border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2"
+              style={{ borderColor: '#d1c9b8', '--tw-ring-color': GOLD }} />
           </div>
           <button onClick={() => load(from, to)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors">
+            className="px-5 py-2 rounded-xl text-sm font-bold transition-all"
+            style={{ background: NAVY, color: '#fff' }}>
             تحديث
           </button>
-          {data && activeTab === 'income' && (
-            <button onClick={exportPdf} disabled={exporting}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2 mr-auto">
-              {exporting
-                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>جارٍ التصدير...</>
-                : '📄 تصدير PDF'
-              }
-            </button>
-          )}
         </div>
       </div>
 
-      {loading && <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/></div>}
+      {/* ── تحميل ── */}
+      {loading && (
+        <div className="flex justify-center py-16">
+          <div className="w-10 h-10 border-4 border-t-transparent rounded-full animate-spin"
+            style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
+        </div>
+      )}
 
       {data && !loading && (
         <>
-          {/* Tabs */}
-          <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+          {/* ── تبويبات ── */}
+          <div className="flex gap-1 p-1 rounded-2xl w-fit" style={{ background: '#e8e5dc' }}>
             {TABS.map(t => (
               <button key={t.key} onClick={() => setActiveTab(t.key)}
-                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${
-                  activeTab === t.key
-                    ? 'bg-white text-slate-800 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}>
+                className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold rounded-xl transition-all"
+                style={activeTab === t.key
+                  ? { background: '#fff', color: NAVY, boxShadow: '0 1px 4px rgba(15,36,68,0.1)' }
+                  : { color: '#6b7280' }
+                }>
                 <span>{t.icon}</span> {t.label}
               </button>
             ))}
           </div>
 
-          {/* ── Tab 1: قائمة الدخل ── */}
+          {/* ══════════════════ TAB 1: قائمة الدخل ══════════════════ */}
           {activeTab === 'income' && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-5">
-                <h2 className="font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100 flex items-center gap-2">
-                  <span>📊</span> قائمة الدخل
-                </h2>
-                <Row label="💵 مبيعات كاش"       value={fmt(data.cashSales)}    indent />
-                <Row label="🏦 مبيعات شبكة"      value={fmt(data.networkSales)} indent />
-                <Row label="إجمالي المبيعات"      value={fmt(data.totalSales)}   bold />
-                <div className="pt-2 mt-2 border-t border-slate-100">
-                  <Row label="🛒 مصروفات تشغيلية" value={`(${fmt(data.opEx)})`}  indent color="text-red-600" />
-                  <Row label="💰 مصروفات ثابتة"   value={`(${fmt(data.fixEx)})`} indent color="text-red-600" />
-                </div>
-                <Row label="مجمل الربح"   value={fmt(data.grossProfit)} bold color={data.grossProfit>=0?'text-green-700':'text-red-700'} />
-                <Row label="(-) الأقساط"  value={`(${fmt(data.loans)})`} indent color="text-red-600" />
-                <Row label="صافي الربح"   value={fmt(data.netProfit)}   bold color={data.netProfit>=0?'text-green-700':'text-red-700'} />
-                <Row label="(-) المسحوبات" value={`(${fmt(data.draws)})`} indent color="text-red-600" />
-                <Row label="صافي التدفق النقدي" value={fmt(data.netFlow)} bold color={data.netFlow>=0?'text-blue-700':'text-red-700'} />
-                <div className="mt-3 pt-3 border-t border-slate-100 flex justify-between">
-                  <span className="text-sm text-slate-500">هامش الربح الصافي</span>
-                  <span className={`text-sm font-bold font-mono ${Number(data.margin)>=0?'text-blue-600':'text-red-600'}`}>{data.margin}%</span>
-                </div>
+            <div className="space-y-4">
+
+              {/* KPI Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                <KpiCard label="إجمالي المبيعات"  value={data.totalSales}      icon="💵" positive />
+                <KpiCard label="إجمالي المصروفات" value={data.opEx+data.fixEx} icon="📤" />
+                <KpiCard label="مجمل الربح"        value={data.grossProfit}     icon="📊" positive={data.grossProfit>=0} />
+                <KpiCard label="صافي الربح"        value={data.netProfit}       icon="📈" positive={data.netProfit>=0} />
+                <KpiCard label="صافي التدفق"       value={data.netFlow}         icon="💧" positive={data.netFlow>=0} />
               </div>
 
-              <div className="space-y-3">
-                {[
-                  { label:'إجمالي المبيعات',  value:data.totalSales,      icon:'💵', bg:'bg-green-50',  border:'border-green-200',  text:'text-green-700'  },
-                  { label:'إجمالي المصروفات', value:data.opEx+data.fixEx, icon:'📤', bg:'bg-red-50',    border:'border-red-200',    text:'text-red-700'    },
-                  { label:'صافي الربح',        value:data.netProfit,        icon:'📈', bg:'bg-blue-50',   border:'border-blue-200',   text:'text-blue-700'   },
-                  { label:'الأقساط',           value:data.loans,            icon:'💳', bg:'bg-orange-50', border:'border-orange-200', text:'text-orange-700' },
-                  { label:'المسحوبات',          value:data.draws,            icon:'💼', bg:'bg-purple-50', border:'border-purple-200', text:'text-purple-700' },
-                ].map(c => (
-                  <div key={c.label} className={`${c.bg} border ${c.border} rounded-xl p-4 flex items-center justify-between`}>
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{c.icon}</span>
-                      <span className="text-sm font-semibold text-slate-700">{c.label}</span>
+              {/* Income Statement + Breakdown */}
+              <div className="grid md:grid-cols-2 gap-4">
+
+                {/* قائمة الدخل */}
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
+                  <div className="px-5 py-4" style={{ background: NAVY }}>
+                    <h2 className="font-bold text-white text-sm">📊 قائمة الدخل</h2>
+                    <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+                  </div>
+                  <div className="p-5">
+                    <IncomeRow label="مبيعات كاش"          value={data.cashSales}    indent />
+                    <IncomeRow label="مبيعات شبكة"         value={data.networkSales} indent />
+                    <IncomeRow label="إجمالي المبيعات"     value={data.totalSales}   bold line />
+                    <IncomeRow label="مصروفات تشغيلية"     value={-data.opEx}        indent color="#dc2626" />
+                    <IncomeRow label="مصروفات ثابتة"       value={-data.fixEx}       indent color="#dc2626" />
+                    <IncomeRow label="مجمل الربح"          value={data.grossProfit}  bold  line color={data.grossProfit>=0?'#16a34a':'#dc2626'} />
+                    <IncomeRow label="الأقساط"             value={-data.loans}       indent color="#dc2626" />
+                    <IncomeRow label="صافي الربح"          value={data.netProfit}    bold  line color={data.netProfit>=0?'#16a34a':'#dc2626'} />
+                    <IncomeRow label="المسحوبات"            value={-data.draws}       indent color="#dc2626" />
+                    <IncomeRow label="صافي التدفق النقدي"  value={data.netFlow}      bold  line color={data.netFlow>=0?'#1d4ed8':'#dc2626'} />
+                    <div className="mt-3 pt-3 flex justify-between items-center" style={{ borderTop: '1px solid #e8e5dc' }}>
+                      <span className="text-xs text-slate-500 font-medium">هامش الربح الصافي</span>
+                      <span className="text-sm font-bold font-mono" style={{ color: Number(data.margin)>=0 ? GOLD : '#dc2626' }}>
+                        {data.margin}%
+                      </span>
                     </div>
-                    <span className={`font-bold font-mono tabular-nums ${c.text}`}>{fmt(c.value)} ر.س</span>
+                  </div>
+                </div>
+
+                {/* بطاقات الملخص */}
+                <div className="space-y-3">
+                  {[
+                    { label:'إجمالي المبيعات',   value:data.totalSales,      icon:'💵', color:'#16a34a', bg:'#f0fdf4', border:'#bbf7d0' },
+                    { label:'المصروفات التشغيلية',value:data.opEx,            icon:'🛒', color:'#dc2626', bg:'#fef2f2', border:'#fecaca' },
+                    { label:'المصروفات الثابتة',  value:data.fixEx,           icon:'💰', color:'#b45309', bg:'#fffbeb', border:'#fde68a' },
+                    { label:'الأقساط',            value:data.loans,           icon:'💳', color:'#7c3aed', bg:'#f5f3ff', border:'#ddd6fe' },
+                    { label:'المسحوبات',           value:data.draws,           icon:'💼', color:'#0369a1', bg:'#f0f9ff', border:'#bae6fd' },
+                  ].map(c => (
+                    <div key={c.label} className="flex items-center justify-between px-4 py-3 rounded-xl"
+                      style={{ background: c.bg, border: `1px solid ${c.border}` }}>
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xl">{c.icon}</span>
+                        <span className="text-sm font-semibold" style={{ color: NAVY }}>{c.label}</span>
+                      </div>
+                      <span className="font-bold font-mono tabular-nums text-sm" style={{ color: c.color }}>
+                        {(c.value||0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })} ر.س
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════ TAB 2: الأرصدة ══════════════════ */}
+          {activeTab === 'balance' && balances && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { label:'رصيد الصندوق', icon:'🏧', value:balances.cash,    bg:'#f0fdf4', border:'#bbf7d0', color:'#16a34a' },
+                  { label:'رصيد البنك',   icon:'🏦', value:balances.bank,    bg:'#eff6ff', border:'#bfdbfe', color:'#1d4ed8' },
+                  { label:'رصيد العهدة',  icon:'👤', value:balances.custody, bg:'#fffbeb', border:'#fde68a', color:'#b45309' },
+                ].map(c => (
+                  <div key={c.label} className="rounded-2xl p-5 shadow-sm"
+                    style={{ background: c.bg, border: `2px solid ${c.border}` }}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-2xl">{c.icon}</span>
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{c.label}</span>
+                    </div>
+                    <div className="text-2xl font-bold font-mono tabular-nums"
+                      style={{ color: c.value < 0 ? '#dc2626' : c.color }}>
+                      {Math.abs(c.value || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })}
+                      <span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
+                    </div>
+                    {c.value < 0 && <div className="text-xs text-red-500 font-semibold mt-2">⚠️ رصيد سالب</div>}
                   </div>
                 ))}
               </div>
-            </div>
-          )}
 
-          {/* ── Tab 2: الأرصدة ── */}
-          {activeTab === 'balance' && balances && (
-            <div className="space-y-4">
-              <p className="text-xs text-slate-400">الأرصدة التراكمية حتى تاريخ {to}</p>
-              <div className="grid grid-cols-3 gap-4">
-                <BalCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    bg="bg-green-50" border="border-green-200" textColor="text-green-700" />
-                <BalCard label="رصيد البنك"   icon="🏦" value={balances.bank}    bg="bg-blue-50"  border="border-blue-200"  textColor="text-blue-700"  />
-                <BalCard label="رصيد العهدة"  icon="👤" value={balances.custody} bg="bg-amber-50" border="border-amber-200" textColor="text-amber-700" />
-              </div>
-
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-5">
-                <h2 className="font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100">ملخص الفترة ({from} — {to})</h2>
-                <Row label="إجمالي المدين (الدخل)"  value={fmt(data.totalIn)}                  bold color="text-green-700"/>
-                <Row label="إجمالي الدائن (الخروج)" value={fmt(data.totalOut)}                 bold color="text-red-700"/>
-                <Row label="صافي الفترة"              value={fmt(data.totalIn - data.totalOut)} bold color={data.totalIn>=data.totalOut?'text-blue-700':'text-red-700'} />
-                <div className="mt-4 pt-4 border-t border-slate-100">
-                  <Row label="إجمالي الأرصدة النقدية" value={fmt(balances.cash + balances.bank + balances.custody)} bold />
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
+                <div className="px-5 py-4" style={{ background: NAVY }}>
+                  <h2 className="font-bold text-white text-sm">ملخص الفترة</h2>
+                  <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+                </div>
+                <div className="p-5 space-y-0">
+                  <IncomeRow label="إجمالي المدين (الدخل)"   value={data.totalIn}                   bold color="#16a34a" />
+                  <IncomeRow label="إجمالي الدائن (الخروج)"  value={data.totalOut}                  bold color="#dc2626" />
+                  <IncomeRow label="صافي الفترة"             value={data.totalIn - data.totalOut}   bold line color={data.totalIn>=data.totalOut?'#1d4ed8':'#dc2626'} />
+                  <IncomeRow label="إجمالي الأرصدة النقدية"  value={balances.cash+balances.bank+balances.custody} bold line />
                 </div>
               </div>
             </div>
           )}
 
-          {/* ── Tab 3: ميزان المراجعة ── */}
+          {/* ══════════════════ TAB 3: ميزان المراجعة ══════════════════ */}
           {activeTab === 'trial' && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-                <h2 className="font-bold text-slate-800 flex items-center gap-2">📋 ميزان المراجعة</h2>
-                <span className="text-xs text-slate-400">{from} — {to}</span>
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
+              <div className="px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
+                <h2 className="font-bold text-white text-sm">📋 ميزان المراجعة</h2>
+                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</span>
               </div>
-              <table className="w-full text-sm">
-                <thead className="bg-slate-800 text-white">
-                  <tr>
-                    <th className="px-4 py-3 text-right text-xs font-semibold">البند</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-green-300">مدين</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-red-300">دائن</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-blue-300">الرصيد</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {trialBalance.length === 0 && (
-                    <tr><td colSpan={4} className="text-center py-10 text-slate-400">لا توجد بيانات في هذه الفترة</td></tr>
-                  )}
-                  {trialBalance.map((row, i) => {
-                    const net = row.debit - row.credit
-                    return (
-                      <tr key={i} className={`hover:bg-slate-50 ${i % 2 === 0 ? '' : 'bg-slate-50/50'}`}>
-                        <td className="px-4 py-3 font-medium text-slate-700">{row.type}</td>
-                        <td className="px-4 py-3 font-mono tabular-nums text-green-700 text-right">
-                          {row.debit > 0 ? fmt(row.debit) : '—'}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
+                      <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>البند</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold text-green-700">مدين</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold text-red-600">دائن</th>
+                      <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الرصيد</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y" style={{ '--tw-divide-opacity': 1, borderColor: '#f0ede6' }}>
+                    {trialBalance.length === 0 && (
+                      <tr><td colSpan={4} className="text-center py-12 text-slate-400">لا توجد بيانات في هذه الفترة</td></tr>
+                    )}
+                    {trialBalance.map((row, i) => {
+                      const net = row.debit - row.credit
+                      return (
+                        <tr key={i} className="transition-colors hover:bg-amber-50/40">
+                          <td className="px-4 py-3 font-medium text-sm" style={{ color: NAVY }}>{row.type}</td>
+                          <td className="px-4 py-3 font-mono tabular-nums text-green-700 text-right text-xs">
+                            {row.debit > 0 ? fmt(row.debit) : '—'}
+                          </td>
+                          <td className="px-4 py-3 font-mono tabular-nums text-red-600 text-right text-xs">
+                            {row.credit > 0 ? fmt(row.credit) : '—'}
+                          </td>
+                          <td className="px-4 py-3 font-mono tabular-nums font-bold text-right text-xs"
+                            style={{ color: net >= 0 ? '#1d4ed8' : '#dc2626' }}>
+                            {fmt(Math.abs(net))} {net < 0 ? '(دائن)' : net > 0 ? '(مدين)' : ''}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  {trialBalance.length > 0 && (
+                    <tfoot>
+                      <tr style={{ background: NAVY }}>
+                        <td className="px-4 py-3 text-sm font-bold text-white">الإجمالي</td>
+                        <td className="px-4 py-3 font-mono tabular-nums text-right text-xs font-bold" style={{ color: '#86efac' }}>
+                          {fmt(trialBalance.reduce((s,r) => s+r.debit,0))}
                         </td>
-                        <td className="px-4 py-3 font-mono tabular-nums text-red-600 text-right">
-                          {row.credit > 0 ? fmt(row.credit) : '—'}
+                        <td className="px-4 py-3 font-mono tabular-nums text-right text-xs font-bold" style={{ color: '#fca5a5' }}>
+                          {fmt(trialBalance.reduce((s,r) => s+r.credit,0))}
                         </td>
-                        <td className={`px-4 py-3 font-mono tabular-nums font-bold text-right ${net >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
-                          {fmt(Math.abs(net))} {net < 0 ? '(دائن)' : net > 0 ? '(مدين)' : ''}
+                        <td className="px-4 py-3 font-mono tabular-nums text-right text-xs font-bold" style={{ color: GOLD }}>
+                          {fmt(data.totalIn - data.totalOut)}
                         </td>
                       </tr>
-                    )
-                  })}
-                </tbody>
-                {trialBalance.length > 0 && (
-                  <tfoot>
-                    <tr className="bg-slate-800 text-white font-bold">
-                      <td className="px-4 py-3 text-sm">الإجمالي</td>
-                      <td className="px-4 py-3 font-mono tabular-nums text-green-300 text-right">{fmt(trialBalance.reduce((s,r) => s+r.debit,0))}</td>
-                      <td className="px-4 py-3 font-mono tabular-nums text-red-300   text-right">{fmt(trialBalance.reduce((s,r) => s+r.credit,0))}</td>
-                      <td className="px-4 py-3 font-mono tabular-nums text-blue-300  text-right">{fmt(data.totalIn - data.totalOut)}</td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
             </div>
           )}
         </>
       )}
 
-      {/* ===== PDF Template (hidden) ===== */}
-      <div ref={pdfRef} style={{ display: 'none', width: '794px', fontFamily: 'Cairo, Arial, sans-serif', direction: 'rtl', background: '#fff', padding: '32px', color: '#1e293b' }}>
-        <div style={{ textAlign: 'center', borderBottom: '3px solid #2563eb', paddingBottom: '16px', marginBottom: '24px' }}>
-          <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#2563eb' }}>تحسيب برو</div>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', marginTop: '4px' }}>التقرير المالي</div>
-          <div style={{ fontSize: '14px', color: '#64748b', marginTop: '8px' }}>الفترة من {from} إلى {to}</div>
-          <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>تاريخ الطباعة: {new Date().toLocaleDateString('ar-SA')}</div>
+      {/* ── PDF Template (hidden) ── */}
+      <div ref={pdfRef} style={{ display:'none', width:'794px', fontFamily:'Cairo,Arial,sans-serif', direction:'rtl', background:'#fff', padding:'36px', color:'#1e293b' }}>
+        <div style={{ textAlign:'center', borderBottom:`4px solid ${GOLD}`, paddingBottom:'16px', marginBottom:'24px' }}>
+          <div style={{ fontSize:'26px', fontWeight:'bold', color:NAVY }}>تحسيب برو</div>
+          <div style={{ fontSize:'16px', fontWeight:'bold', marginTop:'4px', color:'#374151' }}>التقرير المالي</div>
+          <div style={{ fontSize:'13px', color:'#6b7280', marginTop:'6px' }}>الفترة من {from} إلى {to}</div>
+          <div style={{ fontSize:'11px', color:'#9ca3af', marginTop:'3px' }}>تاريخ الطباعة: {new Date().toLocaleDateString('ar-SA')}</div>
         </div>
 
         {data && <>
-          <div style={{ marginBottom: '28px' }}>
-            <div style={{ fontSize: '16px', fontWeight: 'bold', background: '#f1f5f9', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px' }}>ملخص قائمة الدخل</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <div style={{ marginBottom:'24px' }}>
+            <div style={{ fontSize:'14px', fontWeight:'bold', background:NAVY, color:'#fff', padding:'8px 14px', borderRadius:'6px', marginBottom:'10px' }}>
+              ملخص قائمة الدخل
+            </div>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
               <tbody>
                 {[
-                  ['مبيعات كاش',        fmt(data.cashSales),    false, true,  '#1e293b'],
-                  ['مبيعات شبكة',       fmt(data.networkSales), false, true,  '#1e293b'],
-                  ['إجمالي المبيعات',    fmt(data.totalSales),   true,  false, '#1e293b'],
-                  ['مصروفات تشغيلية',    `(${fmt(data.opEx)})`,  false, true,  '#dc2626'],
-                  ['مصروفات ثابتة',      `(${fmt(data.fixEx)})`, false, true,  '#dc2626'],
-                  ['مجمل الربح',         fmt(data.grossProfit),  true,  false, data.grossProfit>=0?'#16a34a':'#dc2626'],
-                  ['الأقساط',            `(${fmt(data.loans)})`, false, true,  '#dc2626'],
-                  ['صافي الربح',         fmt(data.netProfit),    true,  false, data.netProfit>=0?'#16a34a':'#dc2626'],
-                  ['المسحوبات',          `(${fmt(data.draws)})`, false, true,  '#dc2626'],
-                  ['صافي التدفق النقدي', fmt(data.netFlow),      true,  false, data.netFlow>=0?'#2563eb':'#dc2626'],
-                  ['هامش الربح',         `${data.margin}%`,      true,  false, '#2563eb'],
+                  ['مبيعات كاش',         fmt(data.cashSales),    false, true,  '#374151'],
+                  ['مبيعات شبكة',        fmt(data.networkSales), false, true,  '#374151'],
+                  ['إجمالي المبيعات',     fmt(data.totalSales),   true,  false, NAVY],
+                  ['مصروفات تشغيلية',     `(${fmt(data.opEx)})`,  false, true,  '#dc2626'],
+                  ['مصروفات ثابتة',       `(${fmt(data.fixEx)})`, false, true,  '#dc2626'],
+                  ['مجمل الربح',          fmt(data.grossProfit),  true,  false, data.grossProfit>=0?'#16a34a':'#dc2626'],
+                  ['الأقساط',             `(${fmt(data.loans)})`, false, true,  '#dc2626'],
+                  ['صافي الربح',          fmt(data.netProfit),    true,  false, data.netProfit>=0?'#16a34a':'#dc2626'],
+                  ['المسحوبات',           `(${fmt(data.draws)})`, false, true,  '#dc2626'],
+                  ['صافي التدفق النقدي',  fmt(data.netFlow),      true,  false, data.netFlow>=0?'#1d4ed8':'#dc2626'],
+                  ['هامش الربح',          `${data.margin}%`,      true,  false, GOLD],
                 ].map(([label, value, bold, indent, color], i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '7px 8px', paddingRight: indent ? '24px' : '8px', fontWeight: bold ? 'bold' : 'normal' }}>{label}</td>
-                    <td style={{ padding: '7px 8px', textAlign: 'left', fontWeight: bold ? 'bold' : 'normal', color }}>{value} ر.س</td>
+                  <tr key={i} style={{ borderBottom:'1px solid #f1f5f9' }}>
+                    <td style={{ padding:'7px 8px', paddingRight:indent?'24px':'8px', fontWeight:bold?'bold':'normal' }}>{label}</td>
+                    <td style={{ padding:'7px 8px', textAlign:'left', fontWeight:bold?'bold':'normal', color }}>{value} ر.س</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '28px' }}>
+          <div style={{ display:'flex', gap:'10px', marginBottom:'24px' }}>
             {[
-              { label: 'إجمالي المدين', value: fmt(data.totalIn),  color: '#16a34a', bg: '#f0fdf4' },
-              { label: 'إجمالي الدائن', value: fmt(data.totalOut), color: '#dc2626', bg: '#fef2f2' },
-              { label: 'الرصيد',         value: fmt(data.totalIn - data.totalOut), color: '#2563eb', bg: '#eff6ff' },
+              { label:'إجمالي المدين', value:fmt(data.totalIn),  color:'#16a34a', bg:'#f0fdf4' },
+              { label:'إجمالي الدائن', value:fmt(data.totalOut), color:'#dc2626', bg:'#fef2f2' },
+              { label:'الرصيد',         value:fmt(data.totalIn-data.totalOut), color:'#1d4ed8', bg:'#eff6ff' },
             ].map(b => (
-              <div key={b.label} style={{ flex: 1, background: b.bg, border: `1px solid ${b.color}30`, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '4px' }}>{b.label}</div>
-                <div style={{ fontSize: '16px', fontWeight: 'bold', color: b.color }}>{b.value} ر.س</div>
+              <div key={b.label} style={{ flex:1, background:b.bg, border:`1px solid ${b.color}30`, borderRadius:'8px', padding:'12px', textAlign:'center' }}>
+                <div style={{ fontSize:'10px', color:'#6b7280', marginBottom:'4px' }}>{b.label}</div>
+                <div style={{ fontSize:'15px', fontWeight:'bold', color:b.color }}>{b.value} ر.س</div>
               </div>
             ))}
           </div>
 
           {entriesDisplay.length > 0 && (
-            <div style={{ marginBottom: '28px' }}>
-              <div style={{ fontSize: '16px', fontWeight: 'bold', background: '#f1f5f9', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px' }}>
+            <div style={{ marginBottom:'24px' }}>
+              <div style={{ fontSize:'14px', fontWeight:'bold', background:NAVY, color:'#fff', padding:'8px 14px', borderRadius:'6px', marginBottom:'10px' }}>
                 تفاصيل القيود ({entriesDisplay.length} قيد)
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'10px' }}>
                 <thead>
-                  <tr style={{ background: '#1e293b', color: '#fff' }}>
+                  <tr style={{ background:'#f5f4f0', borderBottom:`2px solid ${GOLD}` }}>
                     {['رقم القيد','التاريخ','النوع','الوصف','مدين','دائن'].map(h => (
-                      <th key={h} style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
+                      <th key={h} style={{ padding:'7px 6px', textAlign:'right', fontWeight:'bold', color:NAVY }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -463,22 +546,22 @@ export default function Reports() {
                     const debit  = (e.cash_in||0)+(e.bank_in||0)+(e.custody_in||0)
                     const credit = (e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0)
                     return (
-                      <tr key={e.id} style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0?'#fff':'#f8fafc' }}>
-                        <td style={{ padding: '6px', color: e.journal_number?'#2563eb':'#94a3b8', fontWeight: 'bold', fontSize: '10px' }}>{e._displayNum}</td>
-                        <td style={{ padding: '6px' }}>{e.date}</td>
-                        <td style={{ padding: '6px' }}>{e.type}</td>
-                        <td style={{ padding: '6px', maxWidth: '180px' }}>{e.description}</td>
-                        <td style={{ padding: '6px', color: '#16a34a', fontWeight: debit>0?'bold':'normal' }}>{debit>0?fmt(debit):'—'}</td>
-                        <td style={{ padding: '6px', color: '#dc2626', fontWeight: credit>0?'bold':'normal' }}>{credit>0?fmt(credit):'—'}</td>
+                      <tr key={e.id} style={{ borderBottom:'1px solid #f1f5f9', background:i%2===0?'#fff':'#fafaf8' }}>
+                        <td style={{ padding:'5px 6px', color:e.journal_number?GOLD:'#9ca3af', fontWeight:'bold' }}>{e._displayNum}</td>
+                        <td style={{ padding:'5px 6px', color:'#374151' }}>{e.date}</td>
+                        <td style={{ padding:'5px 6px', color:'#374151' }}>{e.type}</td>
+                        <td style={{ padding:'5px 6px', color:'#6b7280', maxWidth:'150px' }}>{e.description}</td>
+                        <td style={{ padding:'5px 6px', color:'#16a34a', fontWeight:debit>0?'bold':'normal' }}>{debit>0?fmt(debit):'—'}</td>
+                        <td style={{ padding:'5px 6px', color:'#dc2626', fontWeight:credit>0?'bold':'normal' }}>{credit>0?fmt(credit):'—'}</td>
                       </tr>
                     )
                   })}
                 </tbody>
                 <tfoot>
-                  <tr style={{ background: '#1e293b', color: '#fff', fontWeight: 'bold' }}>
-                    <td colSpan={4} style={{ padding: '8px 6px' }}>الإجمالي</td>
-                    <td style={{ padding: '8px 6px', color: '#86efac' }}>{fmt(data.totalIn)}</td>
-                    <td style={{ padding: '8px 6px', color: '#fca5a5' }}>{fmt(data.totalOut)}</td>
+                  <tr style={{ background:NAVY, fontWeight:'bold' }}>
+                    <td colSpan={4} style={{ padding:'7px 6px', color:'#fff' }}>الإجمالي</td>
+                    <td style={{ padding:'7px 6px', color:'#86efac' }}>{fmt(data.totalIn)}</td>
+                    <td style={{ padding:'7px 6px', color:'#fca5a5' }}>{fmt(data.totalOut)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -486,32 +569,32 @@ export default function Reports() {
           )}
 
           {docs.length > 0 && (
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ fontSize: '16px', fontWeight: 'bold', background: '#f1f5f9', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px' }}>
+            <div style={{ marginBottom:'16px' }}>
+              <div style={{ fontSize:'14px', fontWeight:'bold', background:NAVY, color:'#fff', padding:'8px 14px', borderRadius:'6px', marginBottom:'10px' }}>
                 المستندات المعتمدة ({docs.length} مستند)
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'10px' }}>
                 <thead>
-                  <tr style={{ background: '#1e293b', color: '#fff' }}>
+                  <tr style={{ background:'#f5f4f0', borderBottom:`2px solid ${GOLD}` }}>
                     {['رقم القيد','اسم المستند','رُفع بواسطة','تاريخ الرفع','المبلغ'].map(h => (
-                      <th key={h} style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 'bold' }}>{h}</th>
+                      <th key={h} style={{ padding:'7px 6px', textAlign:'right', fontWeight:'bold', color:NAVY }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {docs.map((d, i) => {
                     const res    = d.analysis_result
-                    const amount = res?.type==='sales' ? ((res.cashSales||0)+(res.networkSales||0)) : (res?.amount||0)
+                    const amount = res?.type==='sales'?((res.cashSales||0)+(res.networkSales||0)):(res?.amount||0)
                     return (
                       <tr key={i} ref={el => docsRowRefs.current[i] = el}
-                        style={{ borderBottom: '1px solid #f1f5f9', background: i%2===0?'#fff':'#f8fafc' }}>
-                        <td style={{ padding: '6px', color: '#2563eb', fontWeight: 'bold', fontSize: '10px' }}>{d.journal_number||'—'}</td>
-                        <td style={{ padding: '6px', color: d.file_url?'#2563eb':'#1e293b', textDecoration: d.file_url?'underline':'none' }}>
+                        style={{ borderBottom:'1px solid #f1f5f9', background:i%2===0?'#fff':'#fafaf8' }}>
+                        <td style={{ padding:'5px 6px', color:GOLD, fontWeight:'bold' }}>{d.journal_number||'—'}</td>
+                        <td style={{ padding:'5px 6px', color:d.file_url?'#1d4ed8':'#374151', textDecoration:d.file_url?'underline':'none' }}>
                           {cleanFileName(d.file_name)}
                         </td>
-                        <td style={{ padding: '6px' }}>{ROLE_AR[d.uploaded_by]||d.uploaded_by}</td>
-                        <td style={{ padding: '6px' }}>{fmtD(d.uploaded_at)}</td>
-                        <td style={{ padding: '6px', fontWeight: 'bold' }}>{amount>0?fmt(amount)+' ر.س':'—'}</td>
+                        <td style={{ padding:'5px 6px', color:'#374151' }}>{ROLE_AR[d.uploaded_by]||d.uploaded_by}</td>
+                        <td style={{ padding:'5px 6px', color:'#374151' }}>{fmtD(d.uploaded_at)}</td>
+                        <td style={{ padding:'5px 6px', fontWeight:'bold', color:NAVY }}>{amount>0?fmt(amount)+' ر.س':'—'}</td>
                       </tr>
                     )
                   })}
@@ -520,7 +603,7 @@ export default function Reports() {
             </div>
           )}
 
-          <div style={{ borderTop: '2px solid #e2e8f0', paddingTop: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '11px', marginTop: '16px' }}>
+          <div style={{ borderTop:`2px solid ${GOLD}`, paddingTop:'12px', textAlign:'center', color:'#9ca3af', fontSize:'10px', marginTop:'16px' }}>
             تم إنشاء هذا التقرير بواسطة تحسيب برو — {new Date().toLocaleString('ar-SA')}
           </div>
         </>}

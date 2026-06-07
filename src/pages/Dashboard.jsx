@@ -2,16 +2,19 @@ import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
-function BalanceCard({ label, icon, value, bg, border, textColor }) {
+const NAVY = '#0f2444'
+const GOLD = '#c9a227'
+
+function BalanceCard({ label, icon, value, color }) {
   const neg = value < 0
   const fmt = v => Math.abs(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
   return (
-    <div className={`rounded-xl p-5 border-2 transition-colors ${neg ? 'bg-red-50 border-red-200' : `${bg} ${border}`}`}>
+    <div className="rounded-2xl p-5 shadow-sm" style={{ background: neg ? '#fef2f2' : '#fff', border: `2px solid ${neg ? '#fecaca' : '#e8e5dc'}` }}>
       <div className="flex items-center gap-2 mb-3">
         <span className="text-2xl">{icon}</span>
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</span>
       </div>
-      <div className={`text-2xl font-bold font-mono tabular-nums ${neg ? 'text-red-600' : textColor}`}>
+      <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: neg ? '#dc2626' : color }}>
         {fmt(value)}
         <span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
       </div>
@@ -20,14 +23,14 @@ function BalanceCard({ label, icon, value, bg, border, textColor }) {
   )
 }
 
-function StatCard({ label, value, icon, color }) {
+function StatCard({ label, value, icon, positive }) {
   return (
-    <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+    <div className="bg-white rounded-2xl p-5 shadow-sm" style={{ border: '1px solid #e8e5dc' }}>
       <div className="flex items-center justify-between mb-3">
         <span className="text-2xl">{icon}</span>
-        <span className={`text-xs font-medium px-2 py-1 rounded-full ${color}`}>الفترة</span>
+        <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ background: '#f5f4f0', color: '#8a7a5a' }}>الفترة</span>
       </div>
-      <div className="text-2xl font-bold text-slate-800 mb-1 tabular-nums">{value}</div>
+      <div className="text-2xl font-bold mb-1 tabular-nums" style={{ color: NAVY }}>{value}</div>
       <div className="text-sm text-slate-500">{label}</div>
     </div>
   )
@@ -144,40 +147,37 @@ export default function Dashboard() {
   const fmt = v => (v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">لوحة التحكم</h1>
-        <p className="text-slate-500 text-sm mt-1">مرحباً — {roleLabel} | تحسيب برو</p>
-
+        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>لوحة التحكم</h1>
+        <p className="text-slate-500 text-sm mt-0.5">مرحباً — {roleLabel} | تحسيب برو</p>
       </div>
 
-      {/* Current Balances — all time, not period-filtered */}
       {balances ? (
         <div>
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">الأرصدة الحالية</div>
+          <div className="text-xs font-bold mb-2 uppercase tracking-wider" style={{ color: '#8a7a5a' }}>الأرصدة الحالية</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <BalanceCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    bg="bg-green-50" border="border-green-200" textColor="text-green-700" />
-            <BalanceCard label="رصيد البنك"   icon="🏦" value={balances.bank}    bg="bg-blue-50"  border="border-blue-200"  textColor="text-blue-700"  />
-            <BalanceCard label="رصيد العهدة"  icon="👤" value={balances.custody} bg="bg-amber-50" border="border-amber-200" textColor="text-amber-700" />
+            <BalanceCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    color="#16a34a" />
+            <BalanceCard label="رصيد البنك"   icon="🏦" value={balances.bank}    color="#1d4ed8" />
+            <BalanceCard label="رصيد العهدة"  icon="👤" value={balances.custody} color="#b45309" />
           </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[0,1,2].map(i => <div key={i} className="bg-slate-100 rounded-xl p-4 border border-slate-200 h-24 animate-pulse"/>)}
+          {[0,1,2].map(i => <div key={i} className="rounded-2xl p-4 h-24 animate-pulse" style={{ background: '#e8e5dc' }}/>)}
         </div>
       )}
 
-      {/* Period selector */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 space-y-3">
-        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">الفترة الزمنية</div>
+      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={{ border: '1px solid #e8e5dc' }}>
+        <div className="text-xs font-bold uppercase tracking-wider" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
         <div className="flex flex-wrap gap-2">
           {QUICK_PERIODS.map(p => (
             <button key={p.key} onClick={() => handlePeriod(p.key)}
-              className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${
-                activePeriod === p.key
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-700'
-              }`}>
+              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
+              style={activePeriod === p.key
+                ? { background: GOLD, color: NAVY }
+                : { background: '#f5f4f0', color: '#4b5563' }
+              }>
               {p.label}
             </button>
           ))}
@@ -187,17 +187,20 @@ export default function Dashboard() {
             <label className="text-xs text-slate-500 block mb-1">من</label>
             <input type="date" value={range.from}
               onChange={e => handleCustom('from', e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              className="border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2"
+              style={{ borderColor: '#d1c9b8' }}/>
           </div>
           <div>
             <label className="text-xs text-slate-500 block mb-1">إلى</label>
             <input type="date" value={range.to}
               onChange={e => handleCustom('to', e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              className="border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2"
+              style={{ borderColor: '#d1c9b8' }}/>
           </div>
           {activePeriod === 'custom' && (
             <button onClick={() => loadStats(range, pid)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+              className="px-4 py-2 rounded-xl text-sm font-bold transition-all"
+              style={{ background: NAVY, color: '#fff' }}>
               تحديث
             </button>
           )}
@@ -206,39 +209,39 @@ export default function Dashboard() {
 
       {loading ? (
         <div className="flex items-center justify-center h-40">
-          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/>
+          <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin"
+            style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
         </div>
       ) : (
         <>
           {stats && (
-            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatCard label="إجمالي المبيعات"  value={`${fmt(stats.totalSales)} ر.س`}    icon="💵" color="bg-green-100 text-green-700" />
-              <StatCard label="إجمالي المصروفات" value={`${fmt(stats.totalExpenses)} ر.س`} icon="📤" color="bg-red-100 text-red-700" />
-              <StatCard label="صافي الربح"        value={`${fmt(stats.profit)} ر.س`}        icon="📈" color={stats.profit >= 0 ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'} />
-              <StatCard label="قيود معلقة"         value={stats.pending}                     icon="⏳" color="bg-yellow-100 text-yellow-700" />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <StatCard label="إجمالي المبيعات"  value={`${fmt(stats.totalSales)} ر.س`}    icon="💵" />
+              <StatCard label="إجمالي المصروفات" value={`${fmt(stats.totalExpenses)} ر.س`} icon="📤" />
+              <StatCard label="صافي الربح"        value={`${fmt(stats.profit)} ر.س`}        icon="📈" />
+              <StatCard label="قيود معلقة"         value={stats.pending}                     icon="⏳" />
             </div>
           )}
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100">
-            <div className="px-5 py-4 border-b border-slate-100">
-              <h2 className="font-bold text-slate-800">آخر الحركات</h2>
+          <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={{ border: '1px solid #e8e5dc' }}>
+            <div className="px-5 py-4" style={{ borderBottom: '1px solid #e8e5dc' }}>
+              <h2 className="font-bold text-sm" style={{ color: NAVY }}>آخر الحركات</h2>
             </div>
-            <div className="divide-y divide-slate-50">
+            <div className="divide-y" style={{ borderColor: '#f5f4f0' }}>
               {recent.length === 0 && (
                 <p className="text-center text-slate-400 py-8 text-sm">لا توجد بيانات في هذه الفترة</p>
               )}
               {recent.map((r, i) => (
                 <div key={i} className="flex items-center justify-between px-5 py-3">
                   <div>
-                    <div className="text-sm font-medium text-slate-700">{r.type || r.description || '—'}</div>
+                    <div className="text-sm font-medium" style={{ color: NAVY }}>{r.type || r.description || '—'}</div>
                     <div className="text-xs text-slate-400">{r.date}</div>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    r.status === 'approved'  ? 'bg-green-100 text-green-700'
-                    : r.status === 'auto'    ? 'bg-blue-100 text-blue-700'
-                    : r.status === 'cancelled' ? 'bg-red-100 text-red-700'
-                    : 'bg-yellow-100 text-yellow-700'
-                  }`}>
+                  <span className="text-xs px-2.5 py-1 rounded-full font-semibold"
+                    style={r.status === 'approved' ? { background: '#f0fdf4', color: '#16a34a' }
+                      : r.status === 'auto'        ? { background: '#eff6ff', color: '#1d4ed8' }
+                      : r.status === 'cancelled'   ? { background: '#fef2f2', color: '#dc2626' }
+                      :                              { background: '#fffbeb', color: '#b45309' }}>
                     {r.status === 'approved' ? 'معتمد' : r.status === 'auto' ? 'تلقائي' : r.status === 'cancelled' ? 'ملغي' : 'معلق'}
                   </span>
                 </div>

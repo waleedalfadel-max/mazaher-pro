@@ -86,9 +86,13 @@ export default function JournalArchive() {
     return { debit, credit }
   }
 
+  const NAVY = '#0f2444'
+  const GOLD = '#c9a227'
+
   if (loading) return (
     <div className="flex justify-center h-64 items-center">
-      <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/>
+      <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin"
+        style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
     </div>
   )
 
@@ -96,20 +100,22 @@ export default function JournalArchive() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">أرشيف القيود اليومية</h1>
-          <p className="text-sm text-slate-500 mt-1">{filteredGroups.length} يوم — {entries.length} حركة</p>
+          <h1 className="text-2xl font-bold" style={{ color: NAVY }}>أرشيف القيود اليومية</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{filteredGroups.length} يوم — {entries.length} حركة</p>
         </div>
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="بحث بالتاريخ أو رقم القيد أو البيان..."
-          className="border border-slate-200 rounded-lg px-3 py-2 text-sm w-72 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="border rounded-xl px-3 py-2 text-sm w-72 focus:outline-none focus:ring-2"
+          style={{ borderColor: '#d1c9b8' }}
         />
       </div>
 
       {filteredGroups.length === 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col items-center py-16 text-slate-400">
+        <div className="bg-white rounded-2xl shadow-sm flex flex-col items-center py-16 text-slate-400"
+          style={{ border: '1px solid #e8e5dc' }}>
           <span className="text-4xl mb-3">📂</span>
           <p className="font-medium">{search ? 'لا توجد نتائج' : 'لا توجد قيود'}</p>
         </div>
@@ -122,73 +128,78 @@ export default function JournalArchive() {
           const label  = g.journalNumber || g.date
 
           return (
-            <div key={g.date} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-              {/* رأس القيد — مجلد */}
+            <div key={g.date} className="bg-white rounded-2xl shadow-sm overflow-hidden"
+              style={{ border: '1px solid #e8e5dc' }}>
               <button
                 onClick={() => toggleDate(g.date)}
-                className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition-colors text-right"
+                className="w-full flex items-center gap-3 px-5 py-4 transition-colors text-right"
+                style={{ ':hover': { background: '#fafaf8' } }}
+                onMouseEnter={e => e.currentTarget.style.background = '#fafaf8'}
+                onMouseLeave={e => e.currentTarget.style.background = ''}
               >
                 <span className="text-xl">{isOpen ? '📂' : '📁'}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap">
-                    <span className="font-bold text-slate-800 text-sm">{label}</span>
+                    <span className="font-bold text-sm" style={{ color: NAVY }}>{label}</span>
                     <span className="text-xs text-slate-400 font-mono">{g.date}</span>
-                    <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{g.rows.length} حركة</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#f5f4f0', color: '#8a7a5a' }}>{g.rows.length} حركة</span>
                   </div>
                 </div>
                 <div className="flex gap-4 items-center shrink-0 text-xs">
-                  {debit  > 0 && <span className="text-green-600 font-semibold tabular-nums">↑ {fmt(debit)}</span>}
-                  {credit > 0 && <span className="text-red-500 font-semibold tabular-nums">↓ {fmt(credit)}</span>}
-                  <span className="text-slate-400 text-base">{isOpen ? '▲' : '▼'}</span>
+                  {debit  > 0 && <span className="font-semibold tabular-nums text-green-600">↑ {fmt(debit)}</span>}
+                  {credit > 0 && <span className="font-semibold tabular-nums text-red-500">↓ {fmt(credit)}</span>}
+                  <span className="text-base" style={{ color: GOLD }}>{isOpen ? '▲' : '▼'}</span>
                 </div>
               </button>
 
-              {/* محتوى القيد */}
               {isOpen && (
-                <div className="border-t border-slate-100 overflow-x-auto">
+                <div className="overflow-x-auto" style={{ borderTop: `1px solid #e8e5dc` }}>
                   <table className="w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500">النوع</th>
-                        <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500">البيان</th>
-                        <th className="px-4 py-2 text-right text-xs font-semibold text-green-600">دخل</th>
-                        <th className="px-4 py-2 text-right text-xs font-semibold text-red-500">خرج</th>
-                        <th className="px-4 py-2 text-center text-xs font-semibold text-slate-500">مستند</th>
+                    <thead>
+                      <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
+                        <th className="px-4 py-2 text-right text-xs font-bold" style={{ color: NAVY }}>النوع</th>
+                        <th className="px-4 py-2 text-right text-xs font-bold" style={{ color: NAVY }}>البيان</th>
+                        <th className="px-4 py-2 text-right text-xs font-bold text-green-700">دخل</th>
+                        <th className="px-4 py-2 text-right text-xs font-bold text-red-600">خرج</th>
+                        <th className="px-4 py-2 text-center text-xs font-bold" style={{ color: NAVY }}>مستند</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-50">
+                    <tbody className="divide-y" style={{ borderColor: '#f5f4f0' }}>
                       {g.rows.map(r => {
                         const d = (r.cash_in || 0) + (r.bank_in || 0) + (r.custody_in || 0)
                         const c = (r.cash_out || 0) + (r.bank_out || 0) + (r.custody_out || 0)
                         return (
-                          <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                          <tr key={r.id} className="transition-colors hover:bg-amber-50/30">
                             <td className="px-4 py-2.5 text-xs text-slate-600 whitespace-nowrap">{r.type || '—'}</td>
                             <td className="px-4 py-2.5 text-xs text-slate-500 max-w-52 truncate">{r.description || '—'}</td>
                             <td className="px-4 py-2.5 text-right tabular-nums text-xs">
-                              {d > 0 ? <span className="text-green-700 font-semibold">{fmt(d)}</span> : <span className="text-slate-200">—</span>}
+                              {d > 0 ? <span className="text-green-700 font-semibold">{fmt(d)}</span> : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="px-4 py-2.5 text-right tabular-nums text-xs">
-                              {c > 0 ? <span className="text-red-600 font-semibold">{fmt(c)}</span> : <span className="text-slate-200">—</span>}
+                              {c > 0 ? <span className="text-red-600 font-semibold">{fmt(c)}</span> : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="px-4 py-2.5 text-center">
                               {r.file_url
                                 ? <a href={r.file_url} target="_blank" rel="noreferrer"
                                     title={r._doc_name || 'فتح المستند'}
-                                    className="inline-flex items-center justify-center w-7 h-7 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors text-sm">
+                                    className="inline-flex items-center justify-center w-7 h-7 rounded-lg transition-colors text-sm"
+                                    style={{ background: '#fef9ec', color: GOLD }}
+                                    onMouseEnter={e => e.currentTarget.style.background = '#fef3c7'}
+                                    onMouseLeave={e => e.currentTarget.style.background = '#fef9ec'}>
                                     📎
                                   </a>
-                                : <span className="text-slate-200 text-xs">—</span>
+                                : <span className="text-slate-300 text-xs">—</span>
                               }
                             </td>
                           </tr>
                         )
                       })}
                     </tbody>
-                    <tfoot className="bg-slate-50 border-t border-slate-200">
+                    <tfoot style={{ background: NAVY }}>
                       <tr>
-                        <td colSpan={2} className="px-4 py-2 text-xs font-bold text-slate-600">الإجمالي</td>
-                        <td className="px-4 py-2 text-right text-xs font-bold text-green-700 tabular-nums">{debit > 0 ? fmt(debit) : '—'}</td>
-                        <td className="px-4 py-2 text-right text-xs font-bold text-red-600 tabular-nums">{credit > 0 ? fmt(credit) : '—'}</td>
+                        <td colSpan={2} className="px-4 py-2 text-xs font-bold text-white">الإجمالي</td>
+                        <td className="px-4 py-2 text-right text-xs font-bold tabular-nums" style={{ color: '#86efac' }}>{debit > 0 ? fmt(debit) : '—'}</td>
+                        <td className="px-4 py-2 text-right text-xs font-bold tabular-nums" style={{ color: '#fca5a5' }}>{credit > 0 ? fmt(credit) : '—'}</td>
                         <td/>
                       </tr>
                     </tfoot>
