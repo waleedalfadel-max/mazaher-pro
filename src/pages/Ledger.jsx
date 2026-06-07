@@ -50,7 +50,7 @@ function BalanceSummary({ cash, bank, custody }) {
     )
   }
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       {card('رصيد الصندوق', '🏧', cash,    'bg-green-50', 'border-green-200', 'text-green-700')}
       {card('رصيد البنك',   '🏦', bank,    'bg-blue-50',  'border-blue-200',  'text-blue-700')}
       {card('رصيد العهدة',  '👤', custody, 'bg-amber-50', 'border-amber-200', 'text-amber-700')}

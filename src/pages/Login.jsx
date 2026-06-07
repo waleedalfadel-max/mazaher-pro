@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import logo from '../assets/logo.png'
 
 function defaultPath(role) {
   if (role === 'purchasing') return '/invoice'
@@ -52,8 +53,7 @@ export default function Login() {
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4" dir="rtl">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-500 rounded-2xl flex items-center justify-center text-white text-3xl font-bold mx-auto mb-4 shadow-lg">ت</div>
-          <h1 className="text-2xl font-bold text-white">تحسيب برو</h1>
+          <img src={logo} alt="تحسيب برو" className="h-24 w-auto mx-auto mb-4 drop-shadow-lg" />
           <p className="text-slate-400 mt-1 text-sm">نظام المحاسبة المتكامل</p>
         </div>
 

@@ -174,24 +174,24 @@ export default function JournalLedger() {
       {rows.length > 0 && (
         <div className="space-y-2">
           {/* Main totals */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-2">
             <div className="bg-green-50 border border-green-100 rounded-xl p-3 text-center">
-              <div className="text-xs text-green-600 mb-1">إجمالي الدخل (مدين)</div>
-              <div className="font-bold text-green-700 tabular-nums text-sm">{fmt(totals.debit)} ر.س</div>
+              <div className="text-xs text-green-600 mb-1">إجمالي الدخل</div>
+              <div className="font-bold text-green-700 tabular-nums text-xs sm:text-sm">{fmt(totals.debit)} ر.س</div>
             </div>
             <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-center">
-              <div className="text-xs text-red-600 mb-1">إجمالي الخرج (دائن)</div>
-              <div className="font-bold text-red-700 tabular-nums text-sm">{fmt(totals.credit)} ر.س</div>
+              <div className="text-xs text-red-600 mb-1">إجمالي الخرج</div>
+              <div className="font-bold text-red-700 tabular-nums text-xs sm:text-sm">{fmt(totals.credit)} ر.س</div>
             </div>
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-center">
               <div className="text-xs text-blue-600 mb-1">صافي الحركة</div>
-              <div className={`font-bold tabular-nums text-sm ${totals.debit - totals.credit >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+              <div className={`font-bold tabular-nums text-xs sm:text-sm ${totals.debit - totals.credit >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
                 {fmt(Math.abs(totals.debit - totals.credit))} ر.س {totals.debit >= totals.credit ? '▲' : '▼'}
               </div>
             </div>
           </div>
           {/* Per-source breakdown */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
               <div className="text-xs font-semibold text-slate-500 mb-2">🏧 الصندوق</div>
               <div className="flex justify-between text-xs">

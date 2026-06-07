@@ -155,14 +155,14 @@ export default function Dashboard() {
       {balances ? (
         <div>
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">الأرصدة الحالية</div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <BalanceCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    bg="bg-green-50" border="border-green-200" textColor="text-green-700" />
             <BalanceCard label="رصيد البنك"   icon="🏦" value={balances.bank}    bg="bg-blue-50"  border="border-blue-200"  textColor="text-blue-700"  />
             <BalanceCard label="رصيد العهدة"  icon="👤" value={balances.custody} bg="bg-amber-50" border="border-amber-200" textColor="text-amber-700" />
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[0,1,2].map(i => <div key={i} className="bg-slate-100 rounded-xl p-4 border border-slate-200 h-24 animate-pulse"/>)}
         </div>
       )}
@@ -211,7 +211,7 @@ export default function Dashboard() {
       ) : (
         <>
           {stats && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <StatCard label="إجمالي المبيعات"  value={`${fmt(stats.totalSales)} ر.س`}    icon="💵" color="bg-green-100 text-green-700" />
               <StatCard label="إجمالي المصروفات" value={`${fmt(stats.totalExpenses)} ر.س`} icon="📤" color="bg-red-100 text-red-700" />
               <StatCard label="صافي الربح"        value={`${fmt(stats.profit)} ر.س`}        icon="📈" color={stats.profit >= 0 ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'} />
