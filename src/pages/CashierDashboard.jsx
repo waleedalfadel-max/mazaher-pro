@@ -1,12 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage } from '../lib/storage'
 
 export default function CashierDashboard() {
-  const { role } = useAuth()
+  const { role, projectId } = useAuth()
 
-  const [projectId, setProjectId] = useState(null)
   const [file, setFile]           = useState(null)
   const [preview, setPreview]     = useState(null)
   const [uploading, setUploading] = useState(false)
@@ -14,11 +13,6 @@ export default function CashierDashboard() {
   const [error, setError]         = useState('')
   const [dragOver, setDragOver]   = useState(false)
   const inputRef = useRef()
-
-  useEffect(() => {
-    supabase.from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
-      .then(({ data }) => { if (data) setProjectId(data.id) })
-  }, [])
 
   function handleFile(f) {
     if (!f) return

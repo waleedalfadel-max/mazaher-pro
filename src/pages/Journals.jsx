@@ -3,25 +3,20 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function Journals() {
-  const { canEdit } = useAuth()
+  const { canEdit, projectId } = useAuth()
   const [rows, setRows]     = useState([])
   const [loading, setLoading] = useState(true)
-  const [projectId, setProjectId] = useState(null)
 
-  useEffect(() => { init() }, [])
-
-  async function init() {
-    const { data } = await supabase.from('projects').select('id').eq('name','تحسيب-برو').single()
-    if (data) { setProjectId(data.id); await load(data.id) }
-    setLoading(false)
-  }
+  useEffect(() => { if (projectId) load(projectId) }, [projectId])
 
   async function load(pid) {
+    setLoading(true)
     const { data } = await supabase.from('ledger_entries')
-      .select('*').eq('project_id', pid || projectId)
+      .select('*').eq('project_id', pid)
       .eq('status','pending')
       .order('date', { ascending: false })
     setRows(data || [])
+    setLoading(false)
   }
 
   async function approve(id) {

@@ -2,22 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  font-family: 'Cairo', 'Tajawal', sans-serif;
-}
+* { font-family: 'Cairo', 'Tajawal', sans-serif; }
 
 body {
   direction: rtl;
-  background-color: #f1f5f9;
+  background-color: #f0ede6;
 }
 
-/* IBM Plex Mono for all numeric display elements */
 .font-mono, td.tabular-nums, .tabular-nums {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
 @layer utilities {
   .scrollbar-thin::-webkit-scrollbar { width: 4px; }
-  .scrollbar-thin::-webkit-scrollbar-track { background: #1e293b; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: #0f2444; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #c9a227; border-radius: 2px; }
 }

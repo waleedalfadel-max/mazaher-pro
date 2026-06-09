@@ -2,49 +2,54 @@ import React, { useState, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import logo from '../assets/logo.png'
+import staticLogo from '../assets/logo.png'
+import { fetchLogoUrl } from '../lib/appLogo'
+
+const NAVY  = '#0f2444'
+const GOLD  = '#c9a227'
 
 export default function Layout({ children }) {
-  const { role, roleLabel, userName, logout } = useAuth()
+  const { role, roleLabel, userName, projectId, projectName, isSuperAdmin, logout } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
   const [desktopOpen, setDesktopOpen] = useState(true)
   const [mobileOpen, setMobileOpen]   = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
+  const [logo, setLogo] = useState(staticLogo)
 
-  // إغلاق الدرج عند تغيير الصفحة على الجوال
+  useEffect(() => { fetchLogoUrl().then(url => { if (url) setLogo(url) }) }, [])
+
   useEffect(() => { setMobileOpen(false) }, [location.pathname])
 
   useEffect(() => {
-    if (role !== 'accountant') return
+    if (role !== 'accountant' || !projectId) return
     fetchPendingCount()
     const timer = setInterval(fetchPendingCount, 30000)
     return () => clearInterval(timer)
-  }, [role])
+  }, [role, projectId])
 
   async function fetchPendingCount() {
-    const { data: proj } = await supabase
-      .from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
-    if (!proj) return
+    if (!projectId) return
     const { count } = await supabase
       .from('documents')
       .select('id', { count: 'exact', head: true })
       .in('status', ['uploaded', 'analyzed'])
-      .eq('project_id', proj.id)
+      .eq('project_id', projectId)
     setPendingCount(count || 0)
   }
 
   const NAV_ITEMS = [
     { to: '/',        label: 'لوحة التحكم',   icon: '📊', roles: ['owner', 'accountant'] },
     { to: '/cashier', label: 'لوحة الكاشير',  icon: '💰', roles: ['cashier'] },
-    { to: '/reports', label: 'التقارير',       icon: '📈', roles: ['owner', 'accountant'] },
-    { to: '/sales',   label: 'المبيعات',       icon: '💵', roles: ['owner', 'accountant'] },
-    { to: '/ledger',  label: 'سجل الدفتر',    icon: '📒', roles: ['owner', 'accountant'] },
-    { to: '/journal', label: 'سجل القيود',    icon: '📓', roles: ['owner', 'accountant'] },
-    { to: '/archive', label: 'أرشيف القيود',  icon: '🗂️', roles: ['owner', 'accountant'] },
-    { to: '/loans',   label: 'القروض',        icon: '🏦', roles: ['owner', 'accountant'] },
-    { to: '/pending', label: 'مستندات جديدة', icon: '🔔', roles: ['accountant'], badge: pendingCount },
+    { to: '/reports', label: 'التقارير',       icon: '📈', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/sales',   label: 'المبيعات',       icon: '💵', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/ledger',  label: 'سجل الدفتر',    icon: '📒', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/journal', label: 'سجل القيود',    icon: '📓', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/archive', label: 'أرشيف القيود',  icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/loans',   label: 'القروض',        icon: '🏦', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/pending', label: 'مستندات جديدة', icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
     { to: '/users',   label: 'المستخدمون',    icon: '👥', roles: ['owner'] },
+    { to: '/admin',   label: 'إدارة العملاء', icon: '⚙️', roles: ['superadmin'] },
   ]
 
   const UPLOAD_ROLES = ['purchasing', 'accountant', 'owner', 'cashier']
@@ -52,14 +57,11 @@ export default function Layout({ children }) {
 
   function handleLogout() { logout(); navigate('/login') }
 
-  const navLinkClass = ({ isActive }) =>
-    `flex items-center gap-3 px-3 py-3 rounded-xl transition-colors text-sm font-medium
-    ${isActive ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`
-
   const SidebarContent = ({ collapsed }) => (
     <>
       {/* Logo */}
-      <div className="flex items-center justify-center px-4 py-4 border-b border-slate-700">
+      <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+        className="flex items-center justify-center px-3 py-4 shrink-0">
         {collapsed
           ? <img src={logo} alt="تحسيب برو" className="h-8 w-8 object-contain" />
           : <img src={logo} alt="تحسيب برو" className="h-14 w-auto object-contain" />
@@ -68,25 +70,46 @@ export default function Layout({ children }) {
 
       {/* Role Badge */}
       {!collapsed && (
-        <div className="mx-3 mt-4 mb-2 px-3 py-2 bg-slate-800 rounded-lg">
-          <div className="text-white font-medium text-sm">{userName}</div>
-          <div className="text-blue-400 text-xs mt-0.5">{roleLabel}</div>
+        <div className="mx-3 mt-4 mb-1 px-3 py-2.5 rounded-xl"
+          style={{ background: 'rgba(201,162,39,0.12)', border: '1px solid rgba(201,162,39,0.25)' }}>
+          {projectName && (
+            <div className="text-xs mb-1 font-bold" style={{ color: GOLD }}>{projectName}</div>
+          )}
+          <div className="text-white font-semibold text-sm">{userName}</div>
+          <div className="text-xs mt-0.5" style={{ color: 'rgba(201,162,39,0.7)' }}>{roleLabel}</div>
+        </div>
+      )}
+
+      {/* زر رجوع للإدارة — يظهر للـ superadmin فقط عندما يكون داخل مشروع */}
+      {isSuperAdmin && projectId && !collapsed && (
+        <div className="px-2 pb-2">
+          <button onClick={() => navigate('/admin')}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all"
+            style={{ background: 'rgba(201,162,39,0.15)', color: GOLD, border: '1px solid rgba(201,162,39,0.3)' }}>
+            ← رجوع لإدارة العملاء
+          </button>
         </div>
       )}
 
       {/* Nav */}
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto scrollbar-thin">
         {visibleItems.map(item => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === '/' || item.to === '/cashier'}
-            className={navLinkClass}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-sm font-medium group relative"
+            style={({ isActive }) => isActive
+              ? { background: GOLD, color: NAVY }
+              : { color: 'rgba(255,255,255,0.6)' }
+            }
+            onMouseEnter={e => { if (!e.currentTarget.style.background.includes(GOLD)) e.currentTarget.style.background = 'rgba(255,255,255,0.07)' }}
+            onMouseLeave={e => { if (!e.currentTarget.style.background.includes(GOLD)) e.currentTarget.style.background = '' }}
           >
-            <span className="text-lg shrink-0">{item.icon}</span>
+            <span className="text-base shrink-0">{item.icon}</span>
             {!collapsed && <span className="flex-1">{item.label}</span>}
             {item.badge > 0 && (
-              <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1">
+              <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
                 {item.badge}
               </span>
             )}
@@ -95,31 +118,38 @@ export default function Layout({ children }) {
       </nav>
 
       {/* Bottom */}
-      <div className="px-2 pb-4 border-t border-slate-700 pt-3 space-y-1">
+      <div className="px-2 pb-4 pt-3 space-y-1 shrink-0"
+        style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
         {UPLOAD_ROLES.includes(role) && (
           <NavLink to="/invoice"
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-3 rounded-xl transition-colors text-sm font-bold w-full
-              ${isActive ? 'bg-emerald-700 text-white' : 'bg-emerald-500 hover:bg-emerald-400 text-white'}`
-            }
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-bold w-full"
+            style={({ isActive }) => ({
+              background: isActive ? '#a88220' : GOLD,
+              color: NAVY,
+            })}
           >
-            <span className="text-lg shrink-0">📤</span>
+            <span className="text-base shrink-0">📤</span>
             {!collapsed && <span className="flex-1">رفع مستند</span>}
           </NavLink>
         )}
-        {/* طي القائمة — على الديسكتوب فقط */}
         <button
           onClick={() => setDesktopOpen(v => !v)}
-          className="hidden md:flex w-full items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white transition-colors text-sm"
+          className="hidden md:flex w-full items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm"
+          style={{ color: 'rgba(255,255,255,0.45)' }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
+          onMouseLeave={e => e.currentTarget.style.background = ''}
         >
-          <span className="text-lg shrink-0">{collapsed ? '▶' : '◀'}</span>
+          <span className="text-base shrink-0">{collapsed ? '▶' : '◀'}</span>
           {!collapsed && <span>طي القائمة</span>}
         </button>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-slate-400 hover:bg-red-900 hover:text-red-300 transition-colors text-sm"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm"
+          style={{ color: 'rgba(255,255,255,0.45)' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220,38,38,0.2)'; e.currentTarget.style.color = '#fca5a5' }}
+          onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}
         >
-          <span className="text-lg shrink-0">🚪</span>
+          <span className="text-base shrink-0">🚪</span>
           {!collapsed && <span>خروج</span>}
         </button>
       </div>
@@ -127,39 +157,32 @@ export default function Layout({ children }) {
   )
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100" dir="rtl">
+    <div className="flex h-screen overflow-hidden" style={{ background: '#f0ede6' }} dir="rtl">
 
-      {/* ── ديسكتوب: شريط جانبي ثابت ── */}
-      <aside className={`
-        hidden md:flex flex-col shrink-0
-        ${desktopOpen ? 'w-64' : 'w-16'}
-        transition-all duration-300 bg-slate-900
-      `}>
+      {/* ── ديسكتوب ── */}
+      <aside className={`hidden md:flex flex-col shrink-0 transition-all duration-300 ${desktopOpen ? 'w-64' : 'w-16'}`}
+        style={{ background: NAVY }}>
         <SidebarContent collapsed={!desktopOpen} />
       </aside>
 
-      {/* ── جوال: طبقة خلفية عند فتح الدرج ── */}
+      {/* ── جوال: خلفية ── */}
       {mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 z-40 md:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
+        <div className="fixed inset-0 bg-black/60 z-40 md:hidden backdrop-blur-sm"
+          onClick={() => setMobileOpen(false)} />
       )}
 
-      {/* ── جوال: درج جانبي ── */}
-      <aside className={`
-        fixed inset-y-0 right-0 z-50 w-72 bg-slate-900 flex flex-col
-        transition-transform duration-300 md:hidden
-        ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}
-      `}>
+      {/* ── جوال: درج ── */}
+      <aside className={`fixed inset-y-0 right-0 z-50 w-72 flex flex-col transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        style={{ background: NAVY }}>
         <SidebarContent collapsed={false} />
       </aside>
 
-      {/* ── المحتوى الرئيسي ── */}
+      {/* ── المحتوى ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* شريط علوي للجوال */}
-        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 shrink-0">
+        {/* شريط علوي — جوال فقط */}
+        <header className="md:hidden flex items-center justify-between px-4 py-3 shrink-0 shadow-sm"
+          style={{ background: '#fff', borderBottom: `3px solid ${GOLD}` }}>
           <img src={logo} alt="تحسيب برو" className="h-9 w-auto object-contain" />
           <div className="flex items-center gap-3">
             {pendingCount > 0 && (
@@ -167,13 +190,12 @@ export default function Layout({ children }) {
                 {pendingCount}
               </span>
             )}
-            <button
-              onClick={() => setMobileOpen(v => !v)}
-              className="w-10 h-10 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-            >
-              <span className="block w-5 h-0.5 bg-slate-700 rounded"/>
-              <span className="block w-5 h-0.5 bg-slate-700 rounded"/>
-              <span className="block w-5 h-0.5 bg-slate-700 rounded"/>
+            <button onClick={() => setMobileOpen(v => !v)}
+              className="w-10 h-10 flex flex-col items-center justify-center gap-1.5 rounded-xl transition-colors"
+              style={{ background: '#f5f4f0' }}>
+              <span className="block w-5 h-0.5 rounded" style={{ background: NAVY }}/>
+              <span className="block w-5 h-0.5 rounded" style={{ background: NAVY }}/>
+              <span className="block w-5 h-0.5 rounded" style={{ background: NAVY }}/>
             </button>
           </div>
         </header>

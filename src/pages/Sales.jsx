@@ -1,30 +1,24 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 
 const now = new Date()
 const thisMonthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 const today = now.toISOString().split('T')[0]
 
 export default function Sales() {
+  const { projectId } = useAuth()
   const [rows, setRows]     = useState([])
   const [loading, setLoading] = useState(true)
   const [totals, setTotals] = useState({ cash: 0, network: 0, total: 0 })
   const [filter, setFilter] = useState({ from: thisMonthStart, to: today })
-  const [projectId, setProjectId] = useState(null)
 
-  useEffect(() => { init() }, [])
-
-  async function init() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').single()
-    if (!proj) { setLoading(false); return }
-    setProjectId(proj.id)
-    await load(proj.id, filter)
-  }
+  useEffect(() => { if (projectId) load(projectId, filter) }, [projectId])
 
   async function load(pid, f) {
     setLoading(true)
     let q = supabase.from('sales')
-      .select('*').eq('project_id', pid || projectId)
+      .select('*').eq('project_id', pid)
       .order('date', { ascending: false }).limit(200)
     if (f.from) q = q.gte('date', f.from)
     if (f.to)   q = q.lte('date', f.to)

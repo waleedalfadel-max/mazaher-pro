@@ -15,10 +15,12 @@ import CashierDashboard from './pages/CashierDashboard'
 import UsersManagement from './pages/UsersManagement'
 import JournalLedger from './pages/JournalLedger'
 import JournalArchive from './pages/JournalArchive'
+import SuperAdmin from './pages/SuperAdmin'
 
 function defaultPath(role) {
   if (role === 'purchasing') return '/invoice'
   if (role === 'cashier')    return '/cashier'
+  if (role === 'superadmin') return '/admin'
   return '/'
 }
 
@@ -39,37 +41,37 @@ function AppRoutes() {
       <Route path="/login" element={role ? <Navigate to={defaultPath(role)} replace /> : <Login />} />
 
       <Route path="/" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <Dashboard />
         </ProtectedRoute>
       } />
 
       <Route path="/ledger" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <Ledger />
         </ProtectedRoute>
       } />
 
       <Route path="/sales" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <Sales />
         </ProtectedRoute>
       } />
 
       <Route path="/journals" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <Journals />
         </ProtectedRoute>
       } />
 
       <Route path="/reports" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <Reports />
         </ProtectedRoute>
       } />
 
       <Route path="/loans" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <Loans />
         </ProtectedRoute>
       } />
@@ -81,7 +83,7 @@ function AppRoutes() {
       } />
 
       <Route path="/pending" element={
-        <ProtectedRoute allowedRoles={['accountant']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <PendingDocuments />
         </ProtectedRoute>
       } />
@@ -99,14 +101,20 @@ function AppRoutes() {
       } />
 
       <Route path="/journal" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <JournalLedger />
         </ProtectedRoute>
       } />
 
       <Route path="/archive" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <JournalArchive />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/admin" element={
+        <ProtectedRoute allowedRoles={['superadmin']}>
+          <SuperAdmin />
         </ProtectedRoute>
       } />
 

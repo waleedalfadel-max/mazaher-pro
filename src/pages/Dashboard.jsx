@@ -59,8 +59,7 @@ function getRange(type) {
 }
 
 export default function Dashboard() {
-  const { roleLabel } = useAuth()
-  const [pid, setPid]             = useState(null)
+  const { roleLabel, projectId: pid, projectName } = useAuth()
   const [stats, setStats]         = useState(null)
   const [loading, setLoading]     = useState(true)
   const [recent, setRecent]       = useState([])
@@ -69,21 +68,12 @@ export default function Dashboard() {
   const [range, setRange]         = useState(getRange('month'))
 
   useEffect(() => {
-    async function init() {
-      try {
-        const { data: proj } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
-        if (!proj) { setLoading(false); setBalances({ cash: 0, bank: 0, custody: 0 }); return }
-        setPid(proj.id)
-        const r = getRange('month')
-        await Promise.all([loadBalances(proj.id), loadStats(r, proj.id)])
-      } catch(e) {
-        console.error('init error:', e)
-        setBalances({ cash: 0, bank: 0, custody: 0 })
-        setLoading(false)
-      }
-    }
-    init()
-  }, [])
+    if (!pid) { setBalances({ cash: 0, bank: 0, custody: 0 }); setLoading(false); return }
+    const r = getRange('month')
+    Promise.all([loadBalances(pid), loadStats(r, pid)]).catch(e => {
+      console.error(e); setBalances({ cash: 0, bank: 0, custody: 0 }); setLoading(false)
+    })
+  }, [pid])
 
   async function loadBalances(projectId) {
     try {
@@ -108,7 +98,7 @@ export default function Dashboard() {
     setActivePeriod(key)
     const r = getRange(key)
     setRange(r)
-    if (pid) await loadStats(r, pid)
+    if (pid) loadStats(r, pid)
   }
 
   async function handleCustom(field, val) {
@@ -150,7 +140,7 @@ export default function Dashboard() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold" style={{ color: NAVY }}>لوحة التحكم</h1>
-        <p className="text-slate-500 text-sm mt-0.5">مرحباً — {roleLabel} | تحسيب برو</p>
+        <p className="text-slate-500 text-sm mt-0.5">مرحباً — {roleLabel}{projectName ? ` | ${projectName}` : ''}</p>
       </div>
 
       {balances ? (

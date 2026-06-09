@@ -8,7 +8,7 @@ const MAX_SIZE_MB = 10
 const ROLE_AR = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك' }
 
 export default function InvoiceUpload() {
-  const { role } = useAuth()
+  const { role, projectId } = useAuth()
   const [file, setFile]           = useState(null)
   const [preview, setPreview]     = useState(null)
   const [uploading, setUploading] = useState(false)
@@ -32,11 +32,9 @@ export default function InvoiceUpload() {
     if (!file) return
     setUploading(true); setError('')
     try {
-      const { data: proj } = await supabase.from('projects').select('id').eq('name','تحسيب-برو').maybeSingle()
-      const pid = proj?.id || null
-      const fileUrl = await uploadToStorage(file, pid || 'shared')
+      const fileUrl = await uploadToStorage(file, projectId || 'shared')
       const { error: err } = await supabase.from('documents').insert({
-        project_id:  pid,
+        project_id:  projectId,
         file_name:   file.name,
         file_type:   file.type,
         file_url:    fileUrl,

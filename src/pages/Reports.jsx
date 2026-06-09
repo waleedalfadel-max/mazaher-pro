@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 
 const NAVY = '#0f2444'
 const GOLD = '#c9a227'
@@ -81,6 +82,7 @@ function IncomeRow({ label, value, bold, indent, color, line }) {
 }
 
 export default function Reports() {
+  const { projectId } = useAuth()
   const init = getPeriodRange('month')
   const [from, setFrom]                 = useState(init.from)
   const [to,   setTo]                   = useState(init.to)
@@ -91,11 +93,12 @@ export default function Reports() {
   const [docs,     setDocs]     = useState([])
   const [balances, setBalances] = useState(null)
   const [loading,  setLoading]  = useState(false)
-  const [exporting, setExporting] = useState(false)
+  const [exporting,  setExporting]  = useState(false)
+  const [previewing, setPreviewing] = useState(false)
   const pdfRef      = useRef()
   const docsRowRefs = useRef([])
 
-  useEffect(() => { load(init.from, init.to) }, [])
+  useEffect(() => { if (projectId) load(init.from, init.to) }, [projectId])
 
   function applyPreset(key) {
     setActivePeriod(key)
@@ -105,9 +108,8 @@ export default function Reports() {
   }
 
   async function load(fromDate = from, toDate = to) {
+    if (!projectId) return
     setLoading(true)
-    const { data: proj } = await supabase.from('projects').select('id').eq('name','تحسيب-برو').single()
-    if (!proj) { setLoading(false); return }
 
     const [
       { data: sales },
@@ -117,16 +119,16 @@ export default function Reports() {
       { data: allTime }
     ] = await Promise.all([
       supabase.from('sales').select('cash_sales,network_sales')
-        .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate),
+        .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate),
       supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
-        .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate),
+        .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate),
       supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,vat_amount,journal_number')
-        .eq('project_id', proj.id).gte('date', fromDate).lte('date', toDate).order('date'),
+        .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate).order('date'),
       supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
-        .eq('project_id', proj.id).eq('status','approved')
+        .eq('project_id', projectId).eq('status','approved')
         .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59').order('uploaded_at'),
       supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out')
-        .eq('project_id', proj.id).lte('date', toDate).neq('status', 'cancelled')
+        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled')
     ])
 
     const sum    = (list, field) => (list||[]).reduce((s,r) => s+(Number(r[field])||0), 0)
@@ -225,6 +227,35 @@ export default function Reports() {
     setExporting(false)
   }
 
+  async function previewPdf() {
+    if (!data || !pdfRef.current) return
+    setPreviewing(true)
+    try {
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import('jspdf'), import('html2canvas'),
+      ])
+      const el = pdfRef.current
+      el.style.display = 'block'
+      await new Promise(r => setTimeout(r, 150))
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true })
+      el.style.display = 'none'
+      const imgData = canvas.toDataURL('image/png')
+      const pdf   = new jsPDF('p', 'mm', 'a4')
+      const pageW = pdf.internal.pageSize.getWidth()
+      const pageH = pdf.internal.pageSize.getHeight()
+      const imgH  = (canvas.height * pageW) / canvas.width
+      let yOffset = 0, remaining = imgH
+      while (remaining > 0) {
+        pdf.addImage(imgData, 'PNG', 0, -yOffset, pageW, imgH)
+        remaining -= pageH; yOffset += pageH
+        if (remaining > 0) pdf.addPage()
+      }
+      const blobUrl = pdf.output('bloburl')
+      window.open(blobUrl, '_blank')
+    } catch(e) { console.error(e) }
+    setPreviewing(false)
+  }
+
   const fmt  = v => (v||0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
   const fmtD = d => d ? new Date(d).toLocaleDateString('ar-SA') : ''
 
@@ -245,14 +276,24 @@ export default function Reports() {
           <p className="text-sm text-slate-500 mt-0.5">الفترة: {from} — {to}</p>
         </div>
         {data && activeTab === 'income' && (
-          <button onClick={exportPdf} disabled={exporting}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
-            style={{ background: NAVY, color: '#fff' }}>
-            {exporting
-              ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>جارٍ التصدير...</>
-              : <>📄 تصدير PDF</>
-            }
-          </button>
+          <div className="flex gap-2">
+            <button onClick={previewPdf} disabled={previewing || exporting}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
+              style={{ background: '#f5f4f0', color: NAVY, border: `1px solid #d1c9b8` }}>
+              {previewing
+                ? <><div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: NAVY, borderTopColor: 'transparent' }}/>جارٍ المعاينة...</>
+                : <>👁️ عرض</>
+              }
+            </button>
+            <button onClick={exportPdf} disabled={exporting || previewing}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
+              style={{ background: NAVY, color: '#fff' }}>
+              {exporting
+                ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>جارٍ التصدير...</>
+                : <>📄 تصدير PDF</>
+              }
+            </button>
+          </div>
         )}
       </div>
 

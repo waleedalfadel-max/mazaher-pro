@@ -1,9 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import logo from '../assets/logo.png'
+import staticLogo from '../assets/logo.png'
+import { fetchLogoUrl } from '../lib/appLogo'
 
 function defaultPath(role) {
+  if (role === 'superadmin') return '/admin'
   if (role === 'purchasing') return '/invoice'
   if (role === 'cashier')    return '/cashier'
   return '/'
@@ -14,15 +16,18 @@ export default function Login() {
   const [error, setError]   = useState('')
   const [shake, setShake]   = useState(false)
   const [loading, setLoading] = useState(false)
+  const [logo, setLogo]     = useState(staticLogo)
   const { login }           = useAuth()
+
+  useEffect(() => { fetchLogoUrl().then(url => { if (url) setLogo(url) }) }, [])
   const navigate            = useNavigate()
 
   async function handleDigit(d) {
-    if (pin.length >= 4 || loading) return
+    if (pin.length >= 5 || loading) return
     const next = pin + d
     setPin(next)
     setError('')
-    if (next.length === 4) {
+    if (next.length === 5) {
       setTimeout(() => attempt(next), 150)
     }
   }
@@ -65,9 +70,9 @@ export default function Login() {
             أدخل رمز الدخول
           </p>
 
-          <div className={`flex justify-center gap-4 mb-6 ${shake ? 'animate-bounce' : ''}`}>
-            {[0,1,2,3].map(i => (
-              <div key={i} className="w-4 h-4 rounded-full transition-all duration-200"
+          <div className={`flex justify-center gap-3 mb-6 ${shake ? 'animate-bounce' : ''}`}>
+            {[0,1,2,3,4].map(i => (
+              <div key={i} className="w-3.5 h-3.5 rounded-full transition-all duration-200"
                 style={{ background: i < pin.length ? GOLD : 'rgba(255,255,255,0.15)', transform: i < pin.length ? 'scale(1.15)' : 'scale(1)' }}
               />
             ))}
@@ -103,6 +108,16 @@ export default function Login() {
               </button>
             ))}
           </div>
+
+          {pin.length >= 4 && pin.length < 5 && !loading && (
+            <button
+              onClick={() => attempt(pin)}
+              className="mt-4 w-full h-12 rounded-xl text-base font-bold transition-all duration-150 active:scale-95"
+              style={{ background: GOLD, color: NAVY }}
+            >
+              دخول ✓
+            </button>
+          )}
         </div>
       </div>
     </div>

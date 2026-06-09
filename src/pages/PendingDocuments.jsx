@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import { analyzeDocument } from '../lib/claude'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64 } from '../lib/storage'
+import { getTransactionTypes } from '../lib/projectSettings'
 
 function readableName(doc, res) {
   if (res?.description?.trim()) return res.description.trim()
@@ -11,7 +13,7 @@ function readableName(doc, res) {
   return base.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim() || doc.file_name
 }
 
-const TRANS_TYPES = [
+const FALLBACK_TRANS_TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
   '💳 قسط سيارة','💳 قسط شراء أرض','💳 قرض ١','💳 قرض ٢',
   '👤 صرف عهدة','💼 مسحوبات سليمان','💼 مسحوبات أم طوبى','🏛️ ضريبة القيمة المضافة','🔄 تحويل داخلي',
@@ -26,26 +28,26 @@ const ROLE_COLOR = {
 }
 
 export default function PendingDocuments() {
-  const [docs, setDocs]       = useState([])
-  const [loading, setLoading] = useState(true)
-  const pidRef                = useRef(null)
+  const { projectId } = useAuth()
+  const [docs, setDocs]           = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [transTypes, setTransTypes] = useState(FALLBACK_TRANS_TYPES)
+  const pidRef                    = useRef(null)
 
-  useEffect(() => { init() }, [])
-
-  async function init() {
-    const { data: proj } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').maybeSingle()
-    pidRef.current = proj?.id || null
-    await loadDocs(proj?.id || null)
-    setLoading(false)
-  }
+  useEffect(() => {
+    pidRef.current = projectId
+    if (projectId) {
+      getTransactionTypes(projectId).then(setTransTypes)
+      loadDocs(projectId).then(() => setLoading(false))
+    }
+  }, [projectId])
 
   async function loadDocs(pid) {
-    const projectId = pid ?? pidRef.current
     let q = supabase.from('documents')
       .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,file_url')
       .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
-    if (projectId) q = q.eq('project_id', projectId)
+    if (pid) q = q.eq('project_id', pid)
     const { data } = await q
     setDocs((data || []).map(d => ({
       ...d,
@@ -205,7 +207,7 @@ export default function PendingDocuments() {
           onReject={() => reject(doc)}
           onEdit={(f, v) => updateDoc(doc.id, { _edit: { ...(doc._edit || doc.analysis_result || {}), [f]: v } })}
           timeAgo={timeAgo}
-          TRANS_TYPES={TRANS_TYPES}
+          transTypes={transTypes}
           ROLE_AR={ROLE_AR}
           ROLE_COLOR={ROLE_COLOR}
         />
@@ -222,7 +224,7 @@ function openPdfBlob(base64, fileName) {
   window.open(URL.createObjectURL(blob), '_blank')
 }
 
-function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, timeAgo, TRANS_TYPES, ROLE_AR, ROLE_COLOR }) {
+function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, timeAgo, transTypes, ROLE_AR, ROLE_COLOR }) {
   const res     = doc._edit || doc.analysis_result
   const busy    = ['analyzing','approving','rejecting'].includes(doc._state)
   const isImage = doc.file_type?.startsWith('image/')
@@ -296,7 +298,7 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
             className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
             {doc._state === 'analyzing'
               ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ التحليل...</span></>
-              : '🤖 تحليل بالذكاء الاصطناعي'
+              : '📄 قراءة المستند'
             }
           </button>
         )}
@@ -359,7 +361,7 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onReject, onEdit, tim
                     <select value={res.transType || ''} onChange={e => onEdit('transType', e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                       <option value="">— اختر —</option>
-                      {TRANS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                      {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                 )}

@@ -143,23 +143,16 @@ function AttachModal({ entry, projectId, role, onClose, onAdded }) {
 
 // ── الصفحة الرئيسية ──────────────────────────────────────────────
 export default function JournalLedger() {
-  const { role } = useAuth()
+  const { role, projectId } = useAuth()
   const [rows, setRows]             = useState([])
   const [loading, setLoading]       = useState(true)
-  const [projectId, setProjectId]   = useState(null)
   const [filter, setFilter]         = useState({ from: thisMonthStart, to: today })
   const [search, setSearch]         = useState('')
   const [attachCounts, setAttachCounts] = useState({})   // journal_number → count
-  const [modalEntry, setModalEntry] = useState(null)
+  const [modalEntry,  setModalEntry]  = useState(null)
+  const [cancellingId, setCancellingId] = useState(null)
 
-  useEffect(() => { init() }, [])
-
-  async function init() {
-    const { data: proj } = await supabase
-      .from('projects').select('id').eq('name', 'تحسيب-برو').single()
-    if (proj) { setProjectId(proj.id); await load(proj.id, filter) }
-    setLoading(false)
-  }
+  useEffect(() => { if (projectId) load(projectId, filter) }, [projectId])
 
   async function load(pid, f) {
     setLoading(true)
@@ -211,6 +204,18 @@ export default function JournalLedger() {
   }
 
   function refreshAttachCount(journalNumber) {
+    load(projectId, filter)
+  }
+
+  async function handleCancel(entry) {
+    if (!window.confirm(`حذف القيد ${entry.journal_number || ''}؟\n"${entry.type}" — ${entry.date}\n\nلا يمكن التراجع عن هذا الإجراء.`)) return
+    setCancellingId(entry.id)
+    const { error } = await supabase
+      .from('ledger_entries')
+      .delete()
+      .eq('id', entry.id)
+    setCancellingId(null)
+    if (error) { alert('فشل الحذف: ' + error.message); return }
     load(projectId, filter)
   }
 
@@ -377,11 +382,15 @@ export default function JournalLedger() {
                 <th className="px-4 py-3 text-right text-xs font-bold text-white">الحالة</th>
                 <th className="px-4 py-3 text-center text-xs font-bold" style={{ color: GOLD }}>مستند</th>
                 <th className="px-4 py-3 text-center text-xs font-bold" style={{ color: GOLD }}>مرفقات</th>
+                {(role === 'accountant' || role === 'owner') && (
+                  <th className="px-4 py-3 text-center text-xs font-bold text-white w-16">إلغاء</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y" style={{ borderColor: '#f5f4f0' }}>
               {visibleRows.length === 0 && (
-                <tr><td colSpan={9} className="text-center py-12 text-slate-400">
+                <tr><td colSpan={(role === 'accountant' || role === 'owner') ? 10 : 9}
+                  className="text-center py-12 text-slate-400">
                   {search ? 'لا توجد نتائج للبحث' : 'لا توجد قيود في هذه الفترة'}
                 </td></tr>
               )}
@@ -441,6 +450,28 @@ export default function JournalLedger() {
                         <span className="text-slate-300 text-xs">—</span>
                       )}
                     </td>
+
+                    {/* زر الإلغاء */}
+                    {(role === 'accountant' || role === 'owner') && (
+                      <td className="px-4 py-3 text-center">
+                        {r.status !== 'cancelled' ? (
+                          <button
+                            onClick={() => handleCancel(r)}
+                            disabled={cancellingId === r.id}
+                            className="inline-flex items-center justify-center px-2.5 py-1 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
+                            style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#dc2626'; e.currentTarget.style.color = '#fff' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#fef2f2'; e.currentTarget.style.color = '#dc2626' }}>
+                            {cancellingId === r.id
+                              ? <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin"/>
+                              : '✕ إلغاء'
+                            }
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-300">ملغي</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -452,6 +483,7 @@ export default function JournalLedger() {
                   <td className="px-4 py-3 text-right font-bold tabular-nums text-xs" style={{ color: '#86efac' }}>{fmt(totals.debit)}</td>
                   <td className="px-4 py-3 text-right font-bold tabular-nums text-xs" style={{ color: '#fca5a5' }}>{fmt(totals.credit)}</td>
                   <td/><td/><td/>
+                  {(role === 'accountant' || role === 'owner') && <td/>}
                 </tr>
               </tfoot>
             )}

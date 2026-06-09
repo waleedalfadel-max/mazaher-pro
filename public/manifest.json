@@ -1,0 +1,31 @@
+{
+  "name": "تحسيب برو",
+  "short_name": "تحسيب برو",
+  "description": "نظام المحاسبة المتكامل",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f2444",
+  "theme_color": "#0f2444",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    {
+      "src": "https://dnuxevxxgmgptptmuzdy.supabase.co/storage/v1/object/public/documents/__app__/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://dnuxevxxgmgptptmuzdy.supabase.co/storage/v1/object/public/documents/__app__/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

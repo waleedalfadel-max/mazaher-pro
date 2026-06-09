@@ -2,12 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
-
-const TYPES = [
-  '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
-  '💳 قسط سيارة','💳 قسط شراء أرض','💳 قرض ١','💳 قرض ٢',
-  '👤 صرف عهدة','💼 مسحوبات سليمان','💼 مسحوبات أم طوبى','🏛️ ضريبة القيمة المضافة','🔄 تحويل داخلي',
-]
+import { getTransactionTypes } from '../lib/projectSettings'
 
 const STATUS_BADGE = {
   approved:  'bg-green-100 text-green-700',
@@ -59,29 +54,27 @@ function BalanceSummary({ cash, bank, custody }) {
 }
 
 export default function Ledger() {
-  const { canEdit } = useAuth()
+  const { canEdit, projectId } = useAuth()
   const [allRows, setAllRows]       = useState([])
   const [loading, setLoading]       = useState(true)
-  const [projectId, setProjectId]   = useState(null)
+  const [types, setTypes]           = useState([])
   const [editRow, setEditRow]       = useState(null)
   const [activeTab, setActiveTab]   = useState('')
   const [filter, setFilter]         = useState({ from: '', to: '', type: '' })
   const [newRow, setNewRow]           = useState(null)
   const [saving, setSaving]           = useState(false)
 
-  useEffect(() => { init() }, [])
-
-  async function init() {
-    const { data } = await supabase.from('projects').select('id').eq('name', 'تحسيب-برو').single()
-    if (data) { setProjectId(data.id); await load(data.id) }
-    setLoading(false)
-  }
+  useEffect(() => {
+    if (!projectId) return
+    getTransactionTypes(projectId).then(setTypes)
+    load(projectId)
+  }, [projectId])
 
   async function load(pid) {
     setLoading(true)
     const { data } = await supabase.from('ledger_entries')
       .select('*')
-      .eq('project_id', pid || projectId)
+      .eq('project_id', pid)
       .order('date', { ascending: true })
       .order('created_at', { ascending: true })
       .limit(2000)
@@ -137,7 +130,12 @@ export default function Ledger() {
   }
 
   async function cancelEntry(id) {
-    await supabase.from('ledger_entries').update({ status: 'cancelled' }).eq('id', id)
+    if (!window.confirm('هل تريد حذف هذا القيد نهائياً؟ لا يمكن التراجع.')) return
+    const { error } = await supabase
+      .from('ledger_entries')
+      .delete()
+      .eq('id', id)
+    if (error) { alert('فشل الحذف: ' + error.message); return }
     load(projectId)
   }
 
@@ -221,7 +219,7 @@ export default function Ledger() {
             onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
             className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
             <option value="">الكل</option>
-            {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            {types.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
         <button onClick={() => setFilter(f => ({ ...f }))}
@@ -323,7 +321,7 @@ export default function Ledger() {
                 <select value={newRow.type} onChange={e => setNewRow(r => ({ ...r, type: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                   <option value="">— اختر —</option>
-                  {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {types.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div className="col-span-2">
@@ -347,7 +345,7 @@ export default function Ledger() {
                 {saving ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></> : 'حفظ القيد'}
               </button>
               <button onClick={() => setNewRow(null)}
-                className="flex-1 bg-slate-100 text-slate-700 rounded-lg py-2.5 font-medium hover:bg-slate-200 transition-colors">إلغاء</button>
+                className="flex-1 bg-slate-100 text-slate-700 rounded-lg py-2.5 font-medium hover:bg-slate-200 transition-colors">رجوع</button>
             </div>
           </div>
         </div>
@@ -365,7 +363,7 @@ export default function Ledger() {
                 <select value={editRow.type || ''} onChange={e => setEditRow(r => ({ ...r, type: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                   <option value="">— اختر —</option>
-                  {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {types.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div className="col-span-2">
@@ -387,7 +385,7 @@ export default function Ledger() {
               <button onClick={saveEdit}
                 className="flex-1 bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 transition-colors">حفظ</button>
               <button onClick={() => setEditRow(null)}
-                className="flex-1 bg-slate-100 text-slate-700 rounded-lg py-2.5 font-medium hover:bg-slate-200 transition-colors">إلغاء</button>
+                className="flex-1 bg-slate-100 text-slate-700 rounded-lg py-2.5 font-medium hover:bg-slate-200 transition-colors">رجوع</button>
             </div>
           </div>
         </div>
