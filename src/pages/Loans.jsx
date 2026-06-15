@@ -30,7 +30,7 @@ export default function Loans() {
     setLoading(false)
   }
 
-  const fmt = v => (v||0).toLocaleString('ar-SA', {minimumFractionDigits:2})
+  const fmt = v => (v||0).toLocaleString('en-US', {minimumFractionDigits:2})
 
   if (loading) return <div className="flex justify-center h-64 items-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/></div>
 
@@ -49,7 +49,7 @@ export default function Loans() {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">إجمالي المسدد</span>
-                  <span className="font-semibold text-red-600 tabular-nums">{fmt(paid)} ر.س</span>
+                  <span className="font-semibold text-red-600 tabular-nums">{fmt(paid)}</span>
                 </div>
               </div>
             </div>
@@ -60,7 +60,7 @@ export default function Loans() {
       <div className="bg-slate-800 rounded-xl p-5 text-white">
         <div className="flex justify-between items-center">
           <span className="font-medium">إجمالي الأقساط المسددة</span>
-          <span className="text-xl font-bold tabular-nums">{fmt(totalPaid)} ر.س</span>
+          <span className="text-xl font-bold tabular-nums">{fmt(totalPaid)}</span>
         </div>
       </div>
     </div>

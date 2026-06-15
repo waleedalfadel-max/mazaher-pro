@@ -32,7 +32,7 @@ export default function Journals() {
     setRows([])
   }
 
-  const fmt = v => v ? Number(v).toLocaleString('ar-SA', {minimumFractionDigits:2}) : '—'
+  const fmt = v => v ? Number(v).toLocaleString('en-US', {minimumFractionDigits:2}) : '—'
 
   if (loading) return <div className="flex justify-center h-64 items-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/></div>
 
@@ -40,8 +40,8 @@ export default function Journals() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">القيود المعلقة</h1>
-          <p className="text-sm text-slate-500 mt-1">{rows.length} قيد بانتظار الاعتماد</p>
+          <h1 className="text-2xl font-bold text-slate-800">الحركات المعلقة</h1>
+          <p className="text-sm text-slate-500 mt-1">{rows.length} حركة بانتظار التسجيل</p>
         </div>
         {canEdit && rows.length > 0 && (
           <button onClick={approveAll}

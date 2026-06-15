@@ -4,6 +4,9 @@ import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { getTransactionTypes } from '../lib/projectSettings'
 
+const NAVY = '#0f2444'
+const GOLD = '#c9a227'
+
 const STATUS_BADGE = {
   approved:  'bg-green-100 text-green-700',
   auto:      'bg-blue-100 text-blue-700',
@@ -19,39 +22,26 @@ const STATUS_LABEL = {
   modified:  'معدَّل',
 }
 
-const TABS = [
-  { key: '',          label: 'الكل' },
-  { key: 'approved',  label: 'معتمد' },
-  { key: 'auto',      label: 'تلقائي' },
-  { key: 'pending',   label: 'معلق' },
-  { key: 'cancelled', label: 'ملغي' },
+const QUICK_PERIODS = [
+  { key: 'month',     label: 'الشهر الحالي' },
+  { key: 'lastMonth', label: 'الشهر الماضي' },
+  { key: 'year',      label: 'السنة الحالية' },
 ]
 
-function BalanceSummary({ cash, bank, custody }) {
-  const fmt = v => Math.abs(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2 })
-  const card = (label, icon, value, bg, border, textColor) => {
-    const neg = value < 0
-    return (
-      <div className={`rounded-xl p-5 border-2 ${neg ? 'bg-red-50 border-red-200' : `${bg} ${border}`}`}>
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-2xl">{icon}</span>
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
-        </div>
-        <div className={`text-2xl font-bold font-mono tabular-nums ${neg ? 'text-red-600' : textColor}`}>
-          {fmt(value)}<span className="text-sm font-normal text-slate-400 mr-1">ر.س</span>
-        </div>
-        {neg && <div className="text-xs text-red-500 font-semibold mt-2">⚠️ رصيد سالب</div>}
-      </div>
-    )
+function getRange(type) {
+  const n = new Date()
+  const to = n.toISOString().split('T')[0]
+  if (type === 'lastMonth') {
+    const lm  = new Date(n.getFullYear(), n.getMonth() - 1, 1)
+    const lme = new Date(n.getFullYear(), n.getMonth(), 0)
+    return { from: lm.toISOString().split('T')[0], to: lme.toISOString().split('T')[0] }
   }
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-      {card('رصيد الصندوق', '🏧', cash,    'bg-green-50', 'border-green-200', 'text-green-700')}
-      {card('رصيد البنك',   '🏦', bank,    'bg-blue-50',  'border-blue-200',  'text-blue-700')}
-      {card('رصيد العهدة',  '👤', custody, 'bg-amber-50', 'border-amber-200', 'text-amber-700')}
-    </div>
-  )
+  const from = type === 'year'
+    ? `${n.getFullYear()}-01-01`
+    : `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`
+  return { from, to }
 }
+
 
 export default function Ledger() {
   const { canEdit, projectId } = useAuth()
@@ -59,8 +49,8 @@ export default function Ledger() {
   const [loading, setLoading]       = useState(true)
   const [types, setTypes]           = useState([])
   const [editRow, setEditRow]       = useState(null)
-  const [activeTab, setActiveTab]   = useState('')
-  const [filter, setFilter]         = useState({ from: '', to: '', type: '' })
+  const [activePeriod, setActivePeriod] = useState('month')
+  const [filter, setFilter]         = useState({ ...getRange('month'), type: '' })
   const [newRow, setNewRow]           = useState(null)
   const [saving, setSaving]           = useState(false)
 
@@ -102,15 +92,14 @@ export default function Ledger() {
     return last ? { cash: last._cashBal, bank: last._bankBal, custody: last._custodyBal } : { cash: 0, bank: 0, custody: 0 }
   }, [enriched])
 
-  // Apply tab + date + type filters, then reverse for newest-first display
+  // Apply date + type filters, then reverse for newest-first display
   const filteredRows = useMemo(() => {
     let rows = enriched
-    if (activeTab)  rows = rows.filter(r => r.status === activeTab)
     if (filter.from) rows = rows.filter(r => r.date >= filter.from)
     if (filter.to)   rows = rows.filter(r => r.date <= filter.to)
     if (filter.type) rows = rows.filter(r => r.type === filter.type)
     return [...rows].reverse()
-  }, [enriched, activeTab, filter])
+  }, [enriched, filter])
 
   async function saveEdit() {
     if (!editRow) return
@@ -130,7 +119,7 @@ export default function Ledger() {
   }
 
   async function cancelEntry(id) {
-    if (!window.confirm('هل تريد حذف هذا القيد نهائياً؟ لا يمكن التراجع.')) return
+    if (!window.confirm('هل تريد حذف هذه الحركة نهائياً؟ لا يمكن التراجع.')) return
     const { error } = await supabase
       .from('ledger_entries')
       .delete()
@@ -166,77 +155,75 @@ export default function Ledger() {
     if (!error) { setNewRow(null); load(projectId) }
   }
 
-  const fmt = v => v != null && v !== 0 ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
-  const fmtBal = v => v != null ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
+  const fmt = v => v != null && v !== 0 ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
+  const fmtBal = v => v != null ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-800">الدفتر</h1>
-        {canEdit
-          ? <button onClick={() => setNewRow({ date: new Date().toISOString().split('T')[0], type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'' })}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2">
-              + إضافة قيد
+    <div className="space-y-5">
+      <h1 className="text-2xl font-bold" style={{ color: NAVY }}>الدفتر</h1>
+
+      {/* فلتر التاريخ */}
+      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={{ border: '1px solid #e8e5dc' }}>
+        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
+        <div className="flex flex-wrap gap-2 justify-center">
+          {QUICK_PERIODS.map(p => (
+            <button key={p.key} onClick={() => { setActivePeriod(p.key); setFilter(f => ({ ...getRange(p.key), type: f.type })) }}
+              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
+              style={activePeriod === p.key
+                ? { background: GOLD, color: NAVY }
+                : { background: '#f5f4f0', color: '#4b5563' }
+              }>
+              {p.label}
             </button>
-          : <span className="text-xs bg-slate-100 text-slate-500 px-3 py-1 rounded-full">عرض فقط</span>
-        }
-      </div>
-
-      {/* Balance Summary — all time */}
-      <BalanceSummary cash={currentBal.cash} bank={currentBal.bank} custody={currentBal.custody} />
-
-      {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setActiveTab(t.key)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-              activeTab === t.key
-                ? 'bg-white text-slate-800 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-wrap gap-3 items-end">
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">من تاريخ</label>
-          <input type="date" value={filter.from}
-            onChange={e => setFilter(f => ({ ...f, from: e.target.value }))}
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+          ))}
         </div>
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">إلى تاريخ</label>
-          <input type="date" value={filter.to}
-            onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+        <div className="flex flex-wrap gap-3 items-end justify-center">
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">من</label>
+            <input type="date" value={filter.from}
+              onChange={e => { setActivePeriod('custom'); setFilter(f => ({ ...f, from: e.target.value })) }}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">إلى</label>
+            <input type="date" value={filter.to}
+              onChange={e => { setActivePeriod('custom'); setFilter(f => ({ ...f, to: e.target.value })) }}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">النوع</label>
+            <select value={filter.type}
+              onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}>
+              <option value="">الكل</option>
+              {types.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          {canEdit && (
+            <div className="flex-1 min-w-[8rem]">
+              <div className="mb-1 h-4" />
+              <button onClick={() => setNewRow({ date: new Date().toISOString().split('T')[0], type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'' })}
+                className="w-full px-4 py-1.5 text-sm font-bold rounded-xl transition-all text-center"
+                style={{ background: NAVY, color: '#fff' }}>
+                + إضافة قيد
+              </button>
+            </div>
+          )}
         </div>
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">النوع</label>
-          <select value={filter.type}
-            onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
-            className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-            <option value="">الكل</option>
-            {types.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-        <button onClick={() => setFilter(f => ({ ...f }))}
-          className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
-          مسح الفلتر
-        </button>
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
+      <div className="bg-white rounded-2xl shadow-sm overflow-x-auto" style={{ border: '1px solid #e8e5dc' }}>
         {loading ? (
           <div className="flex justify-center py-12">
-            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/>
+            <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin" style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
           </div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-800 text-white">
+            <thead style={{ background: NAVY }}>
               <tr>
                 {[
                   'التاريخ','النوع','الوصف',
@@ -309,7 +296,7 @@ export default function Ledger() {
       {newRow && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4">
-            <h3 className="text-lg font-bold text-slate-800">إضافة قيد جديد</h3>
+            <h3 className="text-lg font-bold text-slate-800">إضافة حركة جديدة</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-slate-500 block mb-1">التاريخ</label>

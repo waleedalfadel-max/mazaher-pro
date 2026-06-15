@@ -1,18 +1,189 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage } from '../lib/storage'
+import { getProjectSettings } from '../lib/projectSettings'
+import { getOrCreateJournalNumber } from '../lib/journalNumber'
+import { compressImage } from '../lib/imageCompress'
 
+const NAVY = '#0f2444'
+const GOLD = '#c9a227'
+
+const fmt = v =>
+  Number(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// ── لوحة المحمصة الرئيسية: إدخال مباشر لقنوات المبيعات ──────────────────────
+function RoasteryMainPanel({ projectId, branch }) {
+  const today = new Date().toISOString().split('T')[0]
+  const [date, setDate]     = useState(today)
+  const [salla, setSalla]   = useState('')
+  const [tabby, setTabby]   = useState('')
+  const [tamara, setTamara] = useState('')
+  const [tahseel, setTahseel] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [done, setDone]     = useState(false)
+  const [error, setError]   = useState('')
+
+  const total = [salla, tabby, tamara, tahseel]
+    .reduce((s, v) => s + (Number(v) || 0), 0)
+
+  async function handleSubmit() {
+    if (total === 0) { setError('أدخل مبلغاً واحداً على الأقل'); return }
+    setSaving(true); setError('')
+    try {
+      const jn = await getOrCreateJournalNumber(projectId, date)
+      const mkEntry = (type, desc, cash_in, bank_in) => ({
+        project_id: projectId, date, type, description: desc,
+        cash_in, cash_out: 0, bank_in, bank_out: 0,
+        custody_in: 0, custody_out: 0,
+        total_amount: cash_in + bank_in,
+        status: 'approved', journal_number: jn, branch,
+      })
+
+      const entries = []
+      if (Number(salla)   > 0) entries.push(mkEntry('🛒 مبيعات سلة',   'مبيعات سلة',   0, Number(salla)))
+      if (Number(tabby)   > 0) entries.push(mkEntry('💳 مبيعات تابي',  'مبيعات تابي',  0, Number(tabby)))
+      if (Number(tamara)  > 0) entries.push(mkEntry('💳 مبيعات تمارا', 'مبيعات تمارا', 0, Number(tamara)))
+      if (Number(tahseel) > 0) entries.push(mkEntry('📥 تحصيل جملة',  'تحصيل جملة',   0, Number(tahseel)))
+
+      if (entries.length) {
+        const { error: e } = await supabase.from('ledger_entries').insert(entries)
+        if (e) throw new Error(e.message)
+      }
+
+      // جدول المبيعات — سلة/تابي/تمارا → network_sales
+      const netS = (Number(salla) || 0) + (Number(tabby) || 0) + (Number(tamara) || 0)
+      if (netS > 0) {
+        await supabase.from('sales').insert({
+          project_id: projectId, date,
+          cash_sales: 0, network_sales: netS,
+          hunger_sales: 0, jahez_sales: 0, keeta_sales: 0,
+          description: 'مبيعات المحمصة الرئيسية', branch,
+        })
+      }
+
+      setDone(true)
+      setSalla(''); setTabby(''); setTamara(''); setTahseel('')
+    } catch (e) { setError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  if (done) return (
+    <div className="bg-green-50 border border-green-200 rounded-2xl p-10 text-center space-y-3">
+      <div className="text-5xl">✅</div>
+      <div className="text-lg font-bold text-green-800">تم تسجيل المبيعات بنجاح</div>
+      <p className="text-sm text-green-600">تمت إضافة القيود في الدفتر</p>
+      <button onClick={() => setDone(false)}
+        className="mt-2 px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors">
+        تسجيل يوم آخر
+      </button>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* التاريخ */}
+      <div className="bg-white rounded-2xl shadow-sm p-5" style={{ border: `2px solid ${GOLD}` }}>
+        <label className="text-sm font-bold block mb-2" style={{ color: NAVY }}>📅 التاريخ</label>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)}
+          className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+          style={{ borderColor: '#d1c9b8', direction: 'ltr' }} />
+      </div>
+
+      {/* قنوات المبيعات */}
+      <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4" style={{ border: '2px solid #e8e5dc' }}>
+        <div className="text-sm font-bold mb-1" style={{ color: NAVY }}>قنوات المبيعات</div>
+
+        {[
+          { label: '🛒 سلة',          value: salla,  set: setSalla,  hint: 'مبيعات منصة سلة' },
+          { label: '💳 تابي',         value: tabby,  set: setTabby,  hint: 'مبيعات منصة تابي' },
+          { label: '💳 تمارا',        value: tamara, set: setTamara, hint: 'مبيعات منصة تمارا' },
+          { label: '📥 تحصيل جملة',  value: tahseel, set: setTahseel, hint: 'استلام حوالة من عميل جملة' },
+        ].map(({ label, value, set, hint }) => (
+          <div key={label} className="flex items-center gap-3">
+            <div className="w-36 shrink-0">
+              <span className="text-sm font-semibold" style={{ color: NAVY }}>{label}</span>
+              <span className="text-xs text-slate-400 block mt-0.5">{hint}</span>
+            </div>
+            <input
+              type="number" value={value} onChange={e => set(e.target.value)}
+              placeholder="0.00" min="0" step="0.01"
+              className="flex-1 border rounded-xl px-4 py-2.5 text-sm focus:outline-none text-left"
+              style={{ borderColor: '#d1c9b8', direction: 'ltr' }}
+            />
+          </div>
+        ))}
+
+        {total > 0 && (
+          <div className="mt-2 flex items-center justify-between px-4 py-3 rounded-xl"
+            style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+            <span className="font-bold text-green-800">الإجمالي</span>
+            <span className="font-mono font-bold text-green-800 text-lg">{fmt(total)} ر.س</span>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-red-600 text-sm font-medium bg-red-50 rounded-xl p-3 border border-red-100">❌ {error}</p>
+      )}
+
+      <button
+        onClick={handleSubmit}
+        disabled={saving || total === 0}
+        className="w-full py-3 text-white rounded-xl font-semibold transition-colors disabled:opacity-50"
+        style={{ background: saving || total === 0 ? '#94a3b8' : NAVY }}
+      >
+        {saving
+          ? <span className="flex items-center justify-center gap-2">
+              <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin inline-block"/>
+              جارٍ الحفظ...
+            </span>
+          : '✅ تسجيل المبيعات'
+        }
+      </button>
+    </div>
+  )
+}
+
+// ── لوحة الكاشير العادية: رفع مستند ──────────────────────────────────────────
 export default function CashierDashboard() {
-  const { role, projectId } = useAuth()
+  const { role, projectId, branch } = useAuth()
 
-  const [file, setFile]           = useState(null)
-  const [preview, setPreview]     = useState(null)
-  const [uploading, setUploading] = useState(false)
-  const [done, setDone]           = useState(false)
-  const [error, setError]         = useState('')
-  const [dragOver, setDragOver]   = useState(false)
+  const [file, setFile]                     = useState(null)
+  const [preview, setPreview]               = useState(null)
+  const [uploading, setUploading]           = useState(false)
+  const [done, setDone]                     = useState(false)
+  const [error, setError]                   = useState('')
+  const [dragOver, setDragOver]             = useState(false)
+  const [purchaseCategory, setPurchaseCategory] = useState('')
+  const [purchaseTypes, setPurchaseTypes]   = useState([])
   const inputRef = useRef()
+
+  useEffect(() => {
+    if (role === 'purchasing' && projectId) {
+      getProjectSettings(projectId).then(s => {
+        const types = s?.settings?.transaction_types?.map(t => t.label) || []
+        setPurchaseTypes(types)
+      })
+    }
+  }, [role, projectId])
+
+  // كاشير المحمصة الرئيسية → لوحة إدخال مباشر للمبيعات
+  if (role === 'cashier' && branch === 'المحمصة الرئيسية') {
+    return (
+      <div className="max-w-xl mx-auto space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">المحمصة الرئيسية</h1>
+          <p className="text-slate-500 text-sm mt-1">تسجيل مبيعات المنصات الإلكترونية والجملة</p>
+          <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold"
+            style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+            🏢 {branch}
+          </div>
+        </div>
+        <RoasteryMainPanel projectId={projectId} branch={branch} />
+      </div>
+    )
+  }
 
   function handleFile(f) {
     if (!f) return
@@ -25,31 +196,75 @@ export default function CashierDashboard() {
 
   async function upload() {
     if (!file) return
+    if (role === 'purchasing' && !purchaseCategory) { setError('اختر نوع المادة أولاً'); return }
     setUploading(true); setError('')
     try {
-      const fileUrl = await uploadToStorage(file, projectId || 'shared')
+      const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file
+      const fileUrl = await uploadToStorage(uploadFile, projectId || 'shared')
       const { error: err } = await supabase.from('documents').insert({
-        project_id:  projectId,
-        file_name:   file.name,
-        file_type:   file.type,
-        file_url:    fileUrl,
-        status:      'uploaded',
-        uploaded_by: role,
+        project_id:        projectId,
+        file_name:         file.name,
+        file_type:         uploadFile.type,
+        file_url:          fileUrl,
+        status:            'uploaded',
+        uploaded_by:       role,
+        branch:            branch || null,
+        purchase_category: role === 'purchasing' ? purchaseCategory : null,
       })
       if (err) throw new Error(err.message)
-      setDone(true); setFile(null); setPreview(null)
+      setDone(true); setFile(null); setPreview(null); setPurchaseCategory('')
     } catch (e) { setError(e.message) }
     finally { setUploading(false) }
   }
 
-  function reset() { setFile(null); setPreview(null); setDone(false); setError('') }
+  function reset() { setFile(null); setPreview(null); setDone(false); setError(''); setPurchaseCategory('') }
 
   return (
     <div className="max-w-xl mx-auto space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">لوحة الكاشير</h1>
-        <p className="text-slate-500 text-sm mt-1">ارفع ملخص مبيعات أو فاتورة مشتريات — سيراجعها المحاسب ويعتمدها</p>
+        <h1 className="text-2xl font-bold text-slate-800">
+          {role === 'purchasing' ? 'رفع فاتورة مشتريات' : 'لوحة الكاشير'}
+        </h1>
+        <p className="text-slate-500 text-sm mt-1">
+          {role === 'purchasing'
+            ? 'ارفع فاتورة المشتريات — سيراجعها المحاسب ويعتمدها'
+            : 'ارفع ملخص مبيعات أو فاتورة مشتريات — سيراجعها المحاسب ويعتمدها'}
+        </p>
+        {branch && (
+          <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold"
+            style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+            🏢 {branch}
+          </div>
+        )}
       </div>
+
+      {/* قائمة نوع المادة — لمسؤول المشتريات فقط */}
+      {role === 'purchasing' && purchaseTypes.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm p-5 space-y-3" style={{ border: `2px solid ${purchaseCategory ? GOLD : '#e8e5dc'}` }}>
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🛒</span>
+            <span className="font-bold text-sm" style={{ color: NAVY }}>نوع المادة</span>
+            <span className="text-red-500 text-sm">*</span>
+          </div>
+          <select
+            value={purchaseCategory}
+            onChange={e => { setPurchaseCategory(e.target.value); setError('') }}
+            className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+            style={{ borderColor: purchaseCategory ? GOLD : '#d1c9b8', color: purchaseCategory ? NAVY : '#9ca3af', direction: 'rtl' }}
+          >
+            <option value="">— اختر نوع المادة —</option>
+            {purchaseTypes.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          {purchaseCategory && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+              style={{ background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
+              ✅ {purchaseCategory}
+            </div>
+          )}
+        </div>
+      )}
 
       {done ? (
         <div className="bg-green-50 border border-green-200 rounded-2xl p-10 text-center space-y-3">

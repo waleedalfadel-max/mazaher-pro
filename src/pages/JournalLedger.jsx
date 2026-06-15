@@ -67,7 +67,7 @@ function AttachModal({ entry, projectId, role, onClose, onAdded }) {
     onAdded(entry.journal_number)
   }
 
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('ar-SA') : ''
+  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB') : ''
   const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
 
   return (
@@ -147,6 +147,7 @@ export default function JournalLedger() {
   const [rows, setRows]             = useState([])
   const [loading, setLoading]       = useState(true)
   const [filter, setFilter]         = useState({ from: thisMonthStart, to: today })
+  const [activePeriod, setActivePeriod] = useState('month')
   const [search, setSearch]         = useState('')
   const [attachCounts, setAttachCounts] = useState({})   // journal_number → count
   const [modalEntry,  setModalEntry]  = useState(null)
@@ -208,7 +209,7 @@ export default function JournalLedger() {
   }
 
   async function handleCancel(entry) {
-    if (!window.confirm(`حذف القيد ${entry.journal_number || ''}؟\n"${entry.type}" — ${entry.date}\n\nلا يمكن التراجع عن هذا الإجراء.`)) return
+    if (!window.confirm(`حذف الحركة ${entry.journal_number || ''}؟\n"${entry.type}" — ${entry.date}\n\nلا يمكن التراجع عن هذا الإجراء.`)) return
     setCancellingId(entry.id)
     const { error } = await supabase
       .from('ledger_entries')
@@ -220,6 +221,7 @@ export default function JournalLedger() {
   }
 
   function setQuick(type) {
+    setActivePeriod(type)
     const n = new Date()
     let from, to = n.toISOString().split('T')[0]
     if (type === 'month')     from = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`
@@ -227,8 +229,6 @@ export default function JournalLedger() {
       const lm = new Date(n.getFullYear(), n.getMonth() - 1, 1)
       const lme = new Date(n.getFullYear(), n.getMonth(), 0)
       from = lm.toISOString().split('T')[0]; to = lme.toISOString().split('T')[0]
-    } else if (type === '3months') {
-      const d = new Date(n); d.setMonth(d.getMonth() - 3); from = d.toISOString().split('T')[0]
     } else { from = `${n.getFullYear()}-01-01` }
     const f = { from, to }; setFilter(f)
     if (projectId) load(projectId, f)
@@ -246,7 +246,7 @@ export default function JournalLedger() {
     return { debit, credit, cashIn, cashOut, bankIn, bankOut, custIn, custOut }
   }, [rows])
 
-  const fmt = v => v ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
+  const fmt = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
 
   const visibleRows = useMemo(() => {
     if (!search.trim()) return rows
@@ -265,102 +265,62 @@ export default function JournalLedger() {
 
       {/* رأس الصفحة */}
       <div>
-        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>سجل القيود اليومية</h1>
+        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>سجل الحركات اليومية</h1>
         <p className="text-sm text-slate-500 mt-0.5">
-          {visibleRows.length} قيد {search && rows.length !== visibleRows.length ? `(من ${rows.length})` : ''}
+          {visibleRows.length} حركة {search && rows.length !== visibleRows.length ? `(من ${rows.length})` : ''}
         </p>
       </div>
 
       {/* فلاتر */}
       <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={cardBorder}>
-        <div className="flex flex-wrap gap-2">
+        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
+        <div className="flex flex-wrap gap-2 justify-center">
           {[
-            { key: 'month',     label: 'هذا الشهر' },
+            { key: 'month',     label: 'الشهر الحالي' },
             { key: 'lastMonth', label: 'الشهر الماضي' },
-            { key: '3months',   label: 'آخر 3 أشهر' },
-            { key: 'year',      label: 'هذا العام' },
+            { key: 'year',      label: 'السنة الحالية' },
           ].map(q => (
             <button key={q.key} onClick={() => setQuick(q.key)}
               className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
-              style={{ background: '#f5f4f0', color: '#4b5563' }}
-              onMouseEnter={e => { e.currentTarget.style.background = GOLD; e.currentTarget.style.color = NAVY }}
-              onMouseLeave={e => { e.currentTarget.style.background = '#f5f4f0'; e.currentTarget.style.color = '#4b5563' }}>
+              style={activePeriod === q.key
+                ? { background: GOLD, color: NAVY }
+                : { background: '#f5f4f0', color: '#4b5563' }}>
               {q.label}
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-3 items-end justify-between">
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">من تاريخ</label>
-              <input type="date" value={filter.from}
-                onChange={e => setFilter(f => ({ ...f, from: e.target.value }))}
-                className="border rounded-xl px-3 py-2 text-sm focus:outline-none"
-                style={{ borderColor: '#d1c9b8' }}/>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">إلى تاريخ</label>
-              <input type="date" value={filter.to}
-                onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
-                className="border rounded-xl px-3 py-2 text-sm focus:outline-none"
-                style={{ borderColor: '#d1c9b8' }}/>
-            </div>
+        <div className="flex flex-wrap gap-3 items-end justify-center">
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">من</label>
+            <input type="date" value={filter.from}
+              onChange={e => { setActivePeriod('custom'); const f = { ...filter, from: e.target.value }; setFilter(f); load(projectId, f) }}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">إلى</label>
+            <input type="date" value={filter.to}
+              onChange={e => { setActivePeriod('custom'); const f = { ...filter, to: e.target.value }; setFilter(f); load(projectId, f) }}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[10rem]">
+            <label className="text-xs text-slate-500 block mb-1">بحث بالبيان أو رقم القيد</label>
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="فاتورة كهرباء أو QD-..."
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[8rem]">
+            <div className="mb-1 h-4" />
             <button onClick={() => load(projectId, filter)}
-              className="px-4 py-2 rounded-xl text-sm font-bold transition-all"
+              className="w-full px-4 py-1.5 rounded-xl text-sm font-bold transition-all text-center"
               style={{ background: NAVY, color: '#fff' }}>
               بحث
             </button>
           </div>
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">بحث بالبيان أو رقم القيد</label>
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="مثال: فاتورة كهرباء أو QD-..."
-              className="border rounded-xl px-3 py-2 text-sm w-64 focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
         </div>
       </div>
-
-      {/* بطاقات الملخص */}
-      {rows.length > 0 && (
-        <div className="space-y-2">
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { label: 'إجمالي الدخل',  value: totals.debit,                   bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
-              { label: 'إجمالي الخرج',  value: totals.credit,                  bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
-              { label: 'صافي الحركة',   value: Math.abs(totals.debit-totals.credit), bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe',
-                suffix: totals.debit >= totals.credit ? ' ▲' : ' ▼',
-                textColor: totals.debit >= totals.credit ? '#1d4ed8' : '#dc2626' },
-            ].map(c => (
-              <div key={c.label} className="rounded-xl p-3 text-center" style={{ background: c.bg, border: `1px solid ${c.border}` }}>
-                <div className="text-xs mb-1 font-semibold" style={{ color: c.color }}>{c.label}</div>
-                <div className="font-bold tabular-nums text-xs sm:text-sm" style={{ color: c.textColor || c.color }}>
-                  {fmt(c.value)} ر.س{c.suffix || ''}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            {[
-              { icon: '🏧', label: 'الصندوق', inVal: totals.cashIn, outVal: totals.cashOut, color: '#16a34a' },
-              { icon: '🏦', label: 'البنك',   inVal: totals.bankIn, outVal: totals.bankOut, color: '#1d4ed8' },
-              { icon: '👤', label: 'العهدة',  inVal: totals.custIn, outVal: totals.custOut, color: '#b45309' },
-            ].map(c => (
-              <div key={c.label} className="bg-white rounded-xl p-3 shadow-sm" style={cardBorder}>
-                <div className="text-xs font-semibold text-slate-500 mb-2">{c.icon} {c.label}</div>
-                <div className="flex justify-between text-xs"><span className="text-slate-400">دخل</span><span className="text-green-600 font-mono font-medium">{fmt(c.inVal)}</span></div>
-                <div className="flex justify-between text-xs mt-1"><span className="text-slate-400">خرج</span><span className="text-red-500 font-mono font-medium">{fmt(c.outVal)}</span></div>
-                <div className="flex justify-between text-xs mt-2 pt-2" style={{ borderTop: '1px solid #e8e5dc' }}>
-                  <span className="font-semibold text-slate-600">صافي</span>
-                  <span className="font-mono font-bold" style={{ color: c.inVal - c.outVal >= 0 ? c.color : '#dc2626' }}>
-                    {fmt(Math.abs(c.inVal - c.outVal))} {c.inVal >= c.outVal ? '▲' : '▼'}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* الجدول */}
       <div className="bg-white rounded-2xl shadow-sm overflow-x-auto" style={cardBorder}>

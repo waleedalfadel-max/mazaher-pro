@@ -53,13 +53,13 @@ async function exportGroupPdf(group, fmt) {
   el.innerHTML = `
     <div style="border-bottom:4px solid ${GOLD};padding-bottom:14px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-end">
       <div>
-        <div style="font-size:22px;font-weight:bold;color:${NAVY}">تحسيب برو</div>
-        <div style="font-size:13px;color:#6b7280;margin-top:2px">قيد يومي محاسبي</div>
+        <div style="font-size:22px;font-weight:bold;color:${NAVY}">تحسيب</div>
+        <div style="font-size:13px;color:#6b7280;margin-top:2px">حركة مالية يومية</div>
       </div>
       <div style="text-align:left">
         <div style="font-size:14px;font-weight:bold;color:${GOLD}">${journalNumber || date}</div>
         <div style="font-size:12px;color:#6b7280;margin-top:2px">التاريخ: ${date}</div>
-        <div style="font-size:11px;color:#9ca3af">طُبع: ${new Date().toLocaleDateString('ar-SA')}</div>
+        <div style="font-size:11px;color:#9ca3af">طُبع: ${new Date().toLocaleDateString('en-GB')}</div>
       </div>
     </div>
 
@@ -110,20 +110,20 @@ async function exportGroupPdf(group, fmt) {
     <div style="display:flex;gap:10px;margin-bottom:20px">
       <div style="flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:10px;color:#6b7280;margin-bottom:4px">إجمالي المدين</div>
-        <div style="font-size:16px;font-weight:bold;color:#16a34a;font-family:monospace">${fmt(totalDebit)} ر.س</div>
+        <div style="font-size:16px;font-weight:bold;color:#16a34a;font-family:monospace">${fmt(totalDebit)}</div>
       </div>
       <div style="flex:1;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:10px;color:#6b7280;margin-bottom:4px">إجمالي الدائن</div>
-        <div style="font-size:16px;font-weight:bold;color:#dc2626;font-family:monospace">${fmt(totalCredit)} ر.س</div>
+        <div style="font-size:16px;font-weight:bold;color:#dc2626;font-family:monospace">${fmt(totalCredit)}</div>
       </div>
       <div style="flex:1;background:${balance>=0?'#eff6ff':'#fef2f2'};border:1px solid ${balance>=0?'#bfdbfe':'#fecaca'};border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:10px;color:#6b7280;margin-bottom:4px">الميزان</div>
-        <div style="font-size:16px;font-weight:bold;color:${balance>=0?'#1d4ed8':'#dc2626'};font-family:monospace">${fmt(Math.abs(balance))} ر.س ${balance>=0?'(مدين)':balance<0?'(دائن)':''}</div>
+        <div style="font-size:16px;font-weight:bold;color:${balance>=0?'#1d4ed8':'#dc2626'};font-family:monospace">${fmt(Math.abs(balance))} ${balance>=0?'(مدين)':balance<0?'(دائن)':''}</div>
       </div>
     </div>
 
     <div style="border-top:2px solid ${GOLD};padding-top:10px;text-align:center;color:#9ca3af;font-size:10px">
-      تحسيب برو — ${new Date().toLocaleString('ar-SA')}
+      تحسيب — ${new Date().toLocaleString('en-US')}
     </div>
   `
 
@@ -140,19 +140,42 @@ async function exportGroupPdf(group, fmt) {
   pdf.save(`قيد-${journalNumber || date}.pdf`)
 }
 
+const QUICK_PERIODS = [
+  { key: 'month',     label: 'الشهر الحالي' },
+  { key: 'lastMonth', label: 'الشهر الماضي' },
+  { key: 'year',      label: 'السنة الحالية' },
+]
+
+function getRange(type) {
+  const n = new Date()
+  const to = n.toISOString().split('T')[0]
+  if (type === 'lastMonth') {
+    const lm  = new Date(n.getFullYear(), n.getMonth() - 1, 1)
+    const lme = new Date(n.getFullYear(), n.getMonth(), 0)
+    return { from: lm.toISOString().split('T')[0], to: lme.toISOString().split('T')[0] }
+  }
+  const from = type === 'year'
+    ? `${n.getFullYear()}-01-01`
+    : `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`
+  return { from, to }
+}
+
 // ── الصفحة الرئيسية ──────────────────────────────────────────────
 export default function JournalArchive() {
   const { projectId } = useAuth()
-  const [entries,   setEntries]   = useState([])
-  const [loading,   setLoading]   = useState(true)
-  const [openDates, setOpenDates] = useState({})
-  const [search,    setSearch]    = useState('')
-  const [exporting, setExporting] = useState({})
+  const [entries,      setEntries]      = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [openDates,    setOpenDates]    = useState({})
+  const [search,       setSearch]       = useState('')
+  const [exporting,    setExporting]    = useState({})
+  const [activePeriod, setActivePeriod] = useState('month')
+  const [filter,       setFilter]       = useState(getRange('month'))
 
-  useEffect(() => { if (projectId) init(projectId) }, [projectId])
+  useEffect(() => { if (projectId) init(projectId, filter) }, [projectId])
 
-  async function init(pid) {
-    const { data } = await supabase
+  async function init(pid, f) {
+    setLoading(true)
+    let q = supabase
       .from('ledger_entries')
       .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,file_url,created_at')
       .eq('project_id', pid)
@@ -160,6 +183,9 @@ export default function JournalArchive() {
       .order('date', { ascending: false })
       .order('created_at', { ascending: true })
       .limit(2000)
+    if (f?.from) q = q.gte('date', f.from)
+    if (f?.to)   q = q.lte('date', f.to)
+    const { data } = await q
 
     const all = data || []
 
@@ -182,6 +208,13 @@ export default function JournalArchive() {
 
     setEntries(all)
     setLoading(false)
+  }
+
+  function setQuick(type) {
+    setActivePeriod(type)
+    const f = getRange(type)
+    setFilter(f)
+    if (projectId) init(projectId, f)
   }
 
   const groups = useMemo(() => {
@@ -212,7 +245,7 @@ export default function JournalArchive() {
     setOpenDates(prev => ({ ...prev, [date]: !prev[date] }))
   }
 
-  const fmt = v => v ? Number(v).toLocaleString('ar-SA', { minimumFractionDigits: 2 }) : '—'
+  const fmt = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
 
   function dayTotals(rows) {
     const debit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
@@ -238,15 +271,56 @@ export default function JournalArchive() {
     <div className="space-y-4">
 
       {/* رأس */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: NAVY }}>أرشيف القيود اليومية</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{filteredGroups.length} يوم — {entries.length} حركة</p>
+      <div>
+        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>أرشيف الحركات اليومية</h1>
+        <p className="text-sm text-slate-500 mt-0.5">{filteredGroups.length} يوم — {entries.length} حركة</p>
+      </div>
+
+      {/* فلتر التاريخ والبحث */}
+      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={{ border: '1px solid #e8e5dc' }}>
+        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
+        <div className="flex flex-wrap gap-2 justify-center">
+          {QUICK_PERIODS.map(p => (
+            <button key={p.key} onClick={() => setQuick(p.key)}
+              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
+              style={activePeriod === p.key
+                ? { background: GOLD, color: NAVY }
+                : { background: '#f5f4f0', color: '#4b5563' }}>
+              {p.label}
+            </button>
+          ))}
         </div>
-        <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="بحث بالتاريخ أو رقم القيد أو البيان..."
-          className="border rounded-xl px-3 py-2 text-sm w-72 focus:outline-none"
-          style={{ borderColor: '#d1c9b8' }}/>
+        <div className="flex flex-wrap gap-3 items-end justify-center">
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">من</label>
+            <input type="date" value={filter.from}
+              onChange={e => { setActivePeriod('custom'); const f = { ...filter, from: e.target.value }; setFilter(f); init(projectId, f) }}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[8rem]">
+            <label className="text-xs text-slate-500 block mb-1 text-center">إلى</label>
+            <input type="date" value={filter.to}
+              onChange={e => { setActivePeriod('custom'); const f = { ...filter, to: e.target.value }; setFilter(f); init(projectId, f) }}
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[10rem]">
+            <label className="text-xs text-slate-500 block mb-1">بحث بالتاريخ أو رقم الحركة أو البيان</label>
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="فاتورة كهرباء أو QD-..."
+              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
+              style={{ borderColor: '#d1c9b8' }}/>
+          </div>
+          <div className="flex-1 min-w-[8rem]">
+            <div className="mb-1 h-4" />
+            <button onClick={() => init(projectId, filter)}
+              className="w-full px-4 py-1.5 rounded-xl text-sm font-bold transition-all text-center"
+              style={{ background: NAVY, color: '#fff' }}>
+              بحث
+            </button>
+          </div>
+        </div>
       </div>
 
       {filteredGroups.length === 0 && (
@@ -401,7 +475,7 @@ export default function JournalArchive() {
                         <td colSpan={2} className="px-3 py-2.5 text-xs font-bold text-white">الميزان</td>
                         <td colSpan={2} className="px-3 py-2.5 text-right text-xs font-bold tabular-nums"
                           style={{ color: balance === 0 ? '#fde68a' : balance > 0 ? '#86efac' : '#fca5a5' }}>
-                          {fmt(Math.abs(balance))} ر.س
+                          {fmt(Math.abs(balance))}
                           <span className="mr-1.5 opacity-70 font-normal">
                             {balance > 0 ? '(مدين)' : balance < 0 ? '(دائن)' : '✓ متوازن'}
                           </span>

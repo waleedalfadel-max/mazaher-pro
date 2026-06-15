@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage } from '../lib/storage'
+import { compressImage } from '../lib/imageCompress'
 
 const MAX_SIZE_MB = 10
 
@@ -32,11 +33,12 @@ export default function InvoiceUpload() {
     if (!file) return
     setUploading(true); setError('')
     try {
-      const fileUrl = await uploadToStorage(file, projectId || 'shared')
+      const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file
+      const fileUrl = await uploadToStorage(uploadFile, projectId || 'shared')
       const { error: err } = await supabase.from('documents').insert({
         project_id:  projectId,
         file_name:   file.name,
-        file_type:   file.type,
+        file_type:   uploadFile.type,
         file_url:    fileUrl,
         status:      'uploaded',
         uploaded_by: role,

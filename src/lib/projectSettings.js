@@ -2,12 +2,15 @@ import { supabase } from './supabase'
 
 const FALLBACK_TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
-  '💳 قسط سيارة','💳 قسط شراء أرض','💳 قرض ١','💳 قرض ٢',
-  '👤 صرف عهدة','💼 مسحوبات سليمان','💼 مسحوبات أم طوبى','🏛️ ضريبة القيمة المضافة',
+  '👤 صرف عهدة','🏛️ ضريبة القيمة المضافة',
+  '🔄 تحويل داخلي — صرف عهدة','🏧 تحويل داخلي — إيداع نقدي','📥 تحصيل جملة',
 ]
 
-// cache per projectId to avoid re-fetching on every render
 const _cache = {}
+
+export function clearProjectCache(projectId) {
+  delete _cache[projectId]
+}
 
 export async function getTransactionTypes(projectId) {
   if (!projectId) return FALLBACK_TYPES
@@ -28,8 +31,14 @@ export async function getProjectSettings(projectId) {
   if (!projectId) return null
   const { data } = await supabase
     .from('project_settings')
-    .select('settings, active')
+    .select('settings, active, modules')
     .eq('project_id', projectId)
     .maybeSingle()
   return data
+}
+
+export async function getProjectModules(projectId) {
+  if (!projectId) return []
+  const data = await getProjectSettings(projectId)
+  return data?.modules || data?.settings?.modules || []
 }

@@ -1,7 +1,7 @@
 {
-  "name": "تحسيب برو",
-  "short_name": "تحسيب برو",
-  "description": "نظام المحاسبة المتكامل",
+  "name": "تحسيب",
+  "short_name": "تحسيب",
+  "description": "خدمة المتابعة المالية الذكية",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f2444",

@@ -9,7 +9,7 @@ const NAVY  = '#0f2444'
 const GOLD  = '#c9a227'
 
 export default function Layout({ children }) {
-  const { role, roleLabel, userName, projectId, projectName, isSuperAdmin, logout } = useAuth()
+  const { role, roleLabel, userName, projectId, projectName, isSuperAdmin, modules, logout } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
   const [desktopOpen, setDesktopOpen] = useState(true)
@@ -39,21 +39,27 @@ export default function Layout({ children }) {
   }
 
   const NAV_ITEMS = [
-    { to: '/',        label: 'لوحة التحكم',   icon: '📊', roles: ['owner', 'accountant'] },
-    { to: '/cashier', label: 'لوحة الكاشير',  icon: '💰', roles: ['cashier'] },
-    { to: '/reports', label: 'التقارير',       icon: '📈', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/sales',   label: 'المبيعات',       icon: '💵', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/ledger',  label: 'سجل الدفتر',    icon: '📒', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/journal', label: 'سجل القيود',    icon: '📓', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/archive', label: 'أرشيف القيود',  icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/loans',   label: 'القروض',        icon: '🏦', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/pending', label: 'مستندات جديدة', icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
-    { to: '/users',   label: 'المستخدمون',    icon: '👥', roles: ['owner'] },
-    { to: '/admin',   label: 'إدارة العملاء', icon: '⚙️', roles: ['superadmin'] },
+    { to: '/',                label: 'لوحة التحكم',      icon: '📊', roles: ['owner', 'accountant'] },
+    { to: '/cashier',         label: 'لوحة الكاشير',     icon: '💰', roles: ['cashier'] },
+    { to: '/reports',         label: 'التقارير',          icon: '📈', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/sales',           label: 'المبيعات',          icon: '💵', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/roastery-sales',  label: 'مبيعات المحمصة 🏭', icon: '🏭', roles: ['accountant'], cond: n => n === 'محمصة كون' },
+    { to: '/suppliers',       label: 'الموردين',          icon: '🏪', roles: ['owner', 'accountant'], module: 'suppliers' },
+    { to: '/ledger',          label: 'سجل الدفتر',       icon: '📒', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/journal',         label: 'سجل الحركات',      icon: '📓', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/pending',         label: 'مستندات جديدة',    icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
+    { to: '/users',           label: 'المستخدمون',       icon: '👥', roles: ['owner'] },
+    { to: '/admin',           label: 'إدارة العملاء',    icon: '⚙️', roles: ['superadmin'] },
   ]
 
   const UPLOAD_ROLES = ['purchasing', 'accountant', 'owner', 'cashier']
-  const visibleItems = NAV_ITEMS.filter(item => item.roles.includes(role))
+  const visibleItems = NAV_ITEMS.filter(item =>
+    item.roles.includes(role) &&
+    (!item.module || modules.includes(item.module)) &&
+    (!item.cond || item.cond(projectName))
+  )
 
   function handleLogout() { logout(); navigate('/login') }
 
@@ -63,8 +69,8 @@ export default function Layout({ children }) {
       <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
         className="flex items-center justify-center px-3 py-4 shrink-0">
         {collapsed
-          ? <img src={logo} alt="تحسيب برو" className="h-8 w-8 object-contain" />
-          : <img src={logo} alt="تحسيب برو" className="h-14 w-auto object-contain" />
+          ? <img src={logo} alt="تحسيب" className="h-8 w-8 object-contain" />
+          : <img src={logo} alt="تحسيب" className="h-14 w-auto object-contain" />
         }
       </div>
 
@@ -183,7 +189,7 @@ export default function Layout({ children }) {
         {/* شريط علوي — جوال فقط */}
         <header className="md:hidden flex items-center justify-between px-4 py-3 shrink-0 shadow-sm"
           style={{ background: '#fff', borderBottom: `3px solid ${GOLD}` }}>
-          <img src={logo} alt="تحسيب برو" className="h-9 w-auto object-contain" />
+          <img src={logo} alt="تحسيب" className="h-9 w-auto object-contain" />
           <div className="flex items-center gap-3">
             {pendingCount > 0 && (
               <span className="bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">

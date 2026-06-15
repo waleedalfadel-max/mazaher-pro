@@ -16,6 +16,8 @@ import UsersManagement from './pages/UsersManagement'
 import JournalLedger from './pages/JournalLedger'
 import JournalArchive from './pages/JournalArchive'
 import SuperAdmin from './pages/SuperAdmin'
+import Suppliers from './pages/Suppliers'
+import RoasterySales from './pages/RoasterySales'
 
 function defaultPath(role) {
   if (role === 'purchasing') return '/invoice'
@@ -109,6 +111,18 @@ function AppRoutes() {
       <Route path="/archive" element={
         <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <JournalArchive />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/suppliers" element={
+        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+          <Suppliers />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/roastery-sales" element={
+        <ProtectedRoute allowedRoles={['accountant']}>
+          <RoasterySales />
         </ProtectedRoute>
       } />
 
