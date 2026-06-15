@@ -661,10 +661,23 @@ export default function Reports() {
               if (rawSub) mainMap[rawMain].subs[rawSub] = (mainMap[rawMain].subs[rawSub] || 0) + amount
             }
 
+            // أرقام قيود تحتوي إيراد مبيعات (bank_in > 0 ونوعها يحتوي "مبيعات")
+            const salesIncomeJNs = new Set(
+              (entries || [])
+                .filter(e =>
+                  (e.type || '').includes('مبيعات') &&
+                  ((e.bank_in||0)+(e.cash_in||0)+(e.custody_in||0)) > 0 &&
+                  e.journal_number
+                )
+                .map(e => e.journal_number)
+            )
+
             // ── المصدر الأول: document_items (النظام الجديد — بنود مفصّلة) ──
             docItems.forEach(item => {
               const rawMain = item.category_main || '— غير محدد'
               const rawSub  = item.category_sub  || null
+              // استبعاد بنود غير مصنفة من قيود المبيعات (مثل إجمالي مبيعات تمارا/سلة)
+              if (salesIncomeJNs.has(item.journal_number) && rawMain === '— غير محدد') return
               addItem(rawMain, rawSub, Number(item.amount) || 0, item.description)
             })
 
