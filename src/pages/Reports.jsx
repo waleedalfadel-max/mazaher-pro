@@ -673,16 +673,22 @@ export default function Reports() {
             )
 
             // ── المصدر الأول: document_items (النظام الجديد — بنود مفصّلة) ──
+            // نتتبع فقط أرقام القيود التي أضافت بنوداً فعلية لـ mainMap (لتجنب حذف قيود المصروفات من entries)
+            const docItemJNs = new Set()
             docItems.forEach(item => {
               const rawMain = item.category_main || '— غير محدد'
               const rawSub  = item.category_sub  || null
+              const amount  = Number(item.amount) || 0
               // استبعاد بنود غير مصنفة من قيود المبيعات (مثل إجمالي مبيعات تمارا/سلة)
               if (salesIncomeJNs.has(item.journal_number) && rawMain === '— غير محدد') return
-              addItem(rawMain, rawSub, Number(item.amount) || 0, item.description)
+              // استبعاد بنود مبيعات صريحة أو بدون مبلغ
+              if (!rawMain || rawMain.includes('مبيعات') || !amount) return
+              // البند اجتاز الفلاتر — سجّل الـ JN كـ "مُغطى" لتجنب تكراره من entries
+              if (item.journal_number) docItemJNs.add(item.journal_number)
+              addItem(rawMain, rawSub, amount, item.description)
             })
 
             // ── المصدر الثاني: قيود ledger اليدوية غير المغطاة بـ document_items ──
-            const docItemJNs = new Set(docItems.map(d => d.journal_number).filter(Boolean))
             ;(entries || []).forEach(e => {
               const out = (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
               if (!out) return
@@ -692,7 +698,7 @@ export default function Reports() {
               addItem(t || '— غير محدد', null, out, e.description)
             })
 
-            const mainRows   = Object.entries(mainMap)
+            const mainRows = Object.entries(mainMap)
               .map(([cat, v]) => ({
                 cat,
                 total: v.total,
@@ -700,7 +706,8 @@ export default function Reports() {
                 subs: Object.entries(v.subs).map(([s, t]) => ({ cat: s, total: t })).sort((a, b) => b.total - a.total),
               }))
               .sort((a, b) => b.total - a.total)
-            const grandTotal = mainRows.reduce((s, r) => s + r.total, 0)
+            // إجمالي البطاقة = مجموع التفاصيل مباشرة (نفس المصدر)
+            const grandTotal = mainRows.reduce((sum, cat) => sum + cat.total, 0)
 
             const toggleCat = cat => setExpandedCats(prev => {
               const next = new Set(prev)
