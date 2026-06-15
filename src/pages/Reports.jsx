@@ -654,7 +654,7 @@ export default function Reports() {
             const mainMap = {}
 
             const addItem = (rawMain, rawSub, amount, label) => {
-              if (!rawMain || rawMain.includes('مبيعات') || !amount) return
+              if (!rawMain || rawMain.includes('مبيعات') || amount <= 0) return
               if (!mainMap[rawMain]) mainMap[rawMain] = { total: 0, subs: {}, rows: [] }
               mainMap[rawMain].total += amount
               mainMap[rawMain].rows.push({ label: rawSub || label || rawMain, amount })
@@ -681,8 +681,8 @@ export default function Reports() {
               const amount  = Number(item.amount) || 0
               // استبعاد بنود غير مصنفة من قيود المبيعات (مثل إجمالي مبيعات تمارا/سلة)
               if (salesIncomeJNs.has(item.journal_number) && rawMain === '— غير محدد') return
-              // استبعاد بنود مبيعات صريحة أو بدون مبلغ
-              if (!rawMain || rawMain.includes('مبيعات') || !amount) return
+              // استبعاد بنود مبيعات صريحة أو بمبلغ صفر/سالب
+              if (!rawMain || rawMain.includes('مبيعات') || amount <= 0) return
               // البند اجتاز الفلاتر — سجّل الـ JN كـ "مُغطى" لتجنب تكراره من entries
               if (item.journal_number) docItemJNs.add(item.journal_number)
               addItem(rawMain, rawSub, amount, item.description)
