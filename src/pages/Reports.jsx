@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings } from '../lib/projectSettings'
+import { getFinancialSummary } from '../lib/financialEngine'
 
 const NAVY = '#0f2444'
 const GOLD = '#c9a227'
@@ -101,6 +102,7 @@ export default function Reports() {
   const [docItems,        setDocItems]        = useState([])
   const [allBranchSales,  setAllBranchSales]  = useState([])
   const [expandedCats,    setExpandedCats]    = useState(new Set())
+  const [engineSummary,   setEngineSummary]   = useState(null)
   const pdfRef      = useRef()
   const docsRowRefs = useRef([])
 
@@ -147,6 +149,7 @@ export default function Reports() {
       { data: allBranchEntries },
       { data: purchaseDocsData },
       { data: allBranchSalesData },
+      engineResult,
     ] = await Promise.all([
       applyBranch(supabase.from('sales').select('cash_sales,network_sales')
         .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate)),
@@ -168,7 +171,9 @@ export default function Reports() {
       }),
       supabase.from('sales').select('branch,cash_sales,network_sales,hunger_sales,jahez_sales,keeta_sales')
         .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate),
+      getFinancialSummary(projectId, fromDate, toDate),
     ])
+    setEngineSummary(engineResult)
     setBranchEntries(allBranchEntries || [])
     setAllBranchSales(allBranchSalesData || [])
     setPurchaseDocs(purchaseDocsData || [])
@@ -418,26 +423,27 @@ export default function Reports() {
           {/* ══════════════════ TAB 1: قائمة الدخل ══════════════════ */}
           {activeTab === 'income' && (
             <div className="space-y-4">
-
-              {/* قائمة الدخل */}
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-                <div className="px-5 py-4" style={{ background: NAVY }}>
-                  <h2 className="font-bold text-white text-sm">📊 قائمة الدخل</h2>
-                  <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+              {engineSummary ? (
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
+                  <div className="px-5 py-4" style={{ background: NAVY }}>
+                    <h2 className="font-bold text-white text-sm">📊 قائمة الدخل</h2>
+                    <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+                  </div>
+                  <div className="p-5">
+                    <IncomeRow label="مبيعات كاش"        value={engineSummary.cashSales}     indent />
+                    <IncomeRow label="مبيعات شبكة / إلكترونية" value={engineSummary.networkSales} indent />
+                    <IncomeRow label="إجمالي المبيعات"   value={engineSummary.totalSales}    bold line color="#1d4ed8" />
+                    <IncomeRow label="إجمالي المصروفات"  value={-engineSummary.totalExpenses} indent color="#dc2626" />
+                    <IncomeRow label="صافي الربح"        value={engineSummary.netProfit}     bold line
+                      color={engineSummary.netProfit >= 0 ? '#16a34a' : '#dc2626'} />
+                  </div>
                 </div>
-                <div className="p-5">
-                  <IncomeRow label="مبيعات كاش"          value={data.cashSales}    indent />
-                  <IncomeRow label="مبيعات شبكة"         value={data.networkSales} indent />
-                  <IncomeRow label="إجمالي المبيعات"     value={data.totalSales}   bold line color="#1d4ed8" />
-                  <IncomeRow label="مصروفات تشغيلية"     value={-data.opEx}        indent color="#dc2626" />
-                  <IncomeRow label="مصروفات ثابتة"       value={-data.fixEx}       indent color="#dc2626" />
-                  <IncomeRow label="مجمل الربح"          value={data.grossProfit}  bold  line color={data.grossProfit>=0?'#16a34a':'#dc2626'} />
-                  <IncomeRow label="الأقساط"             value={-data.loans}       indent color="#dc2626" />
-                  <IncomeRow label="صافي الربح"          value={data.netProfit}    bold  line color={data.netProfit>=0?'#16a34a':'#dc2626'} />
-                  <IncomeRow label="المسحوبات"            value={-data.draws}       indent color="#dc2626" />
-                  <IncomeRow label="صافي التدفق النقدي"  value={data.netFlow}      bold  line color={data.netFlow>=0?'#1d4ed8':'#dc2626'} />
+              ) : (
+                <div className="bg-white rounded-2xl p-12 text-center text-slate-400 shadow-sm" style={cardBorder}>
+                  <div className="text-3xl mb-2">📊</div>
+                  <p className="text-sm">لا توجد بيانات في هذه الفترة</p>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -750,7 +756,8 @@ export default function Reports() {
                       <span>🏷️</span> تفصيل حسب التصنيف — اضغط للتوسيع
                     </div>
                     {mainRows.map((r, idx) => {
-                      const pct  = data?.totalSales > 0 ? ((r.total / data.totalSales) * 100).toFixed(1) : 0
+                      const _baseSales = engineSummary?.totalSales || data?.totalSales || 0
+                      const pct  = _baseSales > 0 ? ((r.total / _baseSales) * 100).toFixed(1) : 0
                       const open = expandedCats.has(r.cat)
                       const clr  = mainCatColors[idx % mainCatColors.length]
                       const displayItems = r.subs.length > 0
@@ -786,7 +793,7 @@ export default function Reports() {
                           {open && (
                             <div className="border-t" style={{ borderColor: clr.border }}>
                               {displayItems.map((s, si) => {
-                                const sPct = data?.totalSales > 0 ? ((s.total / data.totalSales) * 100).toFixed(1) : 0
+                                const sPct = _baseSales > 0 ? ((s.total / _baseSales) * 100).toFixed(1) : 0
                                 return (
                                   <div key={si}
                                     className="flex items-center gap-3 px-5 py-2.5"
@@ -985,19 +992,15 @@ export default function Reports() {
             </div>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
               <tbody>
-                {[
-                  ['مبيعات كاش',         fmt(data.cashSales),    false, true,  '#374151'],
-                  ['مبيعات شبكة',        fmt(data.networkSales), false, true,  '#374151'],
-                  ['إجمالي المبيعات',     fmt(data.totalSales),   true,  false, NAVY],
-                  ['مصروفات تشغيلية',     `(${fmt(data.opEx)})`,  false, true,  '#dc2626'],
-                  ['مصروفات ثابتة',       `(${fmt(data.fixEx)})`, false, true,  '#dc2626'],
-                  ['مجمل الربح',          fmt(data.grossProfit),  true,  false, data.grossProfit>=0?'#16a34a':'#dc2626'],
-                  ['الأقساط',             `(${fmt(data.loans)})`, false, true,  '#dc2626'],
-                  ['صافي الربح',          fmt(data.netProfit),    true,  false, data.netProfit>=0?'#16a34a':'#dc2626'],
-                  ['المسحوبات',           `(${fmt(data.draws)})`, false, true,  '#dc2626'],
-                  ['صافي التدفق النقدي',  fmt(data.netFlow),      true,  false, data.netFlow>=0?'#1d4ed8':'#dc2626'],
-                  ['هامش الربح',          `${data.margin}%`,      true,  false, GOLD],
-                ].map(([label, value, bold, indent, color], i) => (
+                {(engineSummary ? [
+                  ['مبيعات كاش',              fmt(engineSummary.cashSales),                   false, true,  '#374151'],
+                  ['مبيعات شبكة / إلكترونية', fmt(engineSummary.networkSales),                false, true,  '#374151'],
+                  ['إجمالي المبيعات',           fmt(engineSummary.totalSales),                 true,  false, NAVY],
+                  ['إجمالي المصروفات',          `(${fmt(engineSummary.totalExpenses)})`,       false, true,  '#dc2626'],
+                  ['صافي الربح',               fmt(engineSummary.netProfit),                  true,  false, engineSummary.netProfit>=0?'#16a34a':'#dc2626'],
+                ] : [
+                  ['إجمالي المبيعات', fmt(data.totalSales), true, false, NAVY],
+                ]).map(([label, value, bold, indent, color], i) => (
                   <tr key={i} style={{ borderBottom:'1px solid #f1f5f9' }}>
                     <td style={{ padding:'7px 8px', paddingRight:indent?'24px':'8px', fontWeight:bold?'bold':'normal' }}>{label}</td>
                     <td style={{ padding:'7px 8px', textAlign:'left', fontWeight:bold?'bold':'normal', color }}>{value}</td>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getFinancialSummary } from '../lib/financialEngine'
 
 const NAVY = '#0f2444'
 const GOLD = '#c9a227'
@@ -122,19 +123,8 @@ export default function Dashboard() {
     try {
       const p = projectId || pid
       if (!p) return
-      const [{ data: sales }, { data: ledgerAll }, { data: ledgerRecent }] = await Promise.all([
-        // كل قنوات المبيعات الخمس
-        supabase.from('sales')
-          .select('cash_sales,network_sales,hunger_sales,jahez_sales,keeta_sales')
-          .eq('project_id', p)
-          .gte('date', r.from).lte('date', r.to),
-        // كل المصروفات بدون limit للحساب الصحيح
-        supabase.from('ledger_entries')
-          .select('type,cash_out,bank_out,custody_out')
-          .eq('project_id', p)
-          .neq('status', 'cancelled')
-          .gte('date', r.from).lte('date', r.to),
-        // آخر 10 حركات للعرض فقط
+      const [summary, { data: ledgerRecent }] = await Promise.all([
+        getFinancialSummary(p, r.from, r.to),
         supabase.from('ledger_entries')
           .select('type,date,description,status')
           .eq('project_id', p)
@@ -142,12 +132,9 @@ export default function Dashboard() {
           .order('date', { ascending: false })
           .limit(10),
       ])
-      const totalSales    = (sales || []).reduce((s, row) =>
-        s + (row.cash_sales || 0) + (row.network_sales || 0) + (row.hunger_sales || 0) + (row.jahez_sales || 0) + (row.keeta_sales || 0), 0)
-      const totalExpenses = (ledgerAll || [])
-        .filter(row => !(row.type || '').includes('تحويل داخلي'))
-        .reduce((s, row) => s + (row.cash_out || 0) + (row.bank_out || 0) + (row.custody_out || 0), 0)
-      setStats({ totalSales, totalExpenses, profit: totalSales - totalExpenses })
+      if (summary) {
+        setStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit })
+      }
       setRecent(ledgerRecent || [])
     } catch(e) { console.error(e) }
     finally { setLoading(false) }
