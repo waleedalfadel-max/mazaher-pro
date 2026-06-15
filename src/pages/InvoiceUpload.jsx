@@ -63,8 +63,8 @@ export default function InvoiceUpload() {
       {done && (
         <div className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center space-y-3">
           <div className="text-5xl">✅</div>
-          <div className="text-lg font-bold text-green-800">تم رفع المستند بنجاح</div>
-          <p className="text-sm text-green-600">سيظهر عند المحاسب في قائمة المستندات الجديدة</p>
+          <div className="text-lg font-bold text-green-800">تم استلام المستند</div>
+          <p className="text-sm text-green-600">سيراجعه المحاسب قريباً</p>
           <button onClick={reset}
             className="mt-2 px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors">
             رفع مستند آخر

@@ -78,14 +78,14 @@ async function analyzeRoasteryDoc(file) {
   if (!res.ok) {
     let detail = ''
     try { const e = await res.json(); detail = e?.error?.message || JSON.stringify(e) } catch {}
-    throw new Error(`خطأ في التحليل ${res.status}: ${detail}`)
+    throw new Error(`خطأ في المعالجة ${res.status}: ${detail}`)
   }
 
   const data  = await res.json()
   const text  = data.content[0].text.trim()
   const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
   const s = clean.indexOf('{'), e = clean.lastIndexOf('}')
-  if (s === -1 || e === -1) throw new Error('لا يوجد JSON في رد الذكاء الاصطناعي')
+  if (s === -1 || e === -1) throw new Error('خطأ في معالجة المستند — حاول مرة أخرى')
   return JSON.parse(clean.substring(s, e + 1))
 }
 
@@ -246,7 +246,7 @@ export default function RoasterySales() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-800">مبيعات المحمصة 🏭</h1>
-        <p className="text-slate-500 text-sm mt-1">ارفع تقرير مبيعات أو إيصال حوالة — الذكاء الاصطناعي يستخرج الأرقام</p>
+        <p className="text-slate-500 text-sm mt-1">ارفع تقرير مبيعات أو إيصال حوالة — سيتم استخراج الأرقام تلقائياً</p>
         <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold"
           style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
           🏢 {BRANCH}
@@ -287,7 +287,7 @@ export default function RoasterySales() {
           {!preview && file && <div className="text-5xl mb-2">📄</div>}
           <div className="flex items-center justify-center gap-3">
             <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"/>
-            <span className="text-slate-600 font-medium">الذكاء الاصطناعي يحلل المستند...</span>
+            <span className="text-slate-600 font-medium">جارٍ المعالجة...</span>
           </div>
           <p className="text-xs text-slate-400">قد يستغرق بضع ثوانٍ</p>
         </div>
