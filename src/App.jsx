@@ -97,7 +97,7 @@ function AppRoutes() {
       } />
 
       <Route path="/users" element={
-        <ProtectedRoute allowedRoles={['owner']}>
+        <ProtectedRoute allowedRoles={['accountant']}>
           <UsersManagement />
         </ProtectedRoute>
       } />
