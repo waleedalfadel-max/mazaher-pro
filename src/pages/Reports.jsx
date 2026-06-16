@@ -399,10 +399,10 @@ export default function Reports() {
               ? [...baseTabs, { key: 'branches', label: 'مقارنة الفروع', icon: '🏢' }]
               : baseTabs
             return (
-              <div className="flex gap-1 p-1 rounded-2xl w-fit flex-wrap" style={{ background: '#e8e5dc' }}>
+              <div className="flex flex-row w-full gap-1 p-1 rounded-2xl" style={{ background: '#e8e5dc' }}>
                 {visibleTabs.map(t => (
                   <button key={t.key} onClick={() => setActiveTab(t.key)}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-bold rounded-xl transition-all"
+                    className="flex-1 flex items-center justify-center gap-1 px-2 py-2 text-xs font-bold rounded-xl transition-all"
                     style={activeTab === t.key
                       ? { background: '#fff', color: NAVY, boxShadow: '0 1px 4px rgba(15,36,68,0.1)' }
                       : { color: '#6b7280' }
