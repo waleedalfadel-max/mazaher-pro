@@ -1,18 +1,18 @@
 import { supabase } from './supabase'
 
 const INTERNAL_TRANSFER = 'تحويل داخلي'
-const SALES_TYPES = [
+export const SALES_TYPES = [
   'مبيعات كاش', 'مبيعات شبكة', 'مبيعات هنقر ستيشن',
   'مبيعات جاهز', 'مبيعات كيتا', 'مبيعات سلة',
   'مبيعات تابي', 'مبيعات تمارا', 'تحصيل جملة',
   'مبيعات إلكترونية',
 ]
 
-function isSales(type) {
+export function isSales(type) {
   return SALES_TYPES.some(s => (type || '').includes(s.replace(/^[^؀-ۿ]+/, '').trim()))
 }
 
-function isInternal(type) {
+export function isInternal(type) {
   return (type || '').includes(INTERNAL_TRANSFER)
 }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings } from '../lib/projectSettings'
-import { getFinancialSummary } from '../lib/financialEngine'
+import { getFinancialSummary, isSales, isInternal } from '../lib/financialEngine'
 
 const NAVY = '#0f2444'
 const GOLD = '#c9a227'
@@ -99,7 +99,6 @@ export default function Reports() {
   const [selectedBranch,  setSelectedBranch]  = useState('all')
   const [branchEntries,   setBranchEntries]   = useState([])
   const [purchaseDocs,    setPurchaseDocs]    = useState([])
-  const [docItems,        setDocItems]        = useState([])
   const [allBranchSales,  setAllBranchSales]  = useState([])
   const [expandedCats,    setExpandedCats]    = useState(new Set())
   const [engineSummary,   setEngineSummary]   = useState(null)
@@ -177,19 +176,6 @@ export default function Reports() {
     setBranchEntries(allBranchEntries || [])
     setAllBranchSales(allBranchSalesData || [])
     setPurchaseDocs(purchaseDocsData || [])
-
-    // جلب document_items للفترة عبر journal_numbers من ledger
-    const jnSet = [...new Set((ledgerFull||[]).filter(e => e.journal_number).map(e => e.journal_number))]
-    let docItemsData = []
-    if (jnSet.length > 0) {
-      const { data: diData } = await supabase
-        .from('document_items')
-        .select('id,journal_number,description,amount,vat_amount,category_main,category_sub')
-        .eq('project_id', projectId)
-        .in('journal_number', jnSet)
-      docItemsData = diData || []
-    }
-    setDocItems(docItemsData)
 
     const sum    = (list, field) => (list||[]).reduce((s,r) => s+(Number(r[field])||0), 0)
     const sumOut = (list, types) => (list||[]).filter(r=>types.includes(r.type))
@@ -667,41 +653,12 @@ export default function Reports() {
               if (rawSub) mainMap[rawMain].subs[rawSub] = (mainMap[rawMain].subs[rawSub] || 0) + amount
             }
 
-            // أرقام قيود تحتوي إيراد مبيعات (bank_in > 0 ونوعها يحتوي "مبيعات")
-            const salesIncomeJNs = new Set(
-              (entries || [])
-                .filter(e =>
-                  (e.type || '').includes('مبيعات') &&
-                  ((e.bank_in||0)+(e.cash_in||0)+(e.custody_in||0)) > 0 &&
-                  e.journal_number
-                )
-                .map(e => e.journal_number)
-            )
-
-            // ── المصدر الأول: document_items (النظام الجديد — بنود مفصّلة) ──
-            // نتتبع فقط أرقام القيود التي أضافت بنوداً فعلية لـ mainMap (لتجنب حذف قيود المصروفات من entries)
-            const docItemJNs = new Set()
-            docItems.forEach(item => {
-              const rawMain = item.category_main || '— غير محدد'
-              const rawSub  = item.category_sub  || null
-              const amount  = Number(item.amount) || 0
-              // استبعاد بنود غير مصنفة من قيود المبيعات (مثل إجمالي مبيعات تمارا/سلة)
-              if (salesIncomeJNs.has(item.journal_number) && rawMain === '— غير محدد') return
-              // استبعاد بنود مبيعات صريحة أو بمبلغ صفر/سالب
-              if (!rawMain || rawMain.includes('مبيعات') || amount <= 0) return
-              // البند اجتاز الفلاتر — سجّل الـ JN كـ "مُغطى" لتجنب تكراره من entries
-              if (item.journal_number) docItemJNs.add(item.journal_number)
-              addItem(rawMain, rawSub, amount, item.description)
-            })
-
-            // ── المصدر الثاني: قيود ledger اليدوية غير المغطاة بـ document_items ──
+            // نفس منطق financialEngine: استبعاد التحويلات الداخلية والمبيعات
             ;(entries || []).forEach(e => {
               const out = (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
               if (!out) return
-              const t = e.type || ''
-              if (t.includes('تحويل داخلي') || t.includes('مبيعات') || t.includes('تحصيل')) return
-              if (e.journal_number && docItemJNs.has(e.journal_number)) return
-              addItem(t || '— غير محدد', null, out, e.description)
+              if (isInternal(e.type) || isSales(e.type)) return
+              addItem(e.type || '— غير محدد', e.description || null, out, e.description)
             })
 
             const mainRows = Object.entries(mainMap)
@@ -745,7 +702,7 @@ export default function Reports() {
                     <div className="text-4xl">🛒</div>
                   </div>
                   <div className="text-xs mt-2 opacity-50 text-white">
-                    {mainRows.length} تصنيف رئيسي — {docItems.length || purchaseDocs.length} بند
+                    {mainRows.length} تصنيف رئيسي
                   </div>
                 </div>
 
