@@ -42,19 +42,19 @@ export default function Layout({ children }) {
     { to: '/',                label: 'لوحة التحكم',      icon: '📊', roles: ['owner', 'accountant'] },
     { to: '/cashier',         label: 'لوحة الكاشير',     icon: '💰', roles: ['cashier'] },
     { to: '/reports',         label: 'التقارير',          icon: '📈', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/sales',           label: 'المبيعات',          icon: '💵', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/sales',           label: 'المبيعات',          icon: '💵', roles: ['accountant', 'superadmin'] },
     { to: '/roastery-sales',  label: 'مبيعات المحمصة 🏭', icon: '🏭', roles: ['accountant'], cond: n => n === 'محمصة كون' },
-    { to: '/suppliers',       label: 'الموردين',          icon: '🏪', roles: ['owner', 'accountant'], module: 'suppliers' },
-    { to: '/ledger',          label: 'سجل الدفتر',       icon: '📒', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/journal',         label: 'سجل الحركات',      icon: '📓', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/suppliers',       label: 'الموردين',          icon: '🏪', roles: ['accountant'], module: 'suppliers' },
+    { to: '/ledger',          label: 'سجل الدفتر',       icon: '📒', roles: ['accountant', 'superadmin'] },
+    { to: '/journal',         label: 'سجل الحركات',      icon: '📓', roles: ['accountant', 'superadmin'] },
+    { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['accountant', 'superadmin'] },
+    { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['accountant', 'superadmin'] },
     { to: '/pending',         label: 'مستندات جديدة',    icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
     { to: '/users',           label: 'المستخدمون',       icon: '👥', roles: ['owner'] },
     { to: '/admin',           label: 'إدارة العملاء',    icon: '⚙️', roles: ['superadmin'] },
   ]
 
-  const UPLOAD_ROLES = ['purchasing', 'accountant', 'owner', 'cashier']
+  const UPLOAD_ROLES = ['purchasing', 'accountant', 'cashier']
   const visibleItems = NAV_ITEMS.filter(item =>
     item.roles.includes(role) &&
     (!item.module || modules.includes(item.module)) &&

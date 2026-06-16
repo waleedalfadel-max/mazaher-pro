@@ -81,13 +81,20 @@ function IncomeRow({ label, value, bold, indent, color, line }) {
   )
 }
 
+const OWNER_TABS = [
+  { key: 'sales',     label: 'المبيعات',       icon: '💵' },
+  { key: 'purchases', label: 'المصروفات',       icon: '🛒' },
+  { key: 'vat',       label: 'الضريبة',         icon: '🏛️' },
+]
+
 export default function Reports() {
-  const { projectId } = useAuth()
+  const { projectId, role } = useAuth()
+  const isOwner = role === 'owner'
   const init = getPeriodRange('month')
   const [from, setFrom]                 = useState(init.from)
   const [to,   setTo]                   = useState(init.to)
   const [activePeriod, setActivePeriod] = useState('month')
-  const [activeTab,    setActiveTab]    = useState('income')
+  const [activeTab,    setActiveTab]    = useState(isOwner ? 'sales' : 'income')
   const [data,     setData]     = useState(null)
   const [entries,  setEntries]  = useState([])
   const [docs,     setDocs]     = useState([])
@@ -387,9 +394,10 @@ export default function Reports() {
         <>
           {/* ── تبويبات ── */}
           {(() => {
+            const baseTabs = isOwner ? OWNER_TABS : TABS
             const visibleTabs = branches.length > 1
-              ? [...TABS, { key: 'branches', label: 'مقارنة الفروع', icon: '🏢' }]
-              : TABS
+              ? [...baseTabs, { key: 'branches', label: 'مقارنة الفروع', icon: '🏢' }]
+              : baseTabs
             return (
               <div className="flex gap-1 p-1 rounded-2xl w-fit flex-wrap" style={{ background: '#e8e5dc' }}>
                 {visibleTabs.map(t => (
@@ -405,6 +413,30 @@ export default function Reports() {
               </div>
             )
           })()}
+
+          {/* ══════════════════ TAB: المبيعات (المالك فقط) ══════════════════ */}
+          {activeTab === 'sales' && (
+            <div className="space-y-4">
+              {engineSummary ? (
+                <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
+                  <div className="px-5 py-4" style={{ background: NAVY }}>
+                    <h2 className="font-bold text-white text-sm">💵 ملخص المبيعات</h2>
+                    <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+                  </div>
+                  <div className="p-5">
+                    <IncomeRow label="مبيعات كاش"              value={engineSummary.cashSales}    indent />
+                    <IncomeRow label="مبيعات شبكة / إلكترونية" value={engineSummary.networkSales}  indent />
+                    <IncomeRow label="إجمالي المبيعات"          value={engineSummary.totalSales}   bold line color="#1d4ed8" />
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-2xl p-12 text-center text-slate-400 shadow-sm" style={cardBorder}>
+                  <div className="text-3xl mb-2">💵</div>
+                  <p className="text-sm">اختر فترة زمنية لعرض بيانات المبيعات</p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ══════════════════ TAB 1: قائمة الدخل ══════════════════ */}
           {activeTab === 'income' && (

@@ -49,19 +49,19 @@ function AppRoutes() {
       } />
 
       <Route path="/ledger" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <Ledger />
         </ProtectedRoute>
       } />
 
       <Route path="/sales" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <Sales />
         </ProtectedRoute>
       } />
 
       <Route path="/journals" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <Journals />
         </ProtectedRoute>
       } />
@@ -73,13 +73,13 @@ function AppRoutes() {
       } />
 
       <Route path="/loans" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <Loans />
         </ProtectedRoute>
       } />
 
       <Route path="/invoice" element={
-        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'owner', 'cashier']}>
+        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'cashier']}>
           <InvoiceUpload />
         </ProtectedRoute>
       } />
@@ -91,7 +91,7 @@ function AppRoutes() {
       } />
 
       <Route path="/cashier" element={
-        <ProtectedRoute allowedRoles={['cashier', 'owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['cashier', 'accountant']}>
           <CashierDashboard />
         </ProtectedRoute>
       } />
@@ -103,19 +103,19 @@ function AppRoutes() {
       } />
 
       <Route path="/journal" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <JournalLedger />
         </ProtectedRoute>
       } />
 
       <Route path="/archive" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <JournalArchive />
         </ProtectedRoute>
       } />
 
       <Route path="/suppliers" element={
-        <ProtectedRoute allowedRoles={['owner', 'accountant']}>
+        <ProtectedRoute allowedRoles={['accountant']}>
           <Suppliers />
         </ProtectedRoute>
       } />
