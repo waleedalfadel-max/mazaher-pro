@@ -109,7 +109,7 @@ function AppRoutes() {
       } />
 
       <Route path="/archive" element={
-        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
           <JournalArchive />
         </ProtectedRoute>
       } />

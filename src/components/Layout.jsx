@@ -47,10 +47,9 @@ export default function Layout({ children }) {
     { to: '/suppliers',       label: 'الموردين',          icon: '🏪', roles: ['accountant'], module: 'suppliers' },
     { to: '/ledger',          label: 'سجل الدفتر',       icon: '📒', roles: ['accountant', 'superadmin'] },
     { to: '/journal',         label: 'سجل الحركات',      icon: '📓', roles: ['accountant', 'superadmin'] },
-    { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['accountant', 'superadmin'] },
+    { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['accountant', 'superadmin'] },
     { to: '/pending',         label: 'مستندات جديدة',    icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
-    { to: '/users',           label: 'المستخدمون',       icon: '👥', roles: ['owner'] },
     { to: '/admin',           label: 'إدارة العملاء',    icon: '⚙️', roles: ['superadmin'] },
   ]
 
