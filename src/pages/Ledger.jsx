@@ -112,7 +112,6 @@ export default function Ledger() {
       bank_in:     Number(editRow.bank_in)     || 0,
       custody_out: Number(editRow.custody_out) || 0,
       custody_in:  Number(editRow.custody_in)  || 0,
-      status:      'modified',
     }).eq('id', editRow.id)
     setEditRow(null)
     load(projectId)
@@ -343,7 +342,6 @@ export default function Ledger() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4">
             <h3 className="text-lg font-bold text-slate-800">تعديل الحركة</h3>
-            <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">سيتغير الحالة إلى "معدَّل" بعد الحفظ</p>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="text-xs text-slate-500 block mb-1">النوع</label>
