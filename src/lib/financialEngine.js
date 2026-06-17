@@ -1,6 +1,5 @@
 import { supabase } from './supabase'
 
-const INTERNAL_TRANSFER = 'تحويل داخلي'
 export const SALES_TYPES = [
   'مبيعات كاش', 'مبيعات شبكة', 'مبيعات هنقر ستيشن',
   'مبيعات جاهز', 'مبيعات كيتا', 'مبيعات سلة',
@@ -8,13 +7,24 @@ export const SALES_TYPES = [
   'مبيعات إلكترونية',
 ]
 
+const EXCLUDED_TYPES = [
+  'تحويل داخلي',
+  'صرف عهدة',
+  'إيداع نقدي',
+  'تحويل داخلي — صرف عهدة',
+  'تحويل داخلي — إيداع نقدي',
+]
+
 export function isSales(type) {
   return SALES_TYPES.some(s => (type || '').includes(s.replace(/^[^؀-ۿ]+/, '').trim()))
 }
 
-export function isInternal(type) {
-  return (type || '').includes(INTERNAL_TRANSFER)
+export function isExcluded(type) {
+  return EXCLUDED_TYPES.some(t => (type || '').includes(t))
 }
+
+// للتوافق مع الكود القديم
+export const isInternal = isExcluded
 
 function sumField(entries, field) {
   return entries.reduce((s, e) => s + (Number(e[field]) || 0), 0)
@@ -31,8 +41,8 @@ export async function getFinancialSummary(projectId, fromDate, toDate) {
 
   if (error || !entries) return null
 
-  // استثنِ التحويلات الداخلية من كل الحسابات
-  const active = entries.filter(e => !isInternal(e.type))
+  // استثنِ كل أنواع التحويلات والصرف الداخلي من المبيعات والمصروفات
+  const active = entries.filter(e => !isExcluded(e.type))
 
   // المبيعات = cash_in + bank_in من أنواع المبيعات فقط
   const salesEntries = active.filter(e => isSales(e.type))
@@ -40,7 +50,7 @@ export async function getFinancialSummary(projectId, fromDate, toDate) {
   const networkSales = sumField(salesEntries, 'bank_in')
   const totalSales   = cashSales + networkSales
 
-  // المصروفات = كل المخرجات من غير المبيعات وغير التحويلات
+  // المصروفات = كل المخرجات من غير المبيعات وغير المستثنيات
   const expenseEntries = active.filter(e => !isSales(e.type))
   const totalExpenses  = expenseEntries.reduce((s, e) =>
     s + (Number(e.cash_out) || 0) + (Number(e.bank_out) || 0) + (Number(e.custody_out) || 0), 0)

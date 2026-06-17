@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings } from '../lib/projectSettings'
-import { getFinancialSummary, isSales, isInternal } from '../lib/financialEngine'
+import { getFinancialSummary, isSales, isExcluded } from '../lib/financialEngine'
 
 const NAVY = '#0f2444'
 const GOLD = '#c9a227'
@@ -689,7 +689,7 @@ export default function Reports() {
             ;(entries || []).forEach(e => {
               const out = (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
               if (!out) return
-              if (isInternal(e.type) || isSales(e.type)) return
+              if (isExcluded(e.type) || isSales(e.type)) return
               addItem(e.type || '— غير محدد', e.description || null, out, e.description)
             })
 
