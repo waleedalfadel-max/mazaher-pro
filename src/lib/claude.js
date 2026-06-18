@@ -1,5 +1,21 @@
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
 
+function extractJSON(text) {
+  const start = text.indexOf('{')
+  const end   = text.lastIndexOf('}')
+  if (start === -1 || end === -1) return null
+  const jsonStr = text.slice(start, end + 1)
+  try {
+    return JSON.parse(jsonStr)
+  } catch {
+    const cleaned = jsonStr
+      .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+      .replace(/,\s*}/g, '}')
+      .replace(/,\s*]/g, ']')
+    return JSON.parse(cleaned)
+  }
+}
+
 // Claude only accepts these image MIME types
 const VALID_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
@@ -127,9 +143,8 @@ ${categorySection}
   const text = data.content[0].text.trim()
 
   const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
-  const s = clean.indexOf('{'), e = clean.lastIndexOf('}')
-  if (s === -1 || e === -1) throw new Error('لا يوجد JSON في الرد')
-  const result = JSON.parse(clean.substring(s, e + 1))
+  const result = extractJSON(clean)
+  if (!result) throw new Error('لا يوجد JSON صالح في الرد')
 
   // تصحيح أسماء التصنيفات — يطابق بدون إيموجي ويصحح للاسم الحرفي في DB
   if (categories.length > 0 && result.items?.length > 0) {
