@@ -155,6 +155,12 @@ ${categorySection}
   }
 
   const data = await res.json()
+
+  // api/analyze.js يرجع هذا عند فشل JSON.parse — يعرض النص الخام للتشخيص
+  if (data.error === 'JSON_PARSE_ERROR') {
+    throw new Error(`خطأ في تحليل الرد:\n${data.parseError}\n\nالنص الخام:\n${data.rawText}`)
+  }
+
   const text = data.content[0].text.trim()
 
   const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
