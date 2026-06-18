@@ -1,18 +1,33 @@
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
 
 function extractJSON(text) {
-  const start = text.indexOf('{')
-  const end   = text.lastIndexOf('}')
-  if (start === -1 || end === -1) return null
-  const jsonStr = text.slice(start, end + 1)
+  // أزل markdown أولاً
+  const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
+
+  const start = clean.indexOf('{')
+  if (start === -1) return null
+
+  // عدّ الأقواس لإيجاد نهاية الـ JSON بدقة — يتجنب أخطاء lastIndexOf عند وجود نص بعد الـ JSON
+  let depth = 0, inStr = false, esc = false, end = -1
+  for (let i = start; i < clean.length; i++) {
+    const ch = clean[i]
+    if (esc)              { esc = false; continue }
+    if (ch === '\\' && inStr) { esc = true; continue }
+    if (ch === '"')       { inStr = !inStr; continue }
+    if (inStr)            continue
+    if (ch === '{')       depth++
+    if (ch === '}')       { depth--; if (depth === 0) { end = i; break } }
+  }
+  if (end === -1) return null
+
+  const jsonStr = clean.slice(start, end + 1)
   try {
     return JSON.parse(jsonStr)
   } catch {
-    const cleaned = jsonStr
-      .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
-      .replace(/,\s*}/g, '}')
-      .replace(/,\s*]/g, ']')
-    return JSON.parse(cleaned)
+    const fixed = jsonStr
+      .replace(/[\x00-\x1F\x7F]/g, ' ')
+      .replace(/,(\s*[}\]])/g, '$1')
+    return JSON.parse(fixed)
   }
 }
 

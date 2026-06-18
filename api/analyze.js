@@ -28,6 +28,8 @@ export default async function handler(req, res) {
     })
 
     const data = await upstream.json()
+    const rawText = data?.content?.[0]?.text || ''
+    console.log('RAW RESPONSE:', JSON.stringify(rawText).substring(0, 500))
     res.status(upstream.status).json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
