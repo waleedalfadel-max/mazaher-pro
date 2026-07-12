@@ -60,7 +60,9 @@
     }
     .nav-logo { display: flex; align-items: center; gap: 10px; }
     .nav-logo img { height: 38px; width: 38px; border-radius: 9px; }
-    .nav-logo span { font-weight: 800; font-size: 1.15rem; color: var(--navy); }
+    .wordmark { display: flex; flex-direction: column; line-height: 1.2; }
+    .wordmark .brand { font-weight: 900; font-size: 1.15rem; color: var(--navy); }
+    .wordmark .tagline { font-weight: 700; font-size: 0.62rem; color: var(--teal-dark); white-space: nowrap; }
     .nav-links { display: flex; align-items: center; gap: 4px; }
     .nav-links a {
       padding: 8px 16px; border-radius: 20px;
@@ -110,12 +112,6 @@
     .hero-inner {
       max-width: 1140px; margin: 0 auto; position: relative; z-index: 1;
       display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 48px; align-items: center;
-    }
-    .hero-badge {
-      display: inline-flex; align-items: center; gap: 7px;
-      background: rgba(35,229,212,0.14); border: 1px solid rgba(35,229,212,0.35);
-      border-radius: 20px; padding: 6px 14px; font-size: 0.8rem; font-weight: 700;
-      color: #8ff2e6; margin-bottom: 22px;
     }
     .hero h1 {
       font-size: clamp(2rem, 4.2vw, 3.1rem); font-weight: 900; line-height: 1.28;
@@ -307,15 +303,17 @@
     .footer { background: #071730; color: rgba(255,255,255,0.6); padding: 44px 5%; text-align: center; }
     .footer-logo { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 18px; }
     .footer-logo img { height: 34px; width: 34px; border-radius: 8px; }
-    .footer-logo span { font-weight: 800; font-size: 1rem; color: rgba(255,255,255,0.9); }
+    .footer-logo .wordmark .brand { color: rgba(255,255,255,0.92); }
+    .footer-logo .wordmark .tagline { color: var(--mint); }
     .footer-wa {
       display: inline-flex; align-items: center; gap: 8px;
       background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
       border-radius: 20px; padding: 9px 18px; font-size: 0.88rem; font-weight: 700;
-      color: rgba(255,255,255,0.85); margin-bottom: 20px; transition: all .18s; direction: ltr;
+      color: rgba(255,255,255,0.85); transition: all .18s; direction: ltr;
     }
     .footer-wa:hover { background: rgba(255,255,255,0.13); }
-    .footer-contact { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+    .footer-contact { display: flex; align-items: stretch; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+    .footer-wa, .footer-email { box-sizing: border-box; height: 42px; }
     .footer-email {
       display: inline-flex; align-items: center; gap: 8px;
       background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
@@ -355,7 +353,7 @@
   <div class="nav-inner">
     <a href="#" class="nav-logo">
       <img src="/logo-icon-new.png" alt="تحسيب" />
-      <span>تحسيب</span>
+      <span class="wordmark"><span class="brand">تحسيب</span><span class="tagline">متابعة مالية احترافية</span></span>
     </a>
 
     <div class="nav-links">
@@ -391,9 +389,8 @@
 <section class="hero">
   <div class="hero-inner">
     <div>
-      <div class="hero-badge">✓ متابعة مالية احترافية للمطاعم والمقاهي</div>
       <h1>حساباتك <span class="grad-text">واضحة ومرتبة</span><br/>من أول فاتورة</h1>
-      <p class="lead">صوّر فاتورتك وخلّه على تحسيب — نظام ذكي وفريق مختص يرتبون مبيعاتك ومصروفاتك وأرباحك وضريبتك أول بأول، بدون محاسب إضافي وبدون تعقيد.</p>
+      <p class="lead">نظام ذكي وفريق مختص يرتبون مبيعاتك ومصروفاتك وأرباحك وضريبتك أول بأول، بدون محاسب إضافي وبدون تعقيد.</p>
       <div class="hero-cta">
         <a href="https://trial.tahseeb.app" class="btn-hero-main">جرّب النظام مجاناً ←</a>
         <a href="https://wa.me/966561754516" class="btn-hero-wa">
@@ -538,7 +535,7 @@
 <section class="section pricing" id="pricing">
   <div class="section-inner">
     <div class="section-header" style="text-align:center">
-      <span class="section-label">الأسعار</span>
+      <span class="section-label" style="font-size:0.95rem">الأسعار</span>
       <h2 class="section-title">شفاف ومباشر</h2>
       <p class="section-sub" style="margin:0 auto">اختر الباقة المناسبة لحجم منشأتك</p>
     </div>
@@ -604,7 +601,7 @@
 <footer class="footer">
   <div class="footer-logo">
     <img src="/logo-icon-new.png" alt="تحسيب" />
-    <span>تحسيب</span>
+    <span class="wordmark"><span class="brand">تحسيب</span><span class="tagline">متابعة مالية احترافية</span></span>
   </div>
   <div class="footer-contact">
     <a href="https://wa.me/966561754516" class="footer-wa">
@@ -616,7 +613,7 @@
       info@safahat.app
     </a>
   </div>
-  <p class="footer-by">تطوير وتشغيل: مؤسسة صفحات المالية</p>
+  <p class="footer-by">تطوير وتشغيل: مؤسسة صفحات برمجية</p>
   <p class="footer-copy">تحسيب © <span id="yr"></span> — جميع الحقوق محفوظة</p>
 </footer>
 
