@@ -8,40 +8,49 @@ import {
   BarChart, Bar,
 } from 'recharts'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 const CHANNEL_COLORS = {
-  'كاش':   '#c9a227', 'شبكة':  '#0f2444', 'هنقر': '#ef4444',
-  'جاهز':  '#f97316', 'كيتا':  '#8b5cf6', 'سلة':  '#06b6d4',
-  'تابي':  '#ec4899', 'تمارا': '#84cc16', 'تحصيل':'#6366f1',
+  'كاش':     '#6EB7B0', 'شبكة':   '#1B3A5C', 'تحويل': '#3b82f6',
+  'هنقر':    '#ef4444', 'جاهز':   '#f97316', 'كيتا':  '#8b5cf6',
+  'مرسول':   '#10b981', 'سلة':    '#06b6d4', 'تابي':  '#ec4899',
+  'تمارا':   '#84cc16', 'تحصيل':  '#6366f1',
 }
-const EXPENSE_COLORS = ['#ef4444','#f97316','#8b5cf6','#0f2444','#06b6d4']
+const EXPENSE_COLORS = ['#ef4444','#f97316','#8b5cf6','#1B3A5C','#06b6d4']
+const BRANCH_COLORS  = ['#6EB7B0','#2D7A5F','#D4922A','#E9D8BB','#1B3A5C']
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
 
 function channelOf(type) {
   const t = type || ''
-  if (t.includes('كاش'))   return 'كاش'
-  if (t.includes('شبكة'))  return 'شبكة'
-  if (t.includes('هنقر'))  return 'هنقر'
-  if (t.includes('جاهز'))  return 'جاهز'
-  if (t.includes('كيتا'))  return 'كيتا'
-  if (t.includes('سلة'))   return 'سلة'
-  if (t.includes('تابي'))  return 'تابي'
-  if (t.includes('تمارا')) return 'تمارا'
-  if (t.includes('تحصيل')) return 'تحصيل'
+  if (t.includes('كاش'))    return 'كاش'
+  if (t.includes('شبكة'))   return 'شبكة'
+  if (t.includes('تحويل'))  return 'تحويل'
+  if (t.includes('هنقر'))   return 'هنقر'
+  if (t.includes('جاهز'))   return 'جاهز'
+  if (t.includes('كيتا'))   return 'كيتا'
+  if (t.includes('مرسول'))  return 'مرسول'
+  if (t.includes('سلة'))    return 'سلة'
+  if (t.includes('تابي'))   return 'تابي'
+  if (t.includes('تمارا'))  return 'تمارا'
+  if (t.includes('تحصيل'))  return 'تحصيل'
   return 'أخرى'
 }
 
 const fmt  = v => (v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtK = v => v >= 1000 ? `${(v / 1000).toFixed(1)}ك` : String(Math.round(v))
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
 function getPrevMonthRange(r) {
-  const from = new Date(r.from)
-  const to   = new Date(r.to)
-  from.setMonth(from.getMonth() - 1)
-  to.setMonth(to.getMonth() - 1)
-  return { from: from.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }
+  const [fy, fm, fd] = r.from.split('-').map(Number)
+  const [ty, tm, td] = r.to.split('-').map(Number)
+  return {
+    from: fmtDate(new Date(fy, fm - 2, fd)),
+    to:   fmtDate(new Date(ty, tm - 2, td)),
+  }
 }
 
 function getMonthRange(year, month) {
@@ -70,7 +79,7 @@ function BalanceCard({ label, icon, value, color }) {
   )
 }
 
-function StatCard({ label, icon, value, cmpValue, cmpLabel }) {
+function StatCard({ label, icon, value, cmpValue, cmpLabel, sub }) {
   const hasCmp = cmpValue !== null && cmpValue !== undefined
   const delta  = hasCmp ? value - cmpValue : 0
   const pct    = hasCmp && cmpValue !== 0 ? ((delta / Math.abs(cmpValue)) * 100).toFixed(1) : null
@@ -82,6 +91,7 @@ function StatCard({ label, icon, value, cmpValue, cmpLabel }) {
         <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</span>
       </div>
       <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: NAVY }}>{fmt(value)}</div>
+      {sub && <div className="text-xs font-semibold mt-1" style={{ color: '#0369a1' }}>{sub}</div>}
       {hasCmp && (
         <div className="mt-2 space-y-0.5">
           <div className="text-xs font-bold" style={{ color: up ? '#16a34a' : '#dc2626' }}>
@@ -90,6 +100,18 @@ function StatCard({ label, icon, value, cmpValue, cmpLabel }) {
           <div className="text-xs text-slate-400">({fmt(cmpValue)} ر.س)</div>
         </div>
       )}
+    </div>
+  )
+}
+
+function KpiCard({ label, value, accent, bg, negative }) {
+  const isNeg  = negative ?? value < 0
+  const color  = isNeg ? '#dc2626' : accent
+  const border = isNeg ? '#fecaca' : (accent + '40')
+  return (
+    <div className="rounded-xl text-center shadow-sm" style={{ background: isNeg ? '#fef2f2' : bg, border: `1.5px solid ${border}`, padding: '10px 8px' }}>
+      <div className="mb-1" style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>{label}</div>
+      <div className="font-bold font-mono tabular-nums" style={{ fontSize: 16, color, lineHeight: 1.2 }}>{fmt(Math.abs(value))}</div>
     </div>
   )
 }
@@ -157,11 +179,11 @@ const QUICK_PERIODS = [
 
 function getRange(type) {
   const n  = new Date()
-  const to = n.toISOString().split('T')[0]
+  const to = fmtDate(n)
   if (type === 'lastMonth') {
     const lm  = new Date(n.getFullYear(), n.getMonth() - 1, 1)
     const lme = new Date(n.getFullYear(), n.getMonth(), 0)
-    return { from: lm.toISOString().split('T')[0], to: lme.toISOString().split('T')[0] }
+    return { from: fmtDate(lm), to: fmtDate(lme) }
   }
   const from = type === 'month'
     ? `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2,'0')}-01`
@@ -178,6 +200,7 @@ export default function Dashboard() {
   const [stats,        setStats]        = useState(null)
   const [loading,      setLoading]      = useState(true)
   const [balances,     setBalances]     = useState(null)
+  const [receivables,  setReceivables]  = useState(null)
   const [activePeriod, setActivePeriod] = useState('month')
   const [range,        setRange]        = useState(getRange('month'))
   const [chartEntries, setChartEntries] = useState([])
@@ -192,10 +215,14 @@ export default function Dashboard() {
   const [cmpLabel,   setCmpLabel]   = useState('')
   const [customYear,  setCustomYear]  = useState(new Date().getFullYear())
   const [customMonth, setCustomMonth] = useState(new Date().getMonth() === 0 ? 12 : new Date().getMonth()) // شهر ما قبل الحالي
-  const [showPicker,  setShowPicker]  = useState(false)
+  const [showPicker,       setShowPicker]       = useState(false)
+  const [showMainPicker,   setShowMainPicker]   = useState(false)
+  const [mainPickerYear,   setMainPickerYear]   = useState(new Date().getFullYear())
+  const [mainPickerMonth,  setMainPickerMonth]  = useState(new Date().getMonth() + 1)
 
-  const liveRef  = useRef({ pid: null, range: getRange('month') })
-  const cmpRef   = useRef(null)
+  const liveRef        = useRef({ pid: null, range: getRange('month') })
+  const cmpRef         = useRef(null)
+  const mainPickerRef  = useRef()
 
   useEffect(() => { liveRef.current = { pid, range } }, [pid, range])
 
@@ -212,8 +239,17 @@ export default function Dashboard() {
   }, [cmpOpen])
 
   useEffect(() => {
+    function onOutside(e) {
+      if (mainPickerRef.current && !mainPickerRef.current.contains(e.target)) setShowMainPicker(false)
+    }
+    if (showMainPicker) document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [showMainPicker])
+
+  useEffect(() => {
     if (!pid) { setBalances({ cash:0, bank:0, custody:0 }); setLoading(false); return }
-    Promise.all([loadBalances(pid), loadStats(getRange('month'), pid)]).catch(e => {
+    const initRange = getRange('month')
+    Promise.all([loadBalances(pid, initRange.to), loadStats(initRange, pid)]).catch(e => {
       console.error(e); setBalances({ cash:0, bank:0, custody:0 }); setLoading(false)
     })
   }, [pid])
@@ -222,7 +258,7 @@ export default function Dashboard() {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
       const { pid: p, range: r } = liveRef.current
-      if (p) Promise.all([loadBalances(p), loadStats(r, p)]).catch(console.error)
+      if (p) Promise.all([loadBalances(p, r.to), loadStats(r, p)]).catch(console.error)
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
@@ -230,11 +266,13 @@ export default function Dashboard() {
 
   // ── دوال التحميل ───────────────────────────────────────────────────
 
-  async function loadBalances(projectId) {
+  async function loadBalances(projectId, toDate) {
     try {
-      const { data, error } = await supabase.from('ledger_entries')
-        .select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out')
+      let q = supabase.from('ledger_entries')
+        .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
         .eq('project_id', projectId).neq('status','cancelled')
+      if (toDate) q = q.lte('date', toDate)
+      const { data, error } = await q
       if (error) throw error
       const rows = data || []
       setBalances({
@@ -242,6 +280,16 @@ export default function Dashboard() {
         bank:    rows.reduce((s,r) => s + (r.bank_in   ||0) - (r.bank_out   ||0), 0),
         custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
       })
+      // ذمم تطبيقات التوصيل من حقلَي receivable_in/out المنفصلَين عن العهدة
+      const sumRcvIn  = (t) => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_in ||0), 0)
+      const sumRcvOut = (t) => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_out||0), 0)
+      const rcv = {
+        hunger:  sumRcvIn('هنقر')   - sumRcvOut('هنقر'),
+        jahez:   sumRcvIn('جاهز')   - sumRcvOut('جاهز'),
+        keeta:   sumRcvIn('كيتا')   - sumRcvOut('كيتا'),
+        mrsool:  sumRcvIn('مرسول')  - sumRcvOut('مرسول'),
+      }
+      setReceivables(rcv.hunger > 0 || rcv.jahez > 0 || rcv.keeta > 0 || rcv.mrsool > 0 ? rcv : null)
     } catch(e) { console.error(e); setBalances({ cash:0, bank:0, custody:0 }) }
   }
 
@@ -252,7 +300,7 @@ export default function Dashboard() {
       if (!p) return
       const summary = await getFinancialSummary(p, r.from, r.to)
       if (summary) {
-        setStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit })
+        setStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit, grossProfit: summary.grossProfit, cogs: summary.cogs || 0, operatingExpenses: summary.operatingExpenses || 0 })
         setChartEntries(summary.entries || [])
       }
     } catch(e) { console.error(e) }
@@ -265,7 +313,7 @@ export default function Dashboard() {
     try {
       const summary = await getFinancialSummary(projectId, r.from, r.to)
       if (summary) {
-        setCmpStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit })
+        setCmpStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit, grossProfit: summary.grossProfit, cogs: summary.cogs || 0, operatingExpenses: summary.operatingExpenses || 0 })
         setCmpEntries(summary.entries || [])
       }
     } catch(e) { console.error(e) }
@@ -276,17 +324,28 @@ export default function Dashboard() {
 
   function handlePeriod(key) {
     setActivePeriod(key)
+    setShowMainPicker(false)
     const r = getRange(key)
     setRange(r)
     if (pid) {
+      loadBalances(pid, r.to)
       loadStats(r, pid)
-      // عند تغيير الفترة وكان وضع المقارنة "الشهر السابق" → تحديث تلقائي
       if (cmpMode === 'prev') {
         const cr = getPrevMonthRange(r)
         setCmpRange(cr)
         loadCmpStats(cr, pid)
       }
     }
+  }
+
+  function applyMainPicker() {
+    const last = new Date(mainPickerYear, mainPickerMonth, 0).getDate()
+    const from = `${mainPickerYear}-${String(mainPickerMonth).padStart(2,'0')}-01`
+    const to   = `${mainPickerYear}-${String(mainPickerMonth).padStart(2,'0')}-${last}`
+    setRange({ from, to })
+    setActivePeriod('month-picker')
+    setShowMainPicker(false)
+    if (pid) { loadBalances(pid, to); loadStats({ from, to }, pid) }
   }
 
   function handleCustom(field, val) {
@@ -337,12 +396,12 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       if (!isSales(e.type)) return
       const day = parseInt(e.date.split('-')[2])
-      cur[day] = (cur[day]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0)
+      cur[day] = (cur[day]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
     })
     cmpEntries.forEach(e => {
       if (!isSales(e.type)) return
       const day = parseInt(e.date.split('-')[2])
-      cmp[day] = (cmp[day]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0)
+      cmp[day] = (cmp[day]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
     })
     const days = new Set([...Object.keys(cur), ...Object.keys(cmp)].map(Number))
     return [...days].sort((a,b)=>a-b).map(day => ({
@@ -357,7 +416,7 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       if (!isSales(e.type)) return
       const c = channelOf(e.type)
-      ch[c] = (ch[c]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0)
+      ch[c] = (ch[c]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
     })
     return Object.entries(ch).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([name,value])=>({name,value}))
   }, [chartEntries])
@@ -391,7 +450,7 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       const w = weeks.find(w => e.date >= w.from && e.date <= w.to)
       if (!w) return
-      if (isSales(e.type)) w['مبيعات']  += (Number(e.cash_in)||0)  + (Number(e.bank_in)||0)
+      if (isSales(e.type)) w['مبيعات']  += (Number(e.cash_in)||0)  + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
       else                  w['مصروفات'] += (Number(e.cash_out)||0) + (Number(e.bank_out)||0) + (Number(e.custody_out)||0)
     })
 
@@ -408,7 +467,7 @@ export default function Dashboard() {
       cmpEntries.forEach(e => {
         if (!isSales(e.type)) return
         const w = cWeeks.find(w => e.date >= w.from && e.date <= w.to)
-        if (w) w.sales += (Number(e.cash_in)||0) + (Number(e.bank_in)||0)
+        if (w) w.sales += (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
       })
       weeks.forEach((w, i) => { w['مقارنة'] = cWeeks[i]?.sales || 0 })
     }
@@ -416,11 +475,23 @@ export default function Dashboard() {
     return weeks.filter(w => w['مبيعات'] > 0 || w['مصروفات'] > 0)
   }, [chartEntries, cmpEntries, range, cmpRange])
 
+  const branchSalesData = useMemo(() => {
+    if (chartEntries.length === 0) return []
+    const bMap = {}
+    chartEntries.forEach(e => {
+      if (!isSales(e.type) || !e.branch) return
+      bMap[e.branch] = (bMap[e.branch] || 0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+    })
+    return Object.entries(bMap).filter(([,v]) => v > 0).map(([name, مبيعات]) => ({ name, مبيعات }))
+  }, [chartEntries])
+
   const totalChannelSales = channelPieData.reduce((s,d)=>s+d.value, 0)
   const totalExpensePie   = expensePieData.reduce((s,d)=>s+d.value, 0)
   const hasCharts   = !loading && chartEntries.length > 0
   const hasCompare  = !!cmpMode && !!cmpStats
   const thisYear    = new Date().getFullYear()
+
+  const COMPARE_ENABLED = false // مؤقتاً — لإعادة التفعيل: غيّر إلى true
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
@@ -433,7 +504,7 @@ export default function Dashboard() {
           <p className="text-slate-500 text-sm mt-0.5">مرحباً — {roleLabel}{projectName ? ` | ${projectName}` : ''}</p>
         </div>
         <button
-          onClick={() => { if (pid) Promise.all([loadBalances(pid), loadStats(range, pid)]).catch(console.error) }}
+          onClick={() => { if (pid) Promise.all([loadBalances(pid, range.to), loadStats(range, pid)]).catch(console.error) }}
           disabled={loading}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all shrink-0"
           style={{ background: '#f5f4f0', color: NAVY, border: '1px solid #e8e5dc' }}
@@ -455,8 +526,46 @@ export default function Dashboard() {
             </button>
           ))}
 
-          {/* زر المقارنة */}
-          <div className="relative" ref={cmpRef}>
+          {/* زر شهر محدد */}
+          <div className="relative" ref={mainPickerRef}>
+            <button
+              onClick={() => setShowMainPicker(v => !v)}
+              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
+              style={activePeriod === 'month-picker'
+                ? { background: GOLD, color: NAVY }
+                : { background: '#f5f4f0', color: '#4b5563' }
+              }>
+              {activePeriod === 'month-picker'
+                ? `${MONTHS_AR[mainPickerMonth - 1]} ${mainPickerYear} ▼`
+                : 'شهر محدد ▼'}
+            </button>
+            {showMainPicker && (
+              <div className="absolute top-full mt-1 z-50 bg-white rounded-2xl shadow-xl p-3 min-w-[190px]"
+                style={{ border: '1px solid #e8e5dc', direction: 'rtl', left: 0 }}>
+                <div className="text-xs font-bold text-slate-500 mb-2">اختر الشهر والسنة</div>
+                <div className="flex gap-2 mb-2">
+                  <select value={mainPickerMonth} onChange={e => setMainPickerMonth(Number(e.target.value))}
+                    className="flex-1 border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
+                    style={{ borderColor: '#d1c9b8' }}>
+                    {MONTHS_AR.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+                  </select>
+                  <select value={mainPickerYear} onChange={e => setMainPickerYear(Number(e.target.value))}
+                    className="w-20 border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
+                    style={{ borderColor: '#d1c9b8' }}>
+                    {[thisYear, thisYear - 1, thisYear - 2].map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <button onClick={applyMainPicker}
+                  className="w-full py-1.5 rounded-xl text-xs font-bold"
+                  style={{ background: NAVY, color: '#fff' }}>
+                  تطبيق
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* زر المقارنة — مؤقتاً معطّل (COMPARE_ENABLED = false) */}
+          {COMPARE_ENABLED && <div className="relative" ref={cmpRef}>
             {cmpMode ? (
               <div className="flex items-center gap-1">
                 <span className="px-3 py-1.5 text-xs rounded-xl font-semibold"
@@ -516,7 +625,7 @@ export default function Dashboard() {
                 )}
               </div>
             )}
-          </div>
+          </div>}
         </div>
 
         <div className="flex flex-wrap gap-3 items-end justify-center">
@@ -531,7 +640,7 @@ export default function Dashboard() {
               className="border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2" style={{ borderColor: '#d1c9b8' }}/>
           </div>
           {activePeriod === 'custom' && (
-            <button onClick={() => loadStats(range, pid)}
+            <button onClick={() => { loadBalances(pid, range.to); loadStats(range, pid) }}
               className="px-4 py-2 rounded-xl text-sm font-bold" style={{ background: NAVY, color: '#fff' }}>
               تحديث
             </button>
@@ -539,32 +648,63 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* بطاقات الأرقام */}
-      {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[0,1,2].map(i => <div key={i} className="rounded-2xl p-4 h-28 animate-pulse" style={{ background: '#e8e5dc' }}/>)}
-        </div>
-      ) : stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <StatCard label="إجمالي المبيعات"  icon="💵" value={stats.totalSales}
-            cmpValue={hasCompare ? cmpStats.totalSales    : undefined} cmpLabel={cmpLabel} />
-          <StatCard label="إجمالي المصروفات" icon="📤" value={stats.totalExpenses}
-            cmpValue={hasCompare ? cmpStats.totalExpenses : undefined} cmpLabel={cmpLabel} />
-          <StatCard label="صافي الربح"       icon="📈" value={stats.profit}
-            cmpValue={hasCompare ? cmpStats.profit        : undefined} cmpLabel={cmpLabel} />
-        </div>
-      )}
+      {/* الكروت الرئيسية — صفّان من 3 */}
+      <div className="grid grid-cols-3 gap-2">
+        {/* الصف الأول: أرقام الفترة */}
+        {loading || !stats ? (
+          [0,1,2].map(i => <div key={i} className="rounded-xl h-16 animate-pulse" style={{ background: '#e8e5dc' }}/>)
+        ) : (
+          <>
+            <KpiCard label="المبيعات"
+              value={stats.totalSales} accent="#0284c7" bg="#f0f9ff" />
+            <KpiCard label="المصروفات"
+              value={stats.totalExpenses} accent="#dc2626" bg="#fef2f2" />
+            <KpiCard label="الربح"
+              value={stats.profit} accent={stats.profit >= 0 ? '#15803d' : '#dc2626'}
+              bg={stats.profit >= 0 ? '#f0fdf4' : '#fef2f2'} negative={stats.profit < 0} />
+          </>
+        )}
 
-      {/* بطاقات الأرصدة */}
-      {balances ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <BalanceCard label="رصيد الصندوق" icon="🏧" value={balances.cash}    color="#16a34a" />
-          <BalanceCard label="رصيد البنك"   icon="🏦" value={balances.bank}    color="#1d4ed8" />
-          <BalanceCard label="رصيد العهدة"  icon="👤" value={balances.custody} color="#b45309" />
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[0,1,2].map(i => <div key={i} className="rounded-2xl p-4 h-24 animate-pulse" style={{ background: '#e8e5dc' }}/>)}
+        {/* الصف الثاني: الأرصدة */}
+        {!balances ? (
+          [0,1,2].map(i => <div key={i} className="rounded-xl h-16 animate-pulse" style={{ background: '#e8e5dc' }}/>)
+        ) : (
+          <>
+            <KpiCard label="البنك"
+              value={balances.bank}    accent="#1d4ed8" bg="#eff6ff" negative={balances.bank < 0} />
+            <KpiCard label="الصندوق"
+              value={balances.cash}    accent="#16a34a" bg="#f0fdf4" negative={balances.cash < 0} />
+            <KpiCard label="العهدة"
+              value={balances.custody} accent="#b45309" bg="#fffbeb" negative={balances.custody < 0} />
+          </>
+        )}
+      </div>
+
+      {/* بطاقة الذمم المستحقة — تظهر فقط عند وجود ذمم */}
+      {receivables && (
+        <div className="rounded-2xl p-4 shadow-sm" style={{ background: '#fff', border: '2px solid #fde68a' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-lg">⏳</span>
+            <span className="font-bold text-sm" style={{ color: '#92400e' }}>ذمم مستحقة من تطبيقات التوصيل</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: 'هنقر',   val: receivables.hunger,  color: '#dc2626' },
+              { label: 'جاهز',   val: receivables.jahez,   color: '#ea580c' },
+              { label: 'كيتا',   val: receivables.keeta,   color: '#7c3aed' },
+              { label: 'مرسول',  val: receivables.mrsool,  color: '#059669' },
+            ].filter(x => (x.val||0) > 0).map(({ label, val, color }) => (
+              <div key={label} className="rounded-xl p-3 text-center" style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
+                <div className="text-xs font-semibold mb-1" style={{ color: '#92400e' }}>{label}</div>
+                <div className="text-base font-bold font-mono tabular-nums" style={{ color }}>
+                  {(val || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-right" style={{ color: '#a78a50' }}>
+            الإجمالي: {((receivables.hunger||0)+(receivables.jahez||0)+(receivables.keeta||0)+(receivables.mrsool||0)).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س — يُحصَّل عند ورود التحويل البنكي
+          </div>
         </div>
       )}
 
@@ -642,6 +782,28 @@ export default function Dashboard() {
                 ? <Bar dataKey="مقارنة" name="مبيعات المقارنة" fill="#93c5fd" radius={[4,4,0,0]} />
                 : <Bar dataKey="مصروفات" name="مصروفات" fill="#ef4444" radius={[4,4,0,0]} />
               }
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
+
+      {/* ٥. مقارنة مبيعات الفروع */}
+      {hasCharts && branchSalesData.length > 1 && (
+        <ChartCard title="🏪 مقارنة مبيعات الفروع">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={branchSalesData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }} barCategoryGap="35%">
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0ede6" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} />
+              <YAxis tickFormatter={fmtK} tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+              <Tooltip
+                formatter={(v) => [`${v.toLocaleString('en-US', { minimumFractionDigits: 2 })} ر.س`, 'المبيعات']}
+                contentStyle={{ borderRadius: 12, border: '1px solid #e8e5dc', fontSize: 12, direction: 'rtl' }}
+              />
+              <Bar dataKey="مبيعات" radius={[6,6,0,0]}>
+                {branchSalesData.map((_, i) => (
+                  <Cell key={i} fill={BRANCH_COLORS[i % BRANCH_COLORS.length]} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
