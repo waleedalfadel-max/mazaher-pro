@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>تحسيب — متابعة مالية احترافية للمطاعم والمقاهي</title>
+  <meta name="description" content="نظام وفريق متابعة مالية للمطاعم والمقاهي. صوّر فاتورتك واترك الباقي — مبيعات، مصروفات، أرباح، وتقرير ضريبة جاهز في مكان واحد." />
+  <link rel="icon" type="image/png" href="/logo-icon-new.png" />
+  <link rel="apple-touch-icon" href="/logo-icon-new.png" />
+  <meta name="theme-color" content="#0B2957" />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:       #0B2957;
+      --navy-deep:  #071C3D;
+      --navy-soft:  #123B72;
+      --teal-dark:  #058C8F;
+      --teal:       #0FB3AC;
+      --mint:       #23E5D4;
+      --surface:    #F6FAF9;
+      --surface-2:  #EFFBF8;
+      --card:       #FFFFFF;
+      --text-muted: #5B6B7C;
+      --border:     #E3E9EC;
+      --danger:     #E23744;
+      --danger-bg:  #FDF1F1;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Cairo', sans-serif;
+      background: var(--surface);
+      color: var(--navy);
+      line-height: 1.6;
+    }
+
+    a { text-decoration: none; color: inherit; }
+    img { display: block; max-width: 100%; }
+
+    .grad-text {
+      background: linear-gradient(90deg, var(--teal-dark), var(--mint));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    /* ── Navbar ── */
+    .nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(246,250,249,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 5%;
+    }
+    .nav-inner {
+      max-width: 1140px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 72px; gap: 24px;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; }
+    .nav-logo img { height: 38px; width: 38px; border-radius: 9px; }
+    .nav-logo span { font-weight: 800; font-size: 1.15rem; color: var(--navy); }
+    .nav-links { display: flex; align-items: center; gap: 4px; }
+    .nav-links a {
+      padding: 8px 16px; border-radius: 20px;
+      font-size: 0.9rem; font-weight: 600; color: var(--navy);
+      transition: background .18s, color .18s;
+    }
+    .nav-links a:hover { background: var(--surface-2); color: var(--teal-dark); }
+    .nav-cta { display: flex; align-items: center; gap: 10px; }
+    .btn-outline {
+      padding: 9px 20px; border-radius: 24px; font-size: 0.85rem; font-weight: 700;
+      border: 2px solid var(--navy); color: var(--navy); background: transparent;
+      cursor: pointer; transition: all .18s; font-family: 'Cairo', sans-serif;
+      white-space: nowrap;
+    }
+    .btn-outline:hover { background: var(--navy); color: #fff; }
+    .btn-primary {
+      padding: 10px 22px; border-radius: 24px; font-size: 0.85rem; font-weight: 800;
+      background: linear-gradient(90deg, var(--teal-dark), var(--mint)); color: var(--navy-deep); border: none;
+      cursor: pointer; transition: all .2s; font-family: 'Cairo', sans-serif;
+      white-space: nowrap;
+    }
+    .btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); }
+    .hamburger { display: none; flex-direction: column; gap: 5px; cursor: pointer; border: none; background: none; padding: 4px; }
+    .hamburger span { display: block; width: 24px; height: 2px; background: var(--navy); border-radius: 2px; }
+    .mobile-menu {
+      display: none; flex-direction: column; gap: 4px;
+      background: #fff; border-bottom: 1px solid var(--border);
+      padding: 12px 5%; position: sticky; top: 72px; z-index: 99;
+    }
+    .mobile-menu.open { display: flex; }
+    .mobile-menu a {
+      padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 0.95rem;
+      color: var(--navy); transition: background .15s;
+    }
+    .mobile-menu a:hover { background: var(--surface-2); }
+    .mobile-menu .mob-cta { display: flex; gap: 8px; padding: 8px 16px; }
+    .mob-cta .btn-outline, .mob-cta .btn-primary { flex: 1; text-align: center; padding: 10px 0; }
+
+    /* ── Hero ── */
+    .hero {
+      background: radial-gradient(ellipse 900px 500px at 15% -10%, rgba(35,229,212,0.20) 0%, transparent 60%),
+                  radial-gradient(ellipse 700px 500px at 100% 20%, rgba(15,179,172,0.16) 0%, transparent 55%),
+                  linear-gradient(160deg, var(--navy-deep) 0%, var(--navy) 55%, #0d3a63 100%);
+      color: #fff; padding: 76px 5% 90px;
+      position: relative; overflow: hidden;
+    }
+    .hero-inner {
+      max-width: 1140px; margin: 0 auto; position: relative; z-index: 1;
+      display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 48px; align-items: center;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: rgba(35,229,212,0.14); border: 1px solid rgba(35,229,212,0.35);
+      border-radius: 20px; padding: 6px 14px; font-size: 0.8rem; font-weight: 700;
+      color: #8ff2e6; margin-bottom: 22px;
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 4.2vw, 3.1rem); font-weight: 900; line-height: 1.28;
+      margin-bottom: 20px; color: #fff;
+    }
+    .hero p.lead {
+      font-size: clamp(0.95rem, 2vw, 1.1rem); color: rgba(255,255,255,0.75);
+      margin-bottom: 32px; max-width: 480px;
+    }
+    .hero-cta { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 30px; }
+    .btn-hero-main {
+      padding: 15px 30px; border-radius: 30px; font-size: 1rem; font-weight: 800;
+      background: linear-gradient(90deg, var(--teal-dark), var(--mint)); color: var(--navy-deep); border: none;
+      cursor: pointer; transition: all .2s; font-family: 'Cairo', sans-serif;
+      display: inline-flex; align-items: center; gap: 8px;
+      box-shadow: 0 8px 28px rgba(15,179,172,0.35);
+    }
+    .btn-hero-main:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(15,179,172,0.45); }
+    .btn-hero-wa {
+      padding: 15px 26px; border-radius: 30px; font-size: 1rem; font-weight: 700;
+      background: rgba(255,255,255,0.06); color: #fff; border: 2px solid rgba(255,255,255,0.35);
+      cursor: pointer; transition: all .2s; font-family: 'Cairo', sans-serif;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn-hero-wa:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.6); }
+    .hero-trust { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: rgba(255,255,255,0.55); }
+    .hero-trust b { color: #8ff2e6; }
+
+    /* ── Hero mock dashboard card ── */
+    .mock-card {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 22px; padding: 22px; backdrop-filter: blur(6px);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.25);
+    }
+    .mock-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+    .mock-head .dots { display: flex; gap: 6px; }
+    .mock-head .dots span { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.25); }
+    .mock-head .title { font-size: 0.8rem; font-weight: 700; color: rgba(255,255,255,0.6); }
+    .mock-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+    .mock-stat {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px; padding: 14px 10px; text-align: center;
+    }
+    .mock-stat .lbl { font-size: 0.72rem; color: rgba(255,255,255,0.55); margin-bottom: 6px; }
+    .mock-stat .val { font-size: 1.05rem; font-weight: 800; color: #fff; }
+    .mock-stat .val.up { color: #8ff2e6; }
+    .mock-chart {
+      display: flex; align-items: flex-end; gap: 8px; height: 90px;
+      background: rgba(255,255,255,0.04); border-radius: 14px; padding: 14px; border: 1px solid rgba(255,255,255,0.08);
+    }
+    .mock-chart .bar { flex: 1; border-radius: 6px 6px 0 0; background: linear-gradient(180deg, var(--mint), var(--teal-dark)); opacity: .85; }
+    .mock-badge {
+      position: absolute; bottom: -16px; left: -16px;
+      background: linear-gradient(90deg, var(--teal-dark), var(--mint));
+      color: var(--navy-deep); font-weight: 800; font-size: 0.82rem;
+      border-radius: 16px; padding: 10px 16px; display: flex; align-items: center; gap: 6px;
+      box-shadow: 0 10px 24px rgba(15,179,172,0.4);
+    }
+    .mock-wrap { position: relative; }
+
+    /* ── Section commons ── */
+    .section { padding: 88px 5%; }
+    .section-inner { max-width: 1140px; margin: 0 auto; }
+    .section-label {
+      display: inline-block; font-size: 0.78rem; font-weight: 800; letter-spacing: .05em;
+      color: var(--teal-dark); background: var(--surface-2);
+      border-radius: 20px; padding: 5px 15px; margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: clamp(1.5rem, 3.2vw, 2.3rem); font-weight: 900; color: var(--navy);
+      margin-bottom: 12px; line-height: 1.3;
+    }
+    .section-sub {
+      font-size: 1rem; color: var(--text-muted); max-width: 560px; line-height: 1.7;
+    }
+    .section-header { margin-bottom: 48px; }
+
+    /* ── Problems ── */
+    .problems { background: var(--danger-bg); }
+    .problems-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+    .problem-card {
+      background: #fff; border-radius: 18px; padding: 30px;
+      border: 1px solid #F6D4D6; position: relative; overflow: hidden;
+    }
+    .problem-card::before {
+      content: ''; position: absolute; top: 0; right: 0;
+      width: 4px; height: 100%; background: var(--danger);
+    }
+    .problem-icon {
+      width: 48px; height: 48px; border-radius: 12px; background: #FCE7E8;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem; margin-bottom: 16px;
+    }
+    .problem-card h3 { font-size: 1.05rem; font-weight: 800; color: #B3202B; margin-bottom: 8px; }
+    .problem-card p { font-size: 0.9rem; color: #6b4a4d; line-height: 1.7; }
+
+    /* ── How it works ── */
+    .how { background: var(--surface); }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0; }
+    .step { padding: 40px 32px; text-align: center; position: relative; }
+    .step:not(:last-child)::after {
+      content: '←'; position: absolute; left: -16px; top: 50%; transform: translateY(-50%);
+      font-size: 1.4rem; color: var(--teal); font-weight: 800;
+    }
+    .step-num {
+      width: 54px; height: 54px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--navy), var(--navy-soft)); color: #8ff2e6;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem; font-weight: 800; margin: 0 auto 18px;
+    }
+    .step-icon { font-size: 2.2rem; margin-bottom: 14px; }
+    .step h3 { font-size: 1.05rem; font-weight: 800; color: var(--navy); margin-bottom: 8px; }
+    .step p { font-size: 0.88rem; color: var(--text-muted); line-height: 1.65; }
+    .steps-wrapper {
+      background: #fff; border-radius: 24px; box-shadow: 0 4px 28px rgba(11,41,87,0.08);
+      border: 1px solid var(--border); overflow: hidden;
+    }
+
+    /* ── Features ── */
+    .features { background: var(--surface-2); }
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+    .feature-card {
+      background: #fff; border-radius: 18px; padding: 30px;
+      border: 1px solid rgba(15,179,172,0.18);
+      transition: transform .2s, box-shadow .2s;
+    }
+    .feature-card:hover { transform: translateY(-3px); box-shadow: 0 10px 30px rgba(11,41,87,0.1); }
+    .feature-icon {
+      width: 48px; height: 48px; border-radius: 12px;
+      background: linear-gradient(135deg, rgba(15,179,172,0.14), rgba(35,229,212,0.14));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem; margin-bottom: 16px;
+    }
+    .feature-card h3 { font-size: 1rem; font-weight: 800; color: var(--navy); margin-bottom: 8px; }
+    .feature-card p { font-size: 0.88rem; color: var(--text-muted); line-height: 1.7; }
+
+    /* ── Pricing ── */
+    .pricing { background: var(--surface); }
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; max-width: 860px; margin: 0 auto; }
+    .price-card {
+      background: #fff; border-radius: 22px; padding: 38px;
+      border: 2px solid var(--border); position: relative; overflow: hidden;
+    }
+    .price-card.featured {
+      border-color: var(--teal); background: #fff;
+      box-shadow: 0 12px 36px rgba(15,179,172,0.18);
+    }
+    .price-badge {
+      position: absolute; top: 22px; left: 22px;
+      background: #FFF1D6; color: #935B00;
+      font-size: 0.75rem; font-weight: 800; padding: 5px 13px; border-radius: 12px;
+    }
+    .price-label { font-size: 0.8rem; font-weight: 800; color: var(--teal-dark); margin-bottom: 10px; }
+    .price-name { font-size: 1.3rem; font-weight: 900; color: var(--navy); margin-bottom: 16px; }
+    .price-amount { margin-bottom: 6px; }
+    .price-amount .amount {
+      font-size: 2.8rem; font-weight: 900; color: var(--navy); line-height: 1;
+    }
+    .price-amount .currency { font-size: 1rem; font-weight: 600; color: var(--text-muted); margin-right: 4px; }
+    .price-amount .period { font-size: 0.85rem; color: var(--text-muted); margin-right: 4px; }
+    .price-original { font-size: 0.85rem; color: #A0AEC0; margin-bottom: 24px; }
+    .price-original s { color: var(--danger); }
+    .price-flex { font-size: 0.88rem; color: var(--text-muted); margin-bottom: 24px; line-height: 1.6; }
+    .price-divider { border: none; border-top: 1px solid var(--border); margin-bottom: 22px; }
+    .price-features { list-style: none; display: flex; flex-direction: column; gap: 12px; margin-bottom: 28px; }
+    .price-features li { display: flex; align-items: flex-start; gap: 10px; font-size: 0.9rem; color: #374151; }
+    .price-features li .check { color: var(--teal-dark); font-size: 1rem; flex-shrink: 0; margin-top: 1px; font-weight: 800; }
+    .price-cta {
+      display: block; text-align: center; padding: 14px; border-radius: 24px;
+      font-size: 0.95rem; font-weight: 800; font-family: 'Cairo', sans-serif;
+      cursor: pointer; transition: all .2s; border: 2px solid var(--navy);
+    }
+    .price-cta.primary { background: linear-gradient(90deg, var(--teal-dark), var(--mint)); color: var(--navy-deep); border-color: transparent; }
+    .price-cta.primary:hover { filter: brightness(1.05); }
+    .price-cta.secondary { background: transparent; color: var(--navy); }
+    .price-cta.secondary:hover { background: var(--navy); color: #fff; }
+
+    /* ── Final CTA ── */
+    .final-cta {
+      background: radial-gradient(ellipse 800px 500px at 85% 0%, rgba(35,229,212,0.16) 0%, transparent 55%),
+                  linear-gradient(160deg, var(--navy-deep) 0%, var(--navy) 100%);
+      padding: 88px 5%; text-align: center; color: #fff;
+    }
+    .final-cta h2 { font-size: clamp(1.6rem, 3.6vw, 2.4rem); font-weight: 900; margin-bottom: 14px; }
+    .final-cta p { font-size: 1rem; color: rgba(255,255,255,0.72); margin-bottom: 36px; }
+    .final-cta .hero-cta { justify-content: center; margin-bottom: 0; }
+
+    /* ── Footer ── */
+    .footer { background: #071730; color: rgba(255,255,255,0.6); padding: 44px 5%; text-align: center; }
+    .footer-logo { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 18px; }
+    .footer-logo img { height: 34px; width: 34px; border-radius: 8px; }
+    .footer-logo span { font-weight: 800; font-size: 1rem; color: rgba(255,255,255,0.9); }
+    .footer-wa {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 20px; padding: 9px 18px; font-size: 0.88rem; font-weight: 700;
+      color: rgba(255,255,255,0.85); margin-bottom: 20px; transition: all .18s; direction: ltr;
+    }
+    .footer-wa:hover { background: rgba(255,255,255,0.13); }
+    .footer-contact { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+    .footer-email {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 20px; padding: 9px 18px; font-size: 0.88rem; font-weight: 700;
+      color: rgba(255,255,255,0.85); transition: all .18s; direction: ltr;
+    }
+    .footer-email:hover { background: rgba(255,255,255,0.13); }
+    .footer-by { font-size: 0.8rem; color: rgba(255,255,255,0.4); margin-bottom: 10px; }
+    .footer-copy { font-size: 0.8rem; color: rgba(255,255,255,0.35); }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .hero-inner { grid-template-columns: 1fr; text-align: center; }
+      .hero p.lead { margin-left: auto; margin-right: auto; }
+      .hero-cta { justify-content: center; }
+      .hero-trust { justify-content: center; }
+      .mock-wrap { max-width: 420px; margin: 0 auto; }
+    }
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .nav-cta   { display: none; }
+      .hamburger { display: flex; }
+      .step:not(:last-child)::after { display: none; }
+      .steps { grid-template-columns: 1fr; }
+      .step { border-bottom: 1px solid var(--border); }
+      .step:last-child { border-bottom: none; }
+    }
+    @media (min-width: 769px) {
+      .hamburger { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navbar ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="nav-logo">
+      <img src="/logo-icon-new.png" alt="تحسيب" />
+      <span>تحسيب</span>
+    </a>
+
+    <div class="nav-links">
+      <a href="#features">المميزات</a>
+      <a href="#how">كيف يعمل</a>
+      <a href="#pricing">الأسعار</a>
+      <a href="#contact">تواصل</a>
+    </div>
+
+    <div class="nav-cta">
+      <a href="https://tahseeb-pro.vercel.app" class="btn-outline">دخول العملاء</a>
+      <a href="https://trial.tahseeb.app" class="btn-primary">جرّب مجاناً ←</a>
+    </div>
+
+    <button class="hamburger" onclick="toggleMenu()" aria-label="القائمة">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<div class="mobile-menu" id="mobileMenu">
+  <a href="#features" onclick="closeMenu()">المميزات</a>
+  <a href="#how" onclick="closeMenu()">كيف يعمل</a>
+  <a href="#pricing" onclick="closeMenu()">الأسعار</a>
+  <a href="#contact" onclick="closeMenu()">تواصل</a>
+  <div class="mob-cta">
+    <a href="https://tahseeb-pro.vercel.app" class="btn-outline">دخول العملاء</a>
+    <a href="https://trial.tahseeb.app" class="btn-primary">جرّب مجاناً</a>
+  </div>
+</div>
+
+<!-- ── Hero ── -->
+<section class="hero">
+  <div class="hero-inner">
+    <div>
+      <div class="hero-badge">✓ متابعة مالية احترافية للمطاعم والمقاهي</div>
+      <h1>حساباتك <span class="grad-text">واضحة ومرتبة</span><br/>من أول فاتورة</h1>
+      <p class="lead">صوّر فاتورتك وخلّه على تحسيب — نظام ذكي وفريق مختص يرتبون مبيعاتك ومصروفاتك وأرباحك وضريبتك أول بأول، بدون محاسب إضافي وبدون تعقيد.</p>
+      <div class="hero-cta">
+        <a href="https://trial.tahseeb.app" class="btn-hero-main">جرّب النظام مجاناً ←</a>
+        <a href="https://wa.me/966561754516" class="btn-hero-wa">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.118.553 4.103 1.514 5.829L0 24l6.341-1.494A11.94 11.94 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.804 9.804 0 01-4.998-1.367l-.359-.214-3.765.887.938-3.666-.233-.374A9.82 9.82 0 012.182 12C2.182 6.576 6.576 2.182 12 2.182S21.818 6.576 21.818 12 17.424 21.818 12 21.818z"/></svg>
+          تواصل واتساب
+        </a>
+      </div>
+      <div class="hero-trust"><b>✓</b> يُستخدم من مطاعم ومقاهي في السعودية</div>
+    </div>
+
+    <div class="mock-wrap">
+      <div class="mock-card">
+        <div class="mock-head">
+          <span class="title">لوحة تحكم تحسيب</span>
+          <div class="dots"><span></span><span></span><span></span></div>
+        </div>
+        <div class="mock-stats">
+          <div class="mock-stat"><div class="lbl">المبيعات</div><div class="val">128,450</div></div>
+          <div class="mock-stat"><div class="lbl">المصروفات</div><div class="val">91,670</div></div>
+          <div class="mock-stat"><div class="lbl">صافي الربح</div><div class="val up">36,780</div></div>
+        </div>
+        <div class="mock-chart">
+          <div class="bar" style="height:35%"></div>
+          <div class="bar" style="height:55%"></div>
+          <div class="bar" style="height:40%"></div>
+          <div class="bar" style="height:75%"></div>
+          <div class="bar" style="height:60%"></div>
+          <div class="bar" style="height:90%"></div>
+          <div class="bar" style="height:70%"></div>
+        </div>
+      </div>
+      <div class="mock-badge">✓ ربح 28.6%</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Problems ── -->
+<section class="section problems" id="problems">
+  <div class="section-inner">
+    <div class="section-header">
+      <span class="section-label">المشكلة</span>
+      <h2 class="section-title">يوميات صاحب المطعم</h2>
+      <p class="section-sub">كثير من أصحاب المطاعم يعيشون نفس هالمشاكل كل شهر</p>
+    </div>
+    <div class="problems-grid">
+      <div class="problem-card">
+        <div class="problem-icon">🧾</div>
+        <h3>فواتير بلا تصنيف</h3>
+        <p>كومة فواتير ورقية ما تعرف تصنّفها صح — تكلفة البضاعة تختلط بالمصروفات التشغيلية وتضيع الصورة الحقيقية.</p>
+      </div>
+      <div class="problem-card">
+        <div class="problem-icon">⏳</div>
+        <h3>أرقام تجيك متأخرة</h3>
+        <p>تعرف نتيجة الشهر بعد ما ينتهي بأسابيع، والقرارات تُبنى على تخمين مو على بيانات حقيقية.</p>
+      </div>
+      <div class="problem-card">
+        <div class="problem-icon">🧮</div>
+        <h3>الضريبة تصير كابوس</h3>
+        <p>وقت تقديم ضريبة القيمة المضافة يتحول لتجميع فواتير يدوي وحساب أرقام من الصفر كل ربع سنة.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How it works ── -->
+<section class="section how" id="how">
+  <div class="section-inner">
+    <div class="section-header" style="text-align:center">
+      <span class="section-label">كيف يعمل</span>
+      <h2 class="section-title">ثلاث خطوات وخلاص</h2>
+      <p class="section-sub" style="margin:0 auto">من الفاتورة إلى التقرير في ثوانٍ</p>
+    </div>
+    <div class="steps-wrapper">
+      <div class="steps">
+        <div class="step">
+          <div class="step-icon">📸</div>
+          <div class="step-num">1</div>
+          <h3>صوّر الفاتورة</h3>
+          <p>بهاتفك مباشرة — كاش، شبكة، أو من تطبيقات التوصيل، ما يفرق</p>
+        </div>
+        <div class="step">
+          <div class="step-icon">🤖</div>
+          <div class="step-num">2</div>
+          <h3>النظام يحلّلها وفريقنا يراجع</h3>
+          <p>الذكاء الاصطناعي يقرأ الفاتورة ويصنّفها، وفريق تحسيب يتأكد إن كل رقم في مكانه الصحيح</p>
+        </div>
+        <div class="step">
+          <div class="step-icon">📊</div>
+          <div class="step-num">3</div>
+          <h3>تشوف النتيجة فوراً</h3>
+          <p>لوحة التحكم تتحدّث لحظياً — مبيعات، مصروفات، أرباح، وتقرير الضريبة جاهز</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ── -->
+<section class="section features" id="features">
+  <div class="section-inner">
+    <div class="section-header">
+      <span class="section-label">المميزات</span>
+      <h2 class="section-title">كل ما تحتاجه في مكان واحد</h2>
+      <p class="section-sub">نظام مالي متكامل مبني خصيصاً للمطاعم والمقاهي</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>لوحة تحكم فورية</h3>
+        <p>أرباحك ومصروفاتك ومبيعاتك تتحدّث تلقائياً مع كل فاتورة — بلا انتظار نهاية الشهر.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏛️</div>
+        <h3>تقرير الضريبة جاهز</h3>
+        <p>تقرير ضريبة القيمة المضافة يُستخرج بضغطة وحدة — مرتّب ومفصّل وجاهز للتقديم.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🥩</div>
+        <h3>تكلفة البضاعة منفصلة</h3>
+        <p>تكلفة المواد الخام مفصولة عن المصروفات التشغيلية — تعرف هامش ربحك الحقيقي بدقة.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏪</div>
+        <h3>فروع متعددة</h3>
+        <p>إدارة أكثر من فرع من نفس الحساب — تقارير مجمّعة أو مفصّلة لكل فرع على حدة.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">👥</div>
+        <h3>صلاحيات لكل دور</h3>
+        <p>المالك يشوف التقارير، المحاسب يعتمد الفواتير، المشتريات يرفع فقط — كل شخص يشوف اللي يخصّه.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">✅</div>
+        <h3>بلا تعقيد محاسبي</h3>
+        <p>ما تحتاج خبرة محاسبة — النظام يترجم الأرقام إلى لغة واضحة لصاحب المنشأة.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Pricing ── -->
+<section class="section pricing" id="pricing">
+  <div class="section-inner">
+    <div class="section-header" style="text-align:center">
+      <span class="section-label">الأسعار</span>
+      <h2 class="section-title">شفاف ومباشر</h2>
+      <p class="section-sub" style="margin:0 auto">اختر الباقة المناسبة لحجم منشأتك</p>
+    </div>
+    <div class="pricing-grid">
+
+      <!-- Subscription -->
+      <div class="price-card featured">
+        <div class="price-badge">خصم 50% 🔥</div>
+        <div class="price-label">الاشتراك السنوي</div>
+        <div class="price-name">نظام تحسيب</div>
+        <div class="price-amount">
+          <span class="amount">999</span>
+          <span class="currency">ريال</span>
+          <span class="period">/ سنة</span>
+        </div>
+        <div class="price-original">السعر الأصلي: <s>2,000 ريال</s></div>
+        <hr class="price-divider" />
+        <ul class="price-features">
+          <li><span class="check">✓</span> استخدام سنة كاملة</li>
+          <li><span class="check">✓</span> جميع المستخدمين بلا حدود</li>
+          <li><span class="check">✓</span> رفع وتنظيم المستندات</li>
+          <li><span class="check">✓</span> لوحة تحكم وتقارير كاملة</li>
+          <li><span class="check">✓</span> تدريب أولي على النظام</li>
+          <li><span class="check">✓</span> دعم فني أساسي</li>
+        </ul>
+        <a href="https://wa.me/966561754516?text=أريد الاشتراك في نظام تحسيب" class="price-cta primary">ابدأ الآن ←</a>
+      </div>
+
+      <!-- Follow-up Service -->
+      <div class="price-card">
+        <div class="price-label">خدمة المتابعة المالية</div>
+        <div class="price-name">فريق تحسيب معك</div>
+        <div class="price-flex">رسوم منفصلة حسب حجم المنشأة — تواصل معنا لعرض مخصص</div>
+        <hr class="price-divider" />
+        <ul class="price-features">
+          <li><span class="check">✓</span> متابعة تشغيلية من فريق تحسيب</li>
+          <li><span class="check">✓</span> مراجعة واعتماد المستندات</li>
+          <li><span class="check">✓</span> متابعة المبيعات والمصروفات</li>
+          <li><span class="check">✓</span> تقارير دورية مفصّلة</li>
+          <li><span class="check">✓</span> دعم مستمر على واتساب</li>
+        </ul>
+        <a href="https://wa.me/966561754516?text=أريد الاستفسار عن خدمة المتابعة المالية" class="price-cta secondary">تواصل للاستفسار</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── Final CTA ── -->
+<section class="final-cta" id="contact">
+  <h2>جاهز تبدأ؟</h2>
+  <p>جرّب النظام مجاناً أو تواصل معنا لمعرفة كيف يناسب احتياجاتك</p>
+  <div class="hero-cta">
+    <a href="https://trial.tahseeb.app" class="btn-hero-main">جرّب النظام مجاناً ←</a>
+    <a href="https://wa.me/966561754516" class="btn-hero-wa">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.118.553 4.103 1.514 5.829L0 24l6.341-1.494A11.94 11.94 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.804 9.804 0 01-4.998-1.367l-.359-.214-3.765.887.938-3.666-.233-.374A9.82 9.82 0 012.182 12C2.182 6.576 6.576 2.182 12 2.182S21.818 6.576 21.818 12 17.424 21.818 12 21.818z"/></svg>
+      تواصل واتساب
+    </a>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer class="footer">
+  <div class="footer-logo">
+    <img src="/logo-icon-new.png" alt="تحسيب" />
+    <span>تحسيب</span>
+  </div>
+  <div class="footer-contact">
+    <a href="https://wa.me/966561754516" class="footer-wa">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.118.553 4.103 1.514 5.829L0 24l6.341-1.494A11.94 11.94 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.804 9.804 0 01-4.998-1.367l-.359-.214-3.765.887.938-3.666-.233-.374A9.82 9.82 0 012.182 12C2.182 6.576 6.576 2.182 12 2.182S21.818 6.576 21.818 12 17.424 21.818 12 21.818z"/></svg>
+      966561754516+
+    </a>
+    <a href="mailto:info@safahat.app" class="footer-email">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+      info@safahat.app
+    </a>
+  </div>
+  <p class="footer-by">تطوير وتشغيل: مؤسسة صفحات المالية</p>
+  <p class="footer-copy">تحسيب © <span id="yr"></span> — جميع الحقوق محفوظة</p>
+</footer>
+
+<script>
+  document.getElementById('yr').textContent = new Date().getFullYear()
+
+  function toggleMenu() {
+    document.getElementById('mobileMenu').classList.toggle('open')
+  }
+  function closeMenu() {
+    document.getElementById('mobileMenu').classList.remove('open')
+  }
+
+  document.addEventListener('click', function(e) {
+    const menu = document.getElementById('mobileMenu')
+    const btn  = document.querySelector('.hamburger')
+    if (menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
+      menu.classList.remove('open')
+    }
+  })
+</script>
+
+</body>
+</html>
