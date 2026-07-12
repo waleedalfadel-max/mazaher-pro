@@ -189,6 +189,31 @@
     }
     .section-header { margin-bottom: 48px; }
 
+    /* ── Screens (product preview) ── */
+    .screens { background: var(--surface); }
+    .screens-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+    .screen-card {
+      background: #fff; border-radius: 20px; border: 1px solid var(--border);
+      box-shadow: 0 4px 28px rgba(11,41,87,0.07); padding: 22px;
+    }
+    .screen-card .screen-title {
+      font-size: 0.85rem; font-weight: 800; color: var(--navy);
+      margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+    }
+    .exp-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+    .exp-row:last-child { border-bottom: none; }
+    .exp-name { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 0.88rem; color: var(--navy); white-space: nowrap; }
+    .exp-num { text-align: left; direction: ltr; }
+    .exp-amount { font-weight: 800; font-size: 0.95rem; color: var(--navy); }
+    .exp-pct { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+    .exp-bar-track { width: 84px; height: 5px; border-radius: 4px; background: #eef1f3; overflow: hidden; margin-top: 6px; margin-right: auto; }
+    .exp-bar-fill { height: 100%; border-radius: 4px; }
+    .kpi-mini-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+    .kpi-mini { border-radius: 12px; padding: 12px 8px; text-align: center; border: 1.5px solid; }
+    .kpi-mini .lbl { font-size: 0.7rem; color: #94a3b8; font-weight: 700; margin-bottom: 4px; }
+    .kpi-mini .val { font-size: 0.95rem; font-weight: 800; font-family: 'Cairo', sans-serif; direction: ltr; display: inline-block; }
+    .mini-chart-wrap { border: 1px solid var(--border); border-radius: 14px; padding: 10px 14px 4px; }
+
     /* ── Problems ── */
     .problems { background: var(--danger-bg); }
     .problems-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
@@ -364,7 +389,7 @@
     </div>
 
     <div class="nav-cta">
-      <a href="https://tahseeb-pro.vercel.app" class="btn-outline">دخول العملاء</a>
+      <a href="https://wa.me/966561754516?text=أريد حجز عرض توضيحي على نظام تحسيب" class="btn-outline">احجز عرض توضيحي</a>
       <a href="https://trial.tahseeb.app" class="btn-primary">جرّب مجاناً ←</a>
     </div>
 
@@ -380,7 +405,7 @@
   <a href="#pricing" onclick="closeMenu()">الأسعار</a>
   <a href="#contact" onclick="closeMenu()">تواصل</a>
   <div class="mob-cta">
-    <a href="https://tahseeb-pro.vercel.app" class="btn-outline">دخول العملاء</a>
+    <a href="https://wa.me/966561754516?text=أريد حجز عرض توضيحي على نظام تحسيب" class="btn-outline">احجز عرض توضيحي</a>
     <a href="https://trial.tahseeb.app" class="btn-primary">جرّب مجاناً</a>
   </div>
 </div>
@@ -488,6 +513,82 @@
   </div>
 </section>
 
+<!-- ── Screens (product preview) ── -->
+<section class="section screens" id="screens">
+  <div class="section-inner">
+    <div class="section-header" style="text-align:center">
+      <span class="section-label">شوف بنفسك</span>
+      <h2 class="section-title">لوحة تحكم حقيقية، أرقام حقيقية</h2>
+      <p class="section-sub" style="margin:0 auto">هذي نفس الشاشات اللي تشوفها في حسابك — بدون فلاتر ولا تجميل</p>
+    </div>
+    <div class="screens-grid">
+
+      <div class="screen-card">
+        <div class="screen-title">🧾 تفصيل المصروفات حسب النوع</div>
+        <div class="exp-row">
+          <div class="exp-name">🥩 تكلفة البضاعة المباعة</div>
+          <div class="exp-num">
+            <div class="exp-amount">14,678.70</div>
+            <div class="exp-pct">23.8% من المبيعات</div>
+            <div class="exp-bar-track"><div class="exp-bar-fill" style="width:24%;background:#0284c7"></div></div>
+          </div>
+        </div>
+        <div class="exp-row">
+          <div class="exp-name">💰 مصروفات ثابتة</div>
+          <div class="exp-num">
+            <div class="exp-amount">14,771.15</div>
+            <div class="exp-pct">23.9% من المبيعات</div>
+            <div class="exp-bar-track"><div class="exp-bar-fill" style="width:24%;background:#0284c7"></div></div>
+          </div>
+        </div>
+        <div class="exp-row">
+          <div class="exp-name">🛒 مصروفات تشغيلية</div>
+          <div class="exp-num">
+            <div class="exp-amount">7,590.08</div>
+            <div class="exp-pct">12.3% من المبيعات</div>
+            <div class="exp-bar-track"><div class="exp-bar-fill" style="width:12%;background:#16a34a"></div></div>
+          </div>
+        </div>
+        <div class="exp-row">
+          <div class="exp-name">🏛️ ضريبة القيمة المضافة</div>
+          <div class="exp-num">
+            <div class="exp-amount">864.00</div>
+            <div class="exp-pct">1.4% من المبيعات</div>
+            <div class="exp-bar-track"><div class="exp-bar-fill" style="width:6%;background:#7c3aed"></div></div>
+          </div>
+        </div>
+        <div class="exp-row">
+          <div class="exp-name">🏢 أصول وتجهيزات</div>
+          <div class="exp-num">
+            <div class="exp-amount">655.00</div>
+            <div class="exp-pct">1.1% من المبيعات</div>
+            <div class="exp-bar-track"><div class="exp-bar-fill" style="width:5%;background:#ea580c"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="screen-card">
+        <div class="screen-title">📊 الأرصدة والمبيعات اليومية</div>
+        <div class="kpi-mini-grid">
+          <div class="kpi-mini" style="background:#f0fdf4;border-color:#bbf7d0"><div class="lbl">الربح</div><div class="val" style="color:#15803d">15,293.16</div></div>
+          <div class="kpi-mini" style="background:#fef2f2;border-color:#fecaca"><div class="lbl">المصروفات</div><div class="val" style="color:#dc2626">27,005.34</div></div>
+          <div class="kpi-mini" style="background:#f0f9ff;border-color:#bae6fd"><div class="lbl">المبيعات</div><div class="val" style="color:#0284c7">42,298.50</div></div>
+          <div class="kpi-mini" style="background:#fffbeb;border-color:#fde68a"><div class="lbl">العهدة</div><div class="val" style="color:#b45309">133.03</div></div>
+          <div class="kpi-mini" style="background:#fef2f2;border-color:#fecaca"><div class="lbl">الصندوق</div><div class="val" style="color:#dc2626">331.40-</div></div>
+          <div class="kpi-mini" style="background:#eff6ff;border-color:#bfdbfe"><div class="lbl">البنك</div><div class="val" style="color:#1d4ed8">3,042.64</div></div>
+        </div>
+        <div class="mini-chart-wrap">
+          <svg viewBox="0 0 300 80" width="100%" height="80" preserveAspectRatio="none">
+            <polyline fill="none" stroke="#0FB3AC" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+              points="0,40 15,55 30,56 45,42 60,36 75,44 90,20 105,50 120,58 135,34 150,32 165,40 180,36 195,10 210,44 225,60 240,42 255,48 270,12 285,26 300,22" />
+          </svg>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
 <!-- ── Features ── -->
 <section class="section features" id="features">
   <div class="section-inner">
@@ -526,6 +627,11 @@
         <div class="feature-icon">✅</div>
         <h3>بلا تعقيد محاسبي</h3>
         <p>ما تحتاج خبرة محاسبة — النظام يترجم الأرقام إلى لغة واضحة لصاحب المنشأة.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📱</div>
+        <h3>تابع عملك من جوالك</h3>
+        <p>لوحة التحكم تفتح من جوالك زي ما تفتح من الكمبيوتر — تشوف مبيعاتك وأرباحك وانت في أي مكان.</p>
       </div>
     </div>
   </div>
