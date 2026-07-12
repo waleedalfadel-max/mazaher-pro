@@ -111,7 +111,7 @@ function KpiCard({ label, value, accent, bg, negative }) {
   return (
     <div className="rounded-xl text-center shadow-sm" style={{ background: isNeg ? '#fef2f2' : bg, border: `1.5px solid ${border}`, padding: '10px 8px' }}>
       <div className="mb-1" style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>{label}</div>
-      <div className="font-bold font-mono tabular-nums" style={{ fontSize: 16, color, lineHeight: 1.2 }}>{fmt(Math.abs(value))}</div>
+      <div className="font-bold font-mono tabular-nums" style={{ fontSize: 16, color, lineHeight: 1.2 }}>{fmt(value)}</div>
     </div>
   )
 }
