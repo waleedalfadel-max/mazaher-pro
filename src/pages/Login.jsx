@@ -4,10 +4,43 @@ import { useAuth } from '../contexts/AuthContext'
 import staticLogo from '../assets/logo.png'
 import { fetchLogoUrl } from '../lib/appLogo'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 const MAX_ATTEMPTS  = 3
 const LOCK_DURATION = 5 * 60 * 1000
+
+const PROJECT_INFO = {
+  mazaher: {
+    name: 'ديوانية مزاهر',
+    welcome: 'مرحباً بك في نظام المتابعة المالية',
+    color: '#6EB7B0',
+  },
+  tashormik: {
+    name: 'تشورميك',
+    welcome: 'مرحباً بك في نظام المتابعة المالية',
+    color: '#6EB7B0',
+  },
+  koon: {
+    name: 'محمصة كون',
+    welcome: 'مرحباً بك في نظام المتابعة المالية',
+    color: '#6EB7B0',
+  },
+  trial: {
+    name: 'مطعم الوادي 🍔',
+    welcome: 'مرحباً بك في النظام التجريبي',
+    color: '#6EB7B0',
+  },
+}
+
+function getSubdomain() {
+  const host = window.location.hostname
+  if (host === 'localhost' || host === '127.0.0.1') return '__dev__'
+  if (host.includes('vercel.app') || !host.includes('.')) return null
+  if (host === 'tahseeb.app' || host === 'www.tahseeb.app') return '__landing__'
+  const parts = host.split('.')
+  if (parts.length < 3 || parts[0] === 'www') return null
+  return parts[0]
+}
 
 function formatTime(ms) {
   const totalSec = Math.ceil(ms / 1000)
@@ -24,16 +57,26 @@ function defaultPath(role) {
 }
 
 export default function Login() {
-  const [pin,        setPin]        = useState('')
-  const [error,      setError]      = useState('')
-  const [shake,      setShake]      = useState(false)
-  const [loading,    setLoading]    = useState(false)
-  const [logo,       setLogo]       = useState(staticLogo)
-  const attemptsRef  = useRef(0)
+  // tahseeb.app (بدون subdomain) → الصفحة التسويقية الثابتة
+  if (getSubdomain() === '__landing__') {
+    window.location.replace('/landing.html' + window.location.search)
+    return null
+  }
+
+  const [pin,         setPin]         = useState('')
+  const [error,       setError]       = useState('')
+  const [shake,       setShake]       = useState(false)
+  const [loading,     setLoading]     = useState(false)
+  const [logo,        setLogo]        = useState(staticLogo)
+  const attemptsRef   = useRef(0)
   const [lockedUntil, setLockedUntil] = useState(null)
-  const [remaining,  setRemaining]  = useState(0)
+  const [remaining,   setRemaining]   = useState(0)
   const { login } = useAuth()
   const navigate  = useNavigate()
+
+  const subdomain = getSubdomain()
+  const project   = PROJECT_INFO[subdomain] || null
+  const accent    = project?.color || GOLD
 
   useEffect(() => { fetchLogoUrl().then(url => { if (url) setLogo(url) }) }, [])
 
@@ -68,7 +111,16 @@ export default function Login() {
   async function attempt(p) {
     setLoading(true)
     let r = null
-    try { r = await login(p) } catch {}
+    try {
+      r = await login(p)
+    } catch(e) {
+      setLoading(false)
+      setError(e.message || 'حدث خطأ')
+      setShake(true)
+      setTimeout(() => setShake(false), 500)
+      setPin('')
+      return
+    }
     setLoading(false)
     if (r) {
       attemptsRef.current = 0
@@ -102,10 +154,13 @@ export default function Login() {
   // ── شاشة القفل ──────────────────────────────────────────────────
   if (locked) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#f0ede6' }} dir="rtl">
+      <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#F4F8F7' }} dir="rtl">
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">
-            <img src={logo} alt="تحسيب" className="h-28 w-auto mx-auto mb-4 drop-shadow-lg opacity-40" />
+            <img src={logo} alt="تحسيب" className="h-24 w-auto mx-auto mb-4 drop-shadow-lg opacity-40" />
+            {project && (
+              <p className="text-base font-bold opacity-40" style={{ color: NAVY }}>{project.name}</p>
+            )}
           </div>
           <div className="rounded-2xl p-8 shadow-xl text-center" style={{ background: '#1a0a0a', border: '2px solid #dc2626' }}>
             <div className="text-5xl mb-4">🔒</div>
@@ -128,22 +183,51 @@ export default function Login() {
 
   // ── شاشة الدخول العادية ─────────────────────────────────────────
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#f0ede6' }} dir="rtl">
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#F4F8F7' }} dir="rtl">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <img src={logo} alt="تحسيب" className="h-28 w-auto mx-auto mb-4 drop-shadow-lg" />
-          <p className="text-sm font-semibold" style={{ color: '#8a7a5a' }}>خدمة المتابعة المالية الذكية</p>
+
+        {/* ── الهيدر ── */}
+        <div className="text-center mb-7">
+          <img src={logo} alt="تحسيب" className="h-24 w-auto mx-auto mb-5 drop-shadow-lg" />
+
+          {project ? (
+            <>
+              <h1 className="text-2xl font-bold mb-1.5" style={{ color: NAVY }}>
+                {project.name}
+              </h1>
+              <p className="text-sm" style={{ color: '#8a9ba8' }}>{project.welcome}</p>
+            </>
+          ) : (
+            <p className="text-sm font-semibold" style={{ color: '#8a7a5a' }}>
+              إدارة مالية احترافية
+            </p>
+          )}
         </div>
 
+        {/* ── فاصل ناعم — يظهر فقط إذا كان هناك مشروع ── */}
+        {project && (
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex-1 h-px" style={{ background: 'rgba(27,58,92,0.1)' }}/>
+            <span className="text-xs font-semibold" style={{ color: '#b0bec5' }}>رمز الدخول</span>
+            <div className="flex-1 h-px" style={{ background: 'rgba(27,58,92,0.1)' }}/>
+          </div>
+        )}
+
+        {/* ── بطاقة PIN ── */}
         <div className="rounded-2xl p-6 shadow-xl" style={{ background: NAVY }}>
-          <p className="text-center text-sm font-semibold mb-5" style={{ color: 'rgba(255,255,255,0.7)' }}>
-            أدخل رمز الدخول
-          </p>
+          {!project && (
+            <p className="text-center text-sm font-semibold mb-5" style={{ color: 'rgba(255,255,255,0.7)' }}>
+              أدخل رمز الدخول
+            </p>
+          )}
 
           <div className={`flex justify-center gap-3 mb-6 ${shake ? 'animate-bounce' : ''}`}>
             {[0,1,2,3,4].map(i => (
               <div key={i} className="w-3.5 h-3.5 rounded-full transition-all duration-200"
-                style={{ background: i < pin.length ? GOLD : 'rgba(255,255,255,0.15)', transform: i < pin.length ? 'scale(1.15)' : 'scale(1)' }}
+                style={{
+                  background:  i < pin.length ? accent : 'rgba(255,255,255,0.15)',
+                  transform:   i < pin.length ? 'scale(1.15)' : 'scale(1)',
+                }}
               />
             ))}
           </div>
@@ -153,7 +237,7 @@ export default function Login() {
           {loading && (
             <div className="flex justify-center mb-4">
               <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
-                style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
+                style={{ borderColor: accent, borderTopColor: 'transparent' }}/>
             </div>
           )}
 
@@ -171,7 +255,7 @@ export default function Login() {
                   border: '1px solid rgba(255,255,255,0.1)',
                   opacity: loading ? 0.5 : 1,
                 }}
-                onMouseEnter={e => { if (d && !loading) { e.currentTarget.style.background = GOLD; e.currentTarget.style.color = NAVY } }}
+                onMouseEnter={e => { if (d && !loading) { e.currentTarget.style.background = accent; e.currentTarget.style.color = NAVY } }}
                 onMouseLeave={e => { e.currentTarget.style.background = d === '⌫' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = d === '⌫' ? 'rgba(255,255,255,0.5)' : '#fff' }}
               >
                 {d}
@@ -179,16 +263,13 @@ export default function Login() {
             ))}
           </div>
 
-          {pin.length >= 4 && pin.length < 5 && !loading && (
-            <button
-              onClick={() => attempt(pin)}
-              className="mt-4 w-full h-12 rounded-xl text-base font-bold transition-all duration-150 active:scale-95"
-              style={{ background: GOLD, color: NAVY }}
-            >
-              دخول ✓
-            </button>
-          )}
         </div>
+
+        {/* ── تذييل ── */}
+        <p className="text-center text-xs mt-5" style={{ color: '#b0bec5' }}>
+          تحسيب © {new Date().getFullYear()}
+        </p>
+
       </div>
     </div>
   )
