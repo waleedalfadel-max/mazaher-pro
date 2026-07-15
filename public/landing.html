@@ -9,6 +9,15 @@
   <link rel="apple-touch-icon" href="/logo-icon-new.png" />
   <meta name="theme-color" content="#0B2957" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-L7DJS005Q1"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-L7DJS005Q1');
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -745,6 +754,100 @@
       menu.classList.remove('open')
     }
   })
+</script>
+
+<!-- Supabase client (CDN — هذا الملف ملف ثابت، ما يمر على Vite bundler) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+(function () {
+  var SUPABASE_URL      = 'https://dnuxevxxgmgptptmuzdy.supabase.co'
+  var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRudXhldnh4Z21ncHRwdG11emR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1MjY1OTAsImV4cCI6MjA5NTEwMjU5MH0.o7lx6HiTU8a3XPF501WNFYk7NOxfYoBrphqVunhOk2s'
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+  var UTM_STORAGE_KEY  = 'tahseeb_utm_data'
+  var SESSION_KEY      = 'tahseeb_session_id'
+  var VISIT_LOGGED_KEY = 'tahseeb_visit_logged'
+  var UTM_URL_KEYS     = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_ref']
+
+  function readUtmFromUrl() {
+    var params = new URLSearchParams(window.location.search)
+    var found = {}
+    var hasAny = false
+    UTM_URL_KEYS.forEach(function (k) {
+      var v = params.get(k)
+      if (v) { found[k] = v; hasAny = true }
+    })
+    return hasAny ? found : null
+  }
+
+  function getStoredUtm() {
+    try {
+      var raw = localStorage.getItem(UTM_STORAGE_KEY)
+      return raw ? JSON.parse(raw) : null
+    } catch (e) { return null }
+  }
+
+  function getOrCreateSessionId() {
+    var id = sessionStorage.getItem(SESSION_KEY)
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : (Date.now() + '-' + Math.random().toString(36).slice(2))
+      sessionStorage.setItem(SESSION_KEY, id)
+    }
+    return id
+  }
+
+  // 1) التقاط UTM من الرابط (إن وُجد) — وإلا استخدام المخزّن من زيارة سابقة بنفس المتصفح
+  var urlUtm  = readUtmFromUrl()
+  var utmData = urlUtm || getStoredUtm() || {}
+  if (urlUtm) {
+    try { localStorage.setItem(UTM_STORAGE_KEY, JSON.stringify(urlUtm)) } catch (e) {}
+  }
+
+  var sessionId = getOrCreateSessionId()
+
+  // 2) صف واحد فقط لكل جلسة زائر (sessionStorage تُصفَّر تلقائياً عند إغلاق التبويب/المتصفح)
+  if (!sessionStorage.getItem(VISIT_LOGGED_KEY)) {
+    sessionStorage.setItem(VISIT_LOGGED_KEY, '1')
+
+    if (window.gtag) {
+      gtag('event', 'utm_landing', {
+        utm_source:   utmData.utm_source   || null,
+        utm_medium:   utmData.utm_medium   || null,
+        utm_campaign: utmData.utm_campaign || null,
+        utm_content:  utmData.utm_content  || null,
+        utm_term:     utmData.utm_term     || null,
+        utm_ref:      utmData.utm_ref      || null,
+      })
+    }
+
+    sb.from('site_visits').insert({
+      utm_source:   utmData.utm_source   || null,
+      utm_medium:   utmData.utm_medium   || null,
+      utm_campaign: utmData.utm_campaign || null,
+      utm_content:  utmData.utm_content  || null,
+      utm_ref:      utmData.utm_ref      || null,
+      page_path:    window.location.pathname,
+      session_id:   sessionId,
+    }).then(function (res) {
+      if (res.error) console.error('[tahseeb] site_visits insert error:', res.error)
+    })
+  }
+
+  // مُجهّزة للاستخدام لاحقاً (مثلاً نموذج "جرّب شهر مجاني") — لا تُستدعى من أي مكان حالياً
+  window.trackConversion = function (eventName, extraData) {
+    if (window.gtag) {
+      gtag('event', eventName, extraData || {})
+    }
+    sb.from('site_visits')
+      .update({ converted_event: eventName })
+      .eq('session_id', sessionId)
+      .then(function (res) {
+        if (res.error) console.error('[tahseeb] trackConversion update error:', res.error)
+      })
+  }
+})()
 </script>
 
 </body>
