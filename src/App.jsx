@@ -28,7 +28,7 @@ function defaultPath(role) {
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { role } = useAuth()
-  if (!role) return <Navigate to="/login" replace />
+  if (!role) return <Navigate to={{ pathname: '/login', search: window.location.search }} replace />
   if (allowedRoles && !allowedRoles.includes(role)) {
     return <Navigate to={defaultPath(role)} replace />
   }
@@ -79,7 +79,7 @@ function AppRoutes() {
       } />
 
       <Route path="/invoice" element={
-        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'cashier']}>
+        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'cashier', 'owner']}>
           <InvoiceUpload />
         </ProtectedRoute>
       } />
