@@ -183,7 +183,7 @@ export default function CashierDashboard() {
     if (!projectId || !userName) return
     setMyDocsLoading(true)
     const { data } = await supabase.from('documents')
-      .select('id,file_name,file_type,status,uploaded_at')
+      .select('id,file_name,file_type,status,uploaded_at,file_url')
       .eq('project_id', projectId)
       .eq('uploaded_by_name', userName)
       .order('uploaded_at', { ascending: false })
@@ -390,13 +390,16 @@ export default function CashierDashboard() {
               const approved = doc.status === 'approved'
               return (
                 <div key={doc.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
-                  <span className="text-xl shrink-0">{doc.file_type?.startsWith('image/') ? '🖼️' : '📄'}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-slate-700 truncate">{doc.file_name}</div>
-                    <div className="text-xs text-slate-400">
-                      {new Date(doc.uploaded_at).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' })}
+                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-3 flex-1 min-w-0">
+                    <span className="text-xl shrink-0">{doc.file_type?.startsWith('image/') ? '🖼️' : '📄'}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-blue-700 truncate hover:underline">{doc.file_name}</div>
+                      <div className="text-xs text-slate-400">
+                        {new Date(doc.uploaded_at).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </div>
                     </div>
-                  </div>
+                  </a>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 ${
                     approved ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
                   }`}>
