@@ -19,6 +19,11 @@ import SuperAdmin from './pages/SuperAdmin'
 import Suppliers from './pages/Suppliers'
 import RoasterySales from './pages/RoasterySales'
 
+function TrialFormRedirect() {
+  window.location.replace('/trial-form.html' + window.location.search)
+  return null
+}
+
 function defaultPath(role) {
   if (role === 'purchasing') return '/invoice'
   if (role === 'cashier')    return '/cashier'
@@ -40,6 +45,9 @@ function AppRoutes() {
 
   return (
     <Routes>
+      <Route path="/form" element={<TrialFormRedirect />} />
+      <Route path="/trial-form" element={<TrialFormRedirect />} />
+
       <Route path="/login" element={role ? <Navigate to={defaultPath(role)} replace /> : <Login />} />
 
       <Route path="/" element={

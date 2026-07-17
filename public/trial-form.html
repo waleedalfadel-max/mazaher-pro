@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+  <title>تحسيب — طلب تجربة مجانية</title>
+  <link rel="icon" type="image/png" href="/شعار تحسيب الجديد.png" />
+  <link rel="apple-touch-icon" href="/شعار تحسيب الجديد.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:      #1B3A5C;
+      --teal:      #6EB7B0;
+      --teal-dark: #3F8B84;
+      --sand:      #E9D8BB;
+      --sand-dark: #C9A87A;
+      --surface:   #FAF8F3;
+      --line:      #E4DCC9;
+      --muted:     #77808A;
+    }
+
+    html, body { height: 100%; }
+    body {
+      font-family: 'Cairo', sans-serif;
+      background: var(--surface);
+      color: var(--navy);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .wrap {
+      max-width: 480px;
+      margin: 0 auto;
+      width: 100%;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header { padding: 20px 20px 0; text-align: center; }
+    .header img { height: 44px; width: auto; margin: 0 auto 14px; display: block; }
+
+    /* ── Progress ── */
+    .progress { display: flex; gap: 6px; padding: 0 20px 20px; }
+    .progress .seg { flex: 1; height: 5px; border-radius: 3px; background: var(--line); transition: background .25s; }
+    .progress .seg.done { background: var(--teal-dark); }
+    .progress .seg.active { background: var(--teal); }
+
+    /* ── Step content ── */
+    .content { flex: 1; padding: 4px 20px 20px; display: flex; flex-direction: column; }
+    .step-label { font-size: 0.78rem; font-weight: 700; color: var(--teal-dark); margin-bottom: 6px; }
+    .step-title { font-size: 1.35rem; font-weight: 800; color: var(--navy); margin-bottom: 22px; line-height: 1.4; }
+
+    .field {
+      width: 100%; padding: 14px 16px; border: 2px solid var(--line); border-radius: 14px;
+      font-family: 'Cairo', sans-serif; font-size: 1rem; color: var(--navy); background: #fff;
+      outline: none; transition: border-color .15s;
+    }
+    .field:focus { border-color: var(--teal); }
+    .field.invalid { border-color: #d97373; }
+    .field-error { color: #b64545; font-size: 0.8rem; font-weight: 600; margin-top: 8px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+    .chip {
+      padding: 12px 18px; border-radius: 30px; border: 2px solid var(--sand-dark);
+      background: #fff; color: var(--navy); font-family: 'Cairo', sans-serif;
+      font-size: 0.92rem; font-weight: 600; cursor: pointer; transition: all .15s;
+    }
+    .chip:hover { border-color: var(--teal); }
+    .chip.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+
+    .other-field { margin-top: 14px; }
+
+    .counter {
+      margin-top: 18px; display: flex; align-items: center; justify-content: center; gap: 22px;
+      background: #fff; border: 2px solid var(--line); border-radius: 16px; padding: 14px;
+    }
+    .counter button {
+      width: 40px; height: 40px; border-radius: 50%; border: none; background: var(--teal);
+      color: #fff; font-size: 1.3rem; font-weight: 800; cursor: pointer; line-height: 1;
+    }
+    .counter button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+    .counter .count { font-size: 1.6rem; font-weight: 800; color: var(--navy); min-width: 40px; text-align: center; }
+    .counter .count-label { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+
+    /* ── Nav buttons ── */
+    .nav-bar {
+      position: sticky; bottom: 0; background: var(--surface);
+      border-top: 1px solid var(--line); padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+      display: flex; gap: 12px;
+    }
+    .btn {
+      font-family: 'Cairo', sans-serif; font-size: 0.98rem; font-weight: 700;
+      border-radius: 14px; padding: 14px 20px; cursor: pointer; border: none; transition: all .15s;
+    }
+    .btn-back {
+      background: transparent; border: 2px solid var(--sand-dark); color: var(--navy);
+    }
+    .btn-back:hover { background: var(--sand); }
+    .btn-next {
+      flex: 1; background: var(--teal); color: #fff;
+    }
+    .btn-next:hover:not(:disabled) { background: var(--teal-dark); }
+    .btn-next:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+
+    /* ── Summary (receipt) ── */
+    .summary-wrap { flex: 1; padding: 24px 20px 40px; display: flex; flex-direction: column; align-items: center; }
+    .stamp {
+      width: 64px; height: 64px; border-radius: 50%; background: #3FA66B;
+      display: flex; align-items: center; justify-content: center; margin-bottom: 18px;
+      box-shadow: 0 8px 20px rgba(63,166,107,0.35);
+    }
+    .stamp svg { width: 32px; height: 32px; }
+    .summary-title { font-size: 1.3rem; font-weight: 800; color: var(--navy); margin-bottom: 24px; text-align: center; }
+
+    .receipt {
+      width: 100%; background: #fff; border-radius: 20px 20px 0 0;
+      box-shadow: 0 6px 24px rgba(27,58,92,0.1);
+      padding: 26px 22px 20px; position: relative;
+    }
+    .receipt-line {
+      display: flex; justify-content: space-between; gap: 12px; align-items: flex-start;
+      padding: 11px 0; border-bottom: 1px dashed var(--line); font-size: 0.92rem;
+    }
+    .receipt-line:last-child { border-bottom: none; }
+    .receipt-line .key { color: var(--muted); font-weight: 600; white-space: nowrap; }
+    .receipt-line .val { color: var(--navy); font-weight: 700; text-align: left; }
+    .zigzag {
+      width: 100%; height: 14px; display: block; margin-top: -1px;
+    }
+
+    .btn-whatsapp {
+      width: 100%; margin-top: 24px; padding: 16px; border-radius: 16px; border: none;
+      background: #3FA66B; color: #fff; font-family: 'Cairo', sans-serif;
+      font-size: 1.05rem; font-weight: 800; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      box-shadow: 0 8px 24px rgba(63,166,107,0.3); transition: all .15s;
+    }
+    .btn-whatsapp:hover { background: #359459; }
+
+    .edit-link {
+      display: block; text-align: center; margin-top: 16px; font-size: 0.85rem;
+      color: var(--muted); font-weight: 600; text-decoration: underline; cursor: pointer; background: none; border: none; font-family: 'Cairo', sans-serif;
+    }
+
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- ── الفورم (الأسئلة) ── -->
+  <div id="formScreen">
+    <div class="header">
+      <img src="/شعار تحسيب الجديد.png" alt="تحسيب" />
+    </div>
+    <div class="progress" id="progress"></div>
+    <div class="content" id="stepContent"></div>
+    <div class="nav-bar">
+      <button class="btn btn-back" id="btnBack">رجوع</button>
+      <button class="btn btn-next" id="btnNext" disabled>التالي ←</button>
+    </div>
+  </div>
+
+  <!-- ── شاشة الملخص ── -->
+  <div id="summaryScreen" hidden>
+    <div class="header">
+      <img src="/شعار تحسيب الجديد.png" alt="تحسيب" />
+    </div>
+    <div class="summary-wrap">
+      <div class="stamp">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+      </div>
+      <div class="summary-title">طلبك جاهز للإرسال</div>
+
+      <div class="receipt" id="receipt"></div>
+      <svg class="zigzag" viewBox="0 0 400 14" preserveAspectRatio="none">
+        <polygon points="0,0 20,14 40,0 60,14 80,0 100,14 120,0 140,14 160,0 180,14 200,0 220,14 240,0 260,14 280,0 300,14 320,0 340,14 360,0 380,14 400,0 400,14 0,14"
+          fill="#FAF8F3"/>
+      </svg>
+
+      <button class="btn-whatsapp" id="btnSend">📤 إرسال الطلب عبر واتساب</button>
+      <button class="edit-link" id="btnEdit">تعديل البيانات</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const TOTAL_STEPS = 7
+
+  const state = {
+    step: 1,
+    projectName: '',
+    activity: '',
+    activityOther: '',
+    specialty: '',
+    specialtyOther: '',
+    branches: '',
+    branchCount: 2,
+    deliveryApps: [],
+    purchaseMethod: '',
+    phone: '',
+  }
+
+  const stepContent = document.getElementById('stepContent')
+  const progressEl   = document.getElementById('progress')
+  const btnBack       = document.getElementById('btnBack')
+  const btnNext        = document.getElementById('btnNext')
+  const formScreen    = document.getElementById('formScreen')
+  const summaryScreen = document.getElementById('summaryScreen')
+
+  const ACTIVITIES  = ['مطعم', 'مقهى - كافيه', 'أخرى']
+  const SPECIALTIES = ['شاورما', 'بروست', 'رز', 'برجر', 'قهوة وحلويات', 'مخبوزات', 'أخرى']
+  const DELIVERY_APPS = ['هنقر ستيشن', 'جاهز', 'كيتا', 'نينجا', 'مرسول', 'ذا شيفز', 'لا يوجد']
+  const PURCHASE_METHODS = ['كاش', 'آجل', 'الاثنين']
+
+  function renderProgress() {
+    progressEl.innerHTML = ''
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+      const seg = document.createElement('div')
+      seg.className = 'seg' + (i < state.step ? ' done' : i === state.step ? ' active' : '')
+      progressEl.appendChild(seg)
+    }
+  }
+
+  function isValid() {
+    switch (state.step) {
+      case 1: return state.projectName.trim().length > 0
+      case 2: return state.activity !== '' && (state.activity !== 'أخرى' || state.activityOther.trim() !== '')
+      case 3: return state.specialty !== '' && (state.specialty !== 'أخرى' || state.specialtyOther.trim() !== '')
+      case 4: return state.branches !== ''
+      case 5: return state.deliveryApps.length > 0
+      case 6: return state.purchaseMethod !== ''
+      case 7: return /^05\d{8}$/.test(state.phone.replace(/\D/g, ''))
+      default: return false
+    }
+  }
+
+  function updateNav() {
+    btnNext.disabled = !isValid()
+    btnNext.textContent = state.step === TOTAL_STEPS ? 'عرض الطلب ✓' : 'التالي ←'
+    btnBack.style.visibility = state.step === 1 ? 'hidden' : 'visible'
+  }
+
+  function chipsHTML(options, selected, multi) {
+    return `<div class="chips">` + options.map(opt => {
+      const active = multi ? selected.includes(opt) : selected === opt
+      return `<button type="button" class="chip${active ? ' active' : ''}" data-val="${opt}">${opt}</button>`
+    }).join('') + `</div>`
+  }
+
+  function renderStep() {
+    renderProgress()
+    let html = ''
+
+    if (state.step === 1) {
+      html = `
+        <div class="step-label">١ / ٧</div>
+        <div class="step-title">وش اسم مشروعك؟</div>
+        <input class="field" id="projectName" type="text" placeholder="مثال: مطعم البيت" value="${state.projectName.replace(/"/g,'&quot;')}" />
+      `
+    } else if (state.step === 2) {
+      html = `
+        <div class="step-label">٢ / ٧</div>
+        <div class="step-title">وش نوع نشاطك؟</div>
+        ${chipsHTML(ACTIVITIES, state.activity, false)}
+        <div class="other-field" ${state.activity === 'أخرى' ? '' : 'hidden'} id="activityOtherWrap">
+          <input class="field" id="activityOther" type="text" placeholder="اكتب نوع النشاط" value="${state.activityOther.replace(/"/g,'&quot;')}" />
+        </div>
+      `
+    } else if (state.step === 3) {
+      html = `
+        <div class="step-label">٣ / ٧</div>
+        <div class="step-title">وش تخصصك؟</div>
+        ${chipsHTML(SPECIALTIES, state.specialty, false)}
+        <div class="other-field" ${state.specialty === 'أخرى' ? '' : 'hidden'} id="specialtyOtherWrap">
+          <input class="field" id="specialtyOther" type="text" placeholder="اكتب التخصص" value="${state.specialtyOther.replace(/"/g,'&quot;')}" />
+        </div>
+      `
+    } else if (state.step === 4) {
+      html = `
+        <div class="step-label">٤ / ٧</div>
+        <div class="step-title">كم عدد فروعك؟</div>
+        ${chipsHTML(['فرع واحد', 'أكثر من فرع'], state.branches, false)}
+        <div class="counter" ${state.branches === 'أكثر من فرع' ? '' : 'hidden'} id="counterWrap">
+          <button type="button" id="branchMinus" ${state.branchCount <= 2 ? 'disabled' : ''}>−</button>
+          <div>
+            <div class="count" id="branchCount">${state.branchCount}</div>
+            <div class="count-label">فروع</div>
+          </div>
+          <button type="button" id="branchPlus">+</button>
+        </div>
+      `
+    } else if (state.step === 5) {
+      html = `
+        <div class="step-label">٥ / ٧</div>
+        <div class="step-title">تطبيقات التوصيل اللي تشتغل بها؟</div>
+        ${chipsHTML(DELIVERY_APPS, state.deliveryApps, true)}
+      `
+    } else if (state.step === 6) {
+      html = `
+        <div class="step-label">٦ / ٧</div>
+        <div class="step-title">كيف تشتري من الموردين؟</div>
+        ${chipsHTML(PURCHASE_METHODS, state.purchaseMethod, false)}
+      `
+    } else if (state.step === 7) {
+      html = `
+        <div class="step-label">٧ / ٧</div>
+        <div class="step-title">رقم جوالك؟</div>
+        <input class="field${state.phone && !isValid() ? ' invalid' : ''}" id="phone" type="tel" inputmode="numeric"
+          placeholder="05XXXXXXXX" maxlength="10" value="${state.phone.replace(/"/g,'&quot;')}" />
+        ${state.phone && !isValid() ? '<div class="field-error">الرقم لازم يبدأ بـ 05 ويتكوّن من 10 أرقام</div>' : ''}
+      `
+    }
+
+    stepContent.innerHTML = html
+    bindStepEvents()
+    updateNav()
+  }
+
+  function bindStepEvents() {
+    if (state.step === 1) {
+      const el = document.getElementById('projectName')
+      el.addEventListener('input', e => { state.projectName = e.target.value; updateNav() })
+      el.addEventListener('keydown', e => { if (e.key === 'Enter' && isValid()) goNext() })
+    }
+
+    if (state.step === 2 || state.step === 3) {
+      stepContent.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          if (state.step === 2) state.activity = chip.dataset.val
+          else state.specialty = chip.dataset.val
+          renderStep()
+        })
+      })
+      const otherInput = document.getElementById(state.step === 2 ? 'activityOther' : 'specialtyOther')
+      if (otherInput) {
+        otherInput.addEventListener('input', e => {
+          if (state.step === 2) state.activityOther = e.target.value
+          else state.specialtyOther = e.target.value
+          updateNav()
+        })
+        otherInput.focus()
+      }
+    }
+
+    if (state.step === 4) {
+      stepContent.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          state.branches = chip.dataset.val
+          if (state.branches === 'أكثر من فرع' && state.branchCount < 2) state.branchCount = 2
+          renderStep()
+        })
+      })
+      const minus = document.getElementById('branchMinus')
+      const plus  = document.getElementById('branchPlus')
+      if (minus) minus.addEventListener('click', () => {
+        if (state.branchCount > 2) { state.branchCount--; renderStep() }
+      })
+      if (plus) plus.addEventListener('click', () => {
+        state.branchCount++; renderStep()
+      })
+    }
+
+    if (state.step === 5) {
+      stepContent.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const val = chip.dataset.val
+          if (val === 'لا يوجد') {
+            state.deliveryApps = state.deliveryApps.includes('لا يوجد') ? [] : ['لا يوجد']
+          } else {
+            state.deliveryApps = state.deliveryApps.filter(a => a !== 'لا يوجد')
+            if (state.deliveryApps.includes(val)) {
+              state.deliveryApps = state.deliveryApps.filter(a => a !== val)
+            } else {
+              state.deliveryApps.push(val)
+            }
+          }
+          renderStep()
+        })
+      })
+    }
+
+    if (state.step === 6) {
+      stepContent.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          state.purchaseMethod = chip.dataset.val
+          renderStep()
+        })
+      })
+    }
+
+    if (state.step === 7) {
+      const el = document.getElementById('phone')
+      el.addEventListener('input', e => {
+        state.phone = e.target.value.replace(/[^\d]/g, '').slice(0, 10)
+        e.target.value = state.phone
+        renderStep()
+        document.getElementById('phone').focus()
+        document.getElementById('phone').selectionStart = document.getElementById('phone').selectionEnd = state.phone.length
+      })
+      el.addEventListener('keydown', e => { if (e.key === 'Enter' && isValid()) goNext() })
+    }
+  }
+
+  function goNext() {
+    if (!isValid()) return
+    if (state.step === TOTAL_STEPS) {
+      showSummary()
+    } else {
+      state.step++
+      renderStep()
+    }
+  }
+
+  function goBack() {
+    if (state.step === 1) return
+    state.step--
+    renderStep()
+  }
+
+  btnNext.addEventListener('click', goNext)
+  btnBack.addEventListener('click', goBack)
+
+  function activityLabel() {
+    return state.activity === 'أخرى' ? state.activityOther.trim() : state.activity
+  }
+  function specialtyLabel() {
+    return state.specialty === 'أخرى' ? state.specialtyOther.trim() : state.specialty
+  }
+  function branchesLabel() {
+    return state.branches === 'أكثر من فرع' ? `${state.branchCount} فروع` : 'فرع واحد'
+  }
+  function deliveryLabel() {
+    return state.deliveryApps.join('، ')
+  }
+
+  function showSummary() {
+    const rows = [
+      ['📋 اسم المشروع', state.projectName.trim()],
+      ['🏪 النشاط', activityLabel()],
+      ['🍽️ التخصص', specialtyLabel()],
+      ['🏢 الفروع', branchesLabel()],
+      ['📱 تطبيقات التوصيل', deliveryLabel()],
+      ['💳 طريقة الشراء', state.purchaseMethod],
+      ['📞 الجوال', state.phone],
+    ]
+    document.getElementById('receipt').innerHTML = rows.map(([k, v]) =>
+      `<div class="receipt-line"><span class="key">${k}</span><span class="val">${v}</span></div>`
+    ).join('')
+
+    formScreen.hidden = true
+    summaryScreen.hidden = false
+    window.scrollTo(0, 0)
+  }
+
+  document.getElementById('btnEdit').addEventListener('click', () => {
+    state.step = 1
+    summaryScreen.hidden = true
+    formScreen.hidden = false
+    renderStep()
+  })
+
+  document.getElementById('btnSend').addEventListener('click', () => {
+    const message = `مرحباً، أبغى أطلب تجربة مجانية لتحسيب 👋
+
+📋 اسم المشروع: ${state.projectName.trim()}
+🏪 النشاط: ${activityLabel()}
+🍽️ التخصص: ${specialtyLabel()}
+🏢 الفروع: ${branchesLabel()}
+📱 تطبيقات التوصيل: ${deliveryLabel()}
+💳 طريقة الشراء: ${state.purchaseMethod}
+📞 الجوال: ${state.phone}`
+
+    window.open('https://wa.me/966595881096?text=' + encodeURIComponent(message), '_blank')
+  })
+
+  renderStep()
+</script>
+
+</body>
+</html>
