@@ -1,13 +1,21 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage } from '../lib/storage'
 import { getProjectSettings } from '../lib/projectSettings'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { compressImage } from '../lib/imageCompress'
+import { analyzeDocument } from '../lib/claude'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const toBase64 = file => new Promise((res, rej) => {
+  const r = new FileReader()
+  r.onload  = e => res(e.target.result.split(',')[1])
+  r.onerror = rej
+  r.readAsDataURL(file)
+})
+
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 const fmt = v =>
   Number(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -147,16 +155,19 @@ function RoasteryMainPanel({ projectId, branch }) {
 
 // ── لوحة الكاشير العادية: رفع مستند ──────────────────────────────────────────
 export default function CashierDashboard() {
-  const { role, projectId, branch } = useAuth()
+  const { role, userName, projectId, projectName, branch } = useAuth()
 
-  const [file, setFile]                     = useState(null)
-  const [preview, setPreview]               = useState(null)
-  const [uploading, setUploading]           = useState(false)
-  const [done, setDone]                     = useState(false)
-  const [error, setError]                   = useState('')
-  const [dragOver, setDragOver]             = useState(false)
+  const [file, setFile]                       = useState(null)
+  const [preview, setPreview]                 = useState(null)
+  const [uploading, setUploading]             = useState(false)
+  const [uploadPhase, setUploadPhase]         = useState('') // 'uploading' | 'analyzing'
+  const [done, setDone]                       = useState(false)
+  const [error, setError]                     = useState('')
+  const [dragOver, setDragOver]               = useState(false)
   const [purchaseCategory, setPurchaseCategory] = useState('')
-  const [purchaseTypes, setPurchaseTypes]   = useState([])
+  const [purchaseTypes, setPurchaseTypes]     = useState([])
+  const [myDocs, setMyDocs]                   = useState([])
+  const [myDocsLoading, setMyDocsLoading]     = useState(true)
   const inputRef = useRef()
 
   useEffect(() => {
@@ -167,6 +178,29 @@ export default function CashierDashboard() {
       })
     }
   }, [role, projectId])
+
+  const loadMyDocs = useCallback(async () => {
+    if (!projectId || !userName) return
+    setMyDocsLoading(true)
+    const { data } = await supabase.from('documents')
+      .select('id,file_name,file_type,status,uploaded_at')
+      .eq('project_id', projectId)
+      .eq('uploaded_by_name', userName)
+      .order('uploaded_at', { ascending: false })
+      .limit(10)
+    setMyDocs(data || [])
+    setMyDocsLoading(false)
+  }, [projectId, userName])
+
+  useEffect(() => { loadMyDocs() }, [loadMyDocs])
+
+  async function deleteMyDoc(doc) {
+    if (doc.status === 'approved') return
+    if (!window.confirm(`حذف "${doc.file_name}"؟ لا يمكن التراجع.`)) return
+    const { error } = await supabase.from('documents').delete().eq('id', doc.id)
+    if (error) { alert('فشل الحذف: ' + error.message); return }
+    setMyDocs(ds => ds.filter(d => d.id !== doc.id))
+  }
 
   // كاشير المحمصة الرئيسية → لوحة إدخال مباشر للمبيعات
   if (role === 'cashier' && branch === 'المحمصة الرئيسية') {
@@ -197,24 +231,41 @@ export default function CashierDashboard() {
   async function upload() {
     if (!file) return
     if (role === 'purchasing' && !purchaseCategory) { setError('اختر نوع المادة أولاً'); return }
-    setUploading(true); setError('')
+    setUploading(true); setUploadPhase('uploading'); setError('')
     try {
       const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file
+      const fileBase64 = await toBase64(uploadFile)
+
       const fileUrl = await uploadToStorage(uploadFile, projectId || 'shared')
-      const { error: err } = await supabase.from('documents').insert({
+      const { data: docData, error: err } = await supabase.from('documents').insert({
         project_id:        projectId,
         file_name:         file.name,
         file_type:         uploadFile.type,
         file_url:          fileUrl,
         status:            'uploaded',
         uploaded_by:       role,
+        uploaded_by_name:  userName,
         branch:            branch || null,
         purchase_category: role === 'purchasing' ? purchaseCategory : null,
-      })
+      }).select('id').single()
       if (err) throw new Error(err.message)
+
+      // تحليل تلقائي في الخلفية
+      setUploadPhase('analyzing')
+      try {
+        const { data: cats } = await supabase.from('categories')
+          .select('id,name,parent_id,type,sort_order')
+          .eq('project_id', projectId).order('sort_order')
+        const result = await analyzeDocument(fileBase64, uploadFile.type, file.name, role, cats || [], projectName || '')
+        if (result && docData?.id) {
+          await supabase.from('documents').update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id)
+        }
+      } catch { /* فشل التحليل — يبقى uploaded للمراجعة اليدوية */ }
+
       setDone(true); setFile(null); setPreview(null); setPurchaseCategory('')
+      loadMyDocs()
     } catch (e) { setError(e.message) }
-    finally { setUploading(false) }
+    finally { setUploading(false); setUploadPhase('') }
   }
 
   function reset() { setFile(null); setPreview(null); setDone(false); setError(''); setPurchaseCategory('') }
@@ -309,7 +360,8 @@ export default function CashierDashboard() {
           <button onClick={upload} disabled={uploading}
             className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
             {uploading
-              ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ الرفع...</span></>
+              ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"/>
+                  <span>{uploadPhase === 'analyzing' ? 'جارٍ التحليل...' : 'جارٍ الرفع...'}</span></>
               : '⬆️ رفع المستند'}
           </button>
         </div>
@@ -321,6 +373,46 @@ export default function CashierDashboard() {
 
       <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-xs text-amber-700 space-y-1">
         <p>⚠️ المستندات المرفوعة تنتظر مراجعة المحاسب قبل تسجيلها في الدفتر.</p>
+      </div>
+
+      {/* آخر المستندات المرفوعة */}
+      <div className="pt-2">
+        <h2 className="text-sm font-bold text-slate-600 mb-2 flex items-center gap-1.5">
+          <span>📋</span> آخر المستندات المرفوعة
+        </h2>
+        {myDocsLoading ? (
+          <div className="text-xs text-slate-400 py-3 text-center">جارٍ التحميل...</div>
+        ) : myDocs.length === 0 ? (
+          <div className="text-xs text-slate-400 py-3 text-center">ما رفعت أي مستند بعد</div>
+        ) : (
+          <div className="space-y-1.5">
+            {myDocs.map(doc => {
+              const approved = doc.status === 'approved'
+              return (
+                <div key={doc.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
+                  <span className="text-xl shrink-0">{doc.file_type?.startsWith('image/') ? '🖼️' : '📄'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-700 truncate">{doc.file_name}</div>
+                    <div className="text-xs text-slate-400">
+                      {new Date(doc.uploaded_at).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 ${
+                    approved ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {approved ? '✅ معتمد' : '⏳ معلّق'}
+                  </span>
+                  {!approved && (
+                    <button onClick={() => deleteMyDoc(doc)}
+                      className="text-slate-300 hover:text-red-500 text-base leading-none shrink-0" title="حذف">
+                      🗑️
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
