@@ -196,6 +196,7 @@
 
 <script>
   const TOTAL_STEPS = 7
+  const WA_NUMBER = '966561754516'
 
   const state = {
     step: 1,
@@ -481,7 +482,7 @@
 💳 طريقة الشراء: ${state.purchaseMethod}
 📞 الجوال: ${state.phone}`
 
-    window.open('https://wa.me/966595881096?text=' + encodeURIComponent(message), '_blank')
+    window.open('https://wa.me/' + WA_NUMBER + '?text=' + encodeURIComponent(message), '_blank')
   })
 
   renderStep()
