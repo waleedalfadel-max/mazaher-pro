@@ -8,10 +8,6 @@ import { getTransactionTypes } from '../lib/projectSettings'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { uploadToStorage } from '../lib/storage'
 
-// v1: مقتصرة على هذا المشروع فقط للاختبار — الكود عام وجاهز لأي مشروع آخر بدون تعديل،
-// فقط احذف هذا الشرط (أو وسّعه) لاحقاً لإتاحتها لمشاريع أخرى
-const TARGET_PROJECT = 'ديوانية مزاهر'
-
 const BANK_CAT_LABEL = {
   pos_credit:       'نقاط بيع / دائنة التاجر',
   installment_loan: 'قسط / قرض',
@@ -60,7 +56,7 @@ function uint8ToBase64(bytes) {
 }
 
 export default function BankReconciliation() {
-  const { projectId, projectName } = useAuth()
+  const { projectId } = useAuth()
   const today = fmtDate(new Date())
 
   const [from, setFrom]   = useState(addDays(today, -30))
@@ -86,15 +82,6 @@ export default function BankReconciliation() {
       .order('sort_order')
       .then(({ data }) => setCategories(data || []))
   }, [projectId])
-
-  if (projectName !== TARGET_PROJECT) {
-    return (
-      <div className="max-w-lg mx-auto text-center py-20 text-slate-400">
-        <div className="text-4xl mb-3">🚧</div>
-        <p className="font-medium">هذه الميزة غير متاحة لمشروعك بعد</p>
-      </div>
-    )
-  }
 
   function handleFile(f) {
     if (!f) return

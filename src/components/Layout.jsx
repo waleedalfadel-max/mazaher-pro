@@ -43,7 +43,7 @@ export default function Layout({ children }) {
     { to: '/journal',         label: 'سجل الحركات',      icon: '📓', roles: ['accountant', 'superadmin'] },
     { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['accountant', 'superadmin'] },
-    { to: '/bank-reconciliation', label: 'المطابقة البنكية', icon: '🧮', roles: ['accountant', 'superadmin'], cond: n => n === 'ديوانية مزاهر' },
+    { to: '/bank-reconciliation', label: 'المطابقة البنكية', icon: '🧮', roles: ['accountant', 'superadmin'] },
     { to: '/pending',         label: 'مستندات جديدة',    icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
     { to: '/users',           label: 'المستخدمون',       icon: '👥', roles: ['accountant'] },
     { to: '/admin',           label: 'إدارة العملاء',    icon: '⚙️', roles: ['superadmin'] },
