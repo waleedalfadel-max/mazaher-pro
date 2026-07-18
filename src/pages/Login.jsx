@@ -30,6 +30,11 @@ const PROJECT_INFO = {
     welcome: 'مرحباً بك في النظام التجريبي',
     color: '#6EB7B0',
   },
+  basal: {
+    name: 'بـ عسل ☕',
+    welcome: 'مرحباً بك في نظام المتابعة المالية',
+    color: '#6EB7B0',
+  },
 }
 
 function getSubdomain() {
