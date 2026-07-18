@@ -30,6 +30,26 @@ function addDays(dateStr, n) {
   return fmtDate(d)
 }
 
+function isCommissionLine(item) {
+  return item.bank_category === 'fee' || /commission/i.test(item.description || '')
+}
+
+function pickCommissionTransType(transTypes) {
+  const dedicated = transTypes.find(t => normCat(t).includes(normCat('عمولات بنكية')))
+  if (dedicated) return dedicated
+  const opEx = transTypes.find(t => normCat(t) === normCat('مصروفات تشغيلية'))
+  return opEx || '🛒 مصروفات تشغيلية'
+}
+
+function pickCommissionCategorySub(categories, transType) {
+  const parentCats = categories.filter(c => !c.parent_id)
+  const parent = parentCats.find(p => normCat(p.name) === normCat(transType))
+  if (!parent) return 'أخرى'
+  const subs = categories.filter(c => c.parent_id === parent.id)
+  const match = subs.find(s => normCat(s.name).includes('عمولات') || normCat(s.name).includes('رسوم بنكية'))
+  return match ? match.name : 'أخرى'
+}
+
 function uint8ToBase64(bytes) {
   let binary = ''
   const chunk = 0x8000
@@ -54,6 +74,7 @@ export default function BankReconciliation() {
   const [transTypes, setTransTypes] = useState([])
   const [categories, setCategories] = useState([])
   const [statementFileUrl, setStatementFileUrl] = useState(null)
+  const [commissionExpanded, setCommissionExpanded] = useState(false)
   const inputRef = useRef()
 
   useEffect(() => {
@@ -187,6 +208,68 @@ export default function BankReconciliation() {
     }
   }
 
+  function dismissAllCommissions(lines) {
+    const keys = lines.map(l => l._key)
+    setResult(r => ({ ...r, reviewList: r.reviewList.filter(item => !keys.includes(item._key)) }))
+  }
+
+  async function approveAllCommissions(lines) {
+    if (!lines.length) return
+    setError('')
+    setResult(r => ({ ...r, reviewList: r.reviewList.map(item => isCommissionLine(item) ? { ...item, _busy: true } : item) }))
+
+    let fileUrl = statementFileUrl
+    try {
+      if (!fileUrl && file) {
+        fileUrl = await uploadToStorage(file, projectId || 'shared')
+        setStatementFileUrl(fileUrl)
+      }
+    } catch (e) {
+      setError(e.message)
+      setResult(r => ({ ...r, reviewList: r.reviewList.map(item => isCommissionLine(item) ? { ...item, _busy: false } : item) }))
+      return
+    }
+
+    const transType   = pickCommissionTransType(transTypes)
+    const categorySub = pickCommissionCategorySub(categories, transType)
+
+    const doneKeys = []
+    let skippedDup = 0
+    let failMsg = ''
+
+    for (const item of lines) {
+      try {
+        const amount = Number(item.amount) || 0
+        const { data: dup } = await supabase.from('ledger_entries').select('id')
+          .eq('project_id', projectId).eq('date', item.date)
+          .eq('type', transType).eq('description', item.description)
+          .eq('total_amount', amount).neq('status', 'cancelled').maybeSingle()
+        if (dup) { skippedDup++; doneKeys.push(item._key); continue }
+
+        const jn = await getOrCreateJournalNumber(projectId, item.date)
+        const row = buildLedgerInsertRow(item, { transType, categorySub, projectId, journalNumber: jn, fileUrl })
+        const { error: insErr } = await supabase.from('ledger_entries').insert(row)
+        if (insErr) throw new Error(insErr.message)
+        doneKeys.push(item._key)
+      } catch (e) {
+        failMsg = `توقفت العملية عند حركة بتاريخ ${item.date}: ${e.message}`
+        break
+      }
+    }
+
+    setResult(r => {
+      const remaining = r.reviewList.filter(x => !doneKeys.includes(x._key))
+      return {
+        ...r,
+        matchedCount: r.matchedCount + doneKeys.length,
+        reviewList: remaining.map(item => isCommissionLine(item) ? { ...item, _busy: false } : item),
+      }
+    })
+
+    if (failMsg) setError(failMsg)
+    else if (skippedDup > 0) setError(`تنبيه: ${skippedDup} عمولة كانت مسجلة مسبقاً بالدفتر ولم تُكرَّر`)
+  }
+
   const parentCats = categories.filter(c => !c.parent_id)
   function subCatsFor(transType) {
     const parent = parentCats.find(p => normCat(p.name) === normCat(transType || ''))
@@ -268,21 +351,37 @@ export default function BankReconciliation() {
             </div>
           )}
 
-          {result.reviewList.length > 0 && (
-            <div className="space-y-3">
-              <div className="text-sm font-bold text-slate-600">غير مسجل في تحسيب</div>
-              {result.reviewList.map(item => (
-                <ReviewCard key={item._key} item={item}
-                  transTypes={transTypes}
-                  subCats={subCatsFor(item._transType)}
-                  onChangeType={v => updateReview(item._key, { _transType: v, _categorySub: '' })}
-                  onChangeSub={v => updateReview(item._key, { _categorySub: v })}
-                  onApprove={() => approveReview(item)}
-                  onDismiss={() => dismissReview(item._key)}
-                />
-              ))}
-            </div>
-          )}
+          {result.reviewList.length > 0 && (() => {
+            const commissionLines = result.reviewList.filter(isCommissionLine)
+            const otherLines      = result.reviewList.filter(item => !isCommissionLine(item))
+            return (
+              <div className="space-y-3">
+                <div className="text-sm font-bold text-slate-600">غير مسجل في تحسيب</div>
+
+                {commissionLines.length > 0 && (
+                  <CommissionGroupCard
+                    lines={commissionLines}
+                    expanded={commissionExpanded}
+                    onToggle={() => setCommissionExpanded(v => !v)}
+                    onApproveAll={() => approveAllCommissions(commissionLines)}
+                    onDismissAll={() => dismissAllCommissions(commissionLines)}
+                    busy={commissionLines.some(l => l._busy)}
+                  />
+                )}
+
+                {otherLines.map(item => (
+                  <ReviewCard key={item._key} item={item}
+                    transTypes={transTypes}
+                    subCats={subCatsFor(item._transType)}
+                    onChangeType={v => updateReview(item._key, { _transType: v, _categorySub: '' })}
+                    onChangeSub={v => updateReview(item._key, { _categorySub: v })}
+                    onApprove={() => approveReview(item)}
+                    onDismiss={() => dismissReview(item._key)}
+                  />
+                ))}
+              </div>
+            )
+          })()}
 
           {result.missingList.length > 0 && (
             <div className="space-y-2">
@@ -300,6 +399,44 @@ export default function BankReconciliation() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+function CommissionGroupCard({ lines, expanded, onToggle, onApproveAll, onDismissAll, busy }) {
+  const total = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+      <button onClick={onToggle} className="w-full flex items-center justify-between p-4 text-right">
+        <div>
+          <div className="font-bold text-slate-800 flex items-center gap-2">💳 عمولات نقاط البيع</div>
+          <div className="text-xs text-slate-400 mt-0.5">{lines.length} حركة — الإجمالي: {fmt(total)} ريال</div>
+        </div>
+        <span className={`text-slate-400 transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-100 max-h-64 overflow-y-auto">
+          {lines.map(l => (
+            <div key={l._key} className="flex items-center justify-between px-4 py-2 text-sm border-b border-slate-50 last:border-0">
+              <span className="text-slate-500">{l.date}</span>
+              <span className="font-mono text-slate-700">{fmt(l.amount)} ريال</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 p-4 border-t border-slate-100">
+        <button onClick={onApproveAll} disabled={busy}
+          className="flex-1 py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50">
+          {busy ? '...' : '✅ اعتماد الكل كعمولات'}
+        </button>
+        <button onClick={onDismissAll} disabled={busy}
+          className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
+          🚫 تجاهل الكل
+        </button>
+      </div>
     </div>
   )
 }
