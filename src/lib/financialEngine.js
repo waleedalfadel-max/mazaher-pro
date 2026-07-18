@@ -74,7 +74,7 @@ function sumField(entries, field) {
 export async function getFinancialSummary(projectId, fromDate, toDate) {
   const { data: entries, error } = await supabase
     .from('ledger_entries')
-    .select('type, cash_in, bank_in, custody_in, cash_out, bank_out, custody_out, receivable_in, receivable_out, total_amount, status, date, branch')
+    .select('type, cash_in, bank_in, custody_in, cash_out, bank_out, custody_out, receivable_in, receivable_out, payable_in, payable_out, total_amount, status, date, branch')
     .eq('project_id', projectId)
     .gte('date', fromDate)
     .lte('date', toDate)
@@ -118,6 +118,7 @@ export async function getFinancialSummary(projectId, fromDate, toDate) {
   const bankBalance        = sumField(all, 'bank_in')       - sumField(all, 'bank_out')
   const custodyBalance     = sumField(all, 'custody_in')    - sumField(all, 'custody_out')
   const receivableBalance  = sumField(all, 'receivable_in') - sumField(all, 'receivable_out')
+  const payableBalance     = sumField(all, 'payable_in')    - sumField(all, 'payable_out')
 
   return {
     totalSales,
@@ -135,6 +136,7 @@ export async function getFinancialSummary(projectId, fromDate, toDate) {
     bankBalance,
     custodyBalance,
     receivableBalance,
+    payableBalance,
     entries: active,
   }
 }

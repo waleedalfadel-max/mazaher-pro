@@ -31,19 +31,44 @@ const ROLE_COLOR = {
 // مقارنة مرنة — تبقي العربية فقط، تحذف الإيموجي والرموز والمسافات الزائدة
 const normCat = s => (s || '').replace(/[^؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim()
 
+// مصدر الدفع الافتراضي بناءً على اسم المشروع ودور الرافع
+function getDefaultPaySource(projName, uploadedBy) {
+  if (projName?.includes('تشورميك')) return 'bank'
+  if (uploadedBy === 'cashier') return 'cash'
+  if (uploadedBy === 'owner')   return 'bank'
+  if (projName?.includes('كون') && uploadedBy === 'purchasing') return 'bank'
+  if (projName?.includes('كون') && uploadedBy === 'accountant') return 'bank'
+  if (uploadedBy === 'purchasing') return 'custody'
+  return null
+}
+
 export default function PendingDocuments() {
-  const { projectId, projectName } = useAuth()
-  const [docs, setDocs]             = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [transTypes, setTransTypes] = useState(FALLBACK_TRANS_TYPES)
-  const [categories, setCategories] = useState([])
-  const [branches,   setBranches]   = useState([])
-  const [suppliers,  setSuppliers]  = useState([])
-  const pidRef                      = useRef(null)
+  const { projectId, projectName, isSuperAdmin } = useAuth()
+  const [docs, setDocs]               = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [transTypes, setTransTypes]   = useState(FALLBACK_TRANS_TYPES)
+  const [transTypesMap,  setTransTypesMap]  = useState({})   // superadmin: projectId → types[]
+  const [categoriesMap,  setCategoriesMap]  = useState({})   // superadmin: projectId → categories[]
+  const [categories, setCategories]   = useState([])
+  const [branches,   setBranches]     = useState([])
+  const [suppliers,  setSuppliers]    = useState([])
+  const [projects,   setProjects]     = useState([])
+  const [projMap,    setProjMap]      = useState({})
+  const [filterProjId, setFilterProjId] = useState('')
+  const pidRef                        = useRef(null)
 
   useEffect(() => {
     pidRef.current = projectId
-    if (projectId) {
+    if (isSuperAdmin) {
+      supabase.from('projects').select('id,name').order('name').then(({ data }) => {
+        const list = data || []
+        setProjects(list)
+        const m = {}
+        list.forEach(p => { m[p.id] = p.name })
+        setProjMap(m)
+      })
+      loadDocs(null).then(() => setLoading(false))
+    } else if (projectId) {
       getTransactionTypes(projectId).then(setTransTypes)
       getProjectSettings(projectId).then(s => setBranches(s?.settings?.branches || []))
       loadDocs(projectId).then(() => setLoading(false))
@@ -59,11 +84,46 @@ export default function PendingDocuments() {
         .order('name')
         .then(({ data }) => setSuppliers(data || []))
     }
-  }, [projectId])
+  }, [projectId, isSuperAdmin])
+
+  // إعادة تحميل عند تغيير فلتر المشروع (superadmin فقط)
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    setLoading(true)
+    loadDocs(filterProjId || null).then(() => setLoading(false))
+  }, [filterProjId])
+
+  // superadmin: حمّل transTypes لكل project_id موجود في الوثائق
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    const pids = [...new Set(docs.map(d => d.project_id).filter(Boolean))]
+    pids.forEach(pid => {
+      if (!transTypesMap[pid]) {
+        getTransactionTypes(pid).then(types => {
+          setTransTypesMap(m => ({ ...m, [pid]: types }))
+        })
+      }
+    })
+  }, [docs, isSuperAdmin])
+
+  // superadmin: حمّل categories لكل project_id موجود في الوثائق
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    const pids = [...new Set(docs.map(d => d.project_id).filter(Boolean))]
+    pids.forEach(pid => {
+      if (!categoriesMap[pid]) {
+        supabase.from('categories')
+          .select('id,name,parent_id,type,sort_order')
+          .eq('project_id', pid)
+          .order('sort_order')
+          .then(({ data }) => setCategoriesMap(m => ({ ...m, [pid]: data || [] })))
+      }
+    })
+  }, [docs, isSuperAdmin])
 
   async function loadDocs(pid) {
     let q = supabase.from('documents')
-      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,file_url,branch,purchase_category,category_main,category_sub')
+      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,file_url,branch,purchase_category,category_main,category_sub,project_id')
       .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
     if (pid) q = q.eq('project_id', pid)
@@ -93,6 +153,20 @@ export default function PendingDocuments() {
   async function analyze(doc) {
     updateDoc(doc.id, { _state: 'analyzing', _error: '' })
     try {
+      const docPid      = doc.project_id || projectId
+      const docProjName = projMap[docPid] || projectName || ''
+
+      // اجلب التصنيفات وأنواع الحركة الخاصة بمشروع المستند
+      let docCategories = categories
+      let docTransTypes = transTypes
+      if (isSuperAdmin && docPid) {
+        const { data: cats } = await supabase.from('categories')
+          .select('id,name,parent_id,type,sort_order')
+          .eq('project_id', docPid).order('sort_order')
+        docCategories = cats || []
+        docTransTypes = transTypesMap[docPid] || await getTransactionTypes(docPid)
+      }
+
       let fileBase64, fileMime
       if (doc.file_url) {
         const fetched = await fetchAsBase64(doc.file_url)
@@ -108,11 +182,26 @@ export default function PendingDocuments() {
         fileBase64 = await compressImageBase64(fileBase64, fileMime)
         fileMime   = 'image/jpeg'
       }
-      const result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, categories)
+      const result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes)
+
+      // مصدر الدفع — تشورميك: bank دائماً بغض النظر عما أعاده Claude أو ما هو محفوظ
+      const defaultPaySource = getDefaultPaySource(docProjName, doc.uploaded_by)
+      const isTashormik = docProjName?.includes('تشورميك')
+      if (isTashormik || defaultPaySource) {
+        if (result?.invoices) {
+          result.invoices = result.invoices.map(inv =>
+            inv.type === 'sales' ? inv : { ...inv, paySource: isTashormik ? 'bank' : (inv.paySource || defaultPaySource) }
+          )
+        } else if (result && result.type !== 'sales') {
+          result.paySource = isTashormik ? 'bank' : (result.paySource || defaultPaySource)
+        }
+      }
+
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',
         analysis_result: result, _edit: result,
+        _aiSuggestedType: true,
         _imageData: doc.file_url || fileBase64,
         _isUrl: !!doc.file_url,
         _showImage: true,
@@ -129,12 +218,213 @@ export default function PendingDocuments() {
     return !!data
   }
 
+  // اعتماد فاتورة واحدة — يرمي خطأ عند فشل أو dup
+  async function _approveOne(doc, res, forceNew) {
+    const pid        = doc.project_id || pidRef.current
+    const docProjName = projMap[pid] || projectName || ''
+    const pay        = docProjName?.includes('تشورميك') ? 'bank' : (res.paySource || 'custody')
+    const isIncoming = res.transType?.includes('تحصيل جملة')
+
+    if (res.type === 'sales') {
+      const cash     = Number(res.cashSales)     || 0
+      const network  = Number(res.networkSales)  || 0
+      const transfer = Number(res.transferSales) || 0
+      const hunger   = Number(res.hungerSales)   || 0
+      const jahez    = Number(res.jahez)          || 0
+      const keeta    = Number(res.keeta)          || 0
+      const mrsool   = Number(res.mrsool)         || 0
+      const date    = res.date
+      const { error: e1 } = await supabase.from('sales').insert({
+        project_id: pid, date,
+        cash_sales: cash, network_sales: network,
+        hunger_sales: hunger, jahez_sales: jahez, keeta_sales: keeta,
+        description: 'تقرير POS', branch: doc.branch || null,
+      })
+      if (e1) throw new Error(e1.message)
+      const jn = await getOrCreateJournalNumber(pid, date)
+      const mkEntry = (type, desc, cash_in, bank_in, amt) => ({
+        project_id: pid, date, type, description: desc,
+        cash_in, cash_out: 0, bank_in, bank_out: 0, custody_in: 0, custody_out: 0,
+        total_amount: amt, status: 'approved', journal_number: jn,
+        file_url: doc.file_url || '', branch: doc.branch || null,
+      })
+      const mkReceivable = (type, desc, amt) => ({
+        project_id: pid, date, type, description: desc,
+        cash_in: 0, cash_out: 0, bank_in: 0, bank_out: 0, custody_in: 0, custody_out: 0,
+        receivable_in: amt, receivable_out: 0,
+        total_amount: amt, status: 'approved', journal_number: jn,
+        file_url: doc.file_url || '', branch: doc.branch || null,
+      })
+      const entries = []
+      if (cash     > 0) entries.push(mkEntry('💵 مبيعات كاش',         'مبيعات كاش — POS',      cash,     0,       cash))
+      if (network  > 0) entries.push(mkEntry('🏦 مبيعات شبكة',        'مبيعات شبكة — POS',     0,        network, network))
+      if (transfer > 0) entries.push(mkEntry('💸 مبيعات تحويل',       'مبيعات تحويل — POS',    0,        transfer,transfer))
+      if (hunger   > 0) entries.push(mkReceivable('🍔 مبيعات هنقر ستيشن', 'ذمم هنقر — POS',    hunger))
+      if (jahez    > 0) entries.push(mkReceivable('🛵 مبيعات جاهز',        'ذمم جاهز — POS',    jahez))
+      if (keeta    > 0) entries.push(mkReceivable('🛺 مبيعات كيتا',         'ذمم كيتا — POS',    keeta))
+      if (mrsool   > 0) entries.push(mkReceivable('🛵 مبيعات مرسول',        'ذمم مرسول — POS',   mrsool))
+      if (entries.length) {
+        if (!forceNew) {
+          const first = entries[0]
+          const isDup = await checkLedgerDup(pid, date, first.type, first.description, first.total_amount)
+          if (isDup) { const e = new Error('__DUP__'); e.isDup = true; throw e }
+        }
+        if (forceNew) {
+          const uid = Date.now().toString(36)
+          entries.forEach(e => { e.description += ` [${uid}]` })
+        }
+        const { data: insertedEntries, error: e2 } = await supabase.from('ledger_entries').insert(entries).select('id')
+        if (e2) throw new Error(e2.message)
+        if (!insertedEntries?.length) throw new Error('فشل تسجيل القيود في الدفتر')
+        await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
+      }
+
+    } else if (res.type === 'transfer') {
+      const amount = Number(res.amount) || 0
+      const jn = await getOrCreateJournalNumber(pid, res.date)
+      const isCustody  = res.transType?.includes('صرف عهدة')
+      const isCollect  = res.transType?.includes('تحصيل ذمم')
+      const entryFields = isCollect
+        ? { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: 0, bank_out: 0, custody_out: 0, receivable_in: 0, receivable_out: amount }
+        : isCustody
+          ? { cash_in: 0, bank_in: 0, custody_in: amount, cash_out: 0, bank_out: amount, custody_out: 0, receivable_in: 0, receivable_out: 0 }
+          : { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: amount, bank_out: 0, custody_out: 0, receivable_in: 0, receivable_out: 0 }
+      const transferType = res.transType || (isCustody ? '🔄 تحويل داخلي — صرف عهدة' : '🏧 تحويل داخلي — إيداع نقدي')
+      const transferDesc = res.description || doc.file_name
+      if (!forceNew) {
+        const isDup = await checkLedgerDup(pid, res.date, transferType, transferDesc, amount)
+        if (isDup) { const e = new Error('__DUP__'); e.isDup = true; throw e }
+      }
+      const transferDescFinal = forceNew ? `${transferDesc} [${Date.now().toString(36)}]` : transferDesc
+      const { data: transferInserted, error: err } = await supabase.from('ledger_entries').insert({
+        project_id: pid, date: res.date, type: transferType,
+        description: transferDescFinal, ...entryFields,
+        vat_amount: 0, total_amount: amount, status: 'approved',
+        file_url: doc.file_url || '', journal_number: jn, branch: doc.branch || null,
+      }).select('id').single()
+      if (err) throw new Error(err.message)
+      if (!transferInserted) throw new Error('فشل تسجيل القيد في الدفتر')
+      await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
+
+    } else if (pay === 'credit') {
+      const supplierId = doc._supplierId
+      if (!supplierId) throw new Error('يرجى اختيار المورد قبل التسجيل')
+      const amount = Number(res.totalAmount || res.amount) || 0
+      const jn = await getOrCreateJournalNumber(pid, res.date)
+      const { error: err } = await supabase.from('supplier_transactions').insert({
+        supplier_id: supplierId, project_id: pid,
+        type: 'invoice', amount, date: res.date,
+        notes: res.description || doc.file_name,
+        document_id: doc.id, journal_number: jn,
+      })
+      if (err) throw new Error(err.message)
+      await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
+
+    } else if (res.type === 'expense' && res.items?.length > 0) {
+      const jn         = await getOrCreateJournalNumber(pid, res.date)
+      const itemsTotal = res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+      const totalAmt   = Number(res.totalAmount || res.amount) || itemsTotal
+      const vatTotal   = Number(res.vatAmount) || 0
+      const transType  = res.transType || '🛒 مصروفات تشغيلية'
+      const itemsDesc  = res.description || doc.file_name
+      if (!forceNew) {
+        const isDup = await checkLedgerDup(pid, res.date, transType, itemsDesc, totalAmt)
+        if (isDup) { const e = new Error('__DUP__'); e.isDup = true; throw e }
+      }
+      const itemsDescFinal = forceNew ? `${itemsDesc} [${Date.now().toString(36)}]` : itemsDesc
+      const { data: itemsInserted, error: ledgerErr } = await supabase.from('ledger_entries').insert({
+        project_id: pid, date: res.date, type: transType, description: itemsDescFinal,
+        cash_out:    !isIncoming && pay === 'cash'    ? totalAmt : 0,
+        bank_out:    !isIncoming && pay === 'bank'    ? totalAmt : 0,
+        custody_out: !isIncoming && pay === 'custody' ? totalAmt : 0,
+        cash_in:      isIncoming && pay === 'cash'    ? totalAmt : 0,
+        bank_in:      isIncoming && pay === 'bank'    ? totalAmt : 0,
+        custody_in:   isIncoming && pay === 'custody' ? totalAmt : 0,
+        payable_in:  !isIncoming && pay === 'payable' ? totalAmt : 0,
+        payable_out: 0,
+        vat_amount: vatTotal, total_amount: totalAmt, status: 'approved',
+        file_url: doc.file_url || '', journal_number: jn, branch: doc.branch || null,
+        purchase_category: doc.purchase_category || null, category_main: null, category_sub: null,
+      }).select('id').single()
+      if (ledgerErr) throw new Error(ledgerErr.message)
+      if (!itemsInserted) throw new Error('فشل تسجيل القيد في الدفتر')
+      const itemRows = res.items.map((item, i) => {
+        const amt     = Number(item.amount) || 0
+        const itemVat = itemsTotal > 0 ? parseFloat((vatTotal * amt / itemsTotal).toFixed(2)) : 0
+        return {
+          document_id: doc.id, project_id: pid, journal_number: jn,
+          description: item.description || res.description || '',
+          amount: amt, vat_amount: itemVat,
+          category_main: normCat(transType) || null, category_sub: item.category_sub || null,
+          sort_order: i + 1,
+        }
+      })
+      const { error: itemsErr } = await supabase.from('document_items').insert(itemRows)
+      if (itemsErr) throw new Error(itemsErr.message)
+      await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
+
+    } else {
+      const amount = Number(res.amount || res.totalAmount) || 0
+      const singleDesc = res.description || doc.file_name
+      if (!forceNew) {
+        const isDup = await checkLedgerDup(pid, res.date, res.transType || '', singleDesc, amount)
+        if (isDup) { const e = new Error('__DUP__'); e.isDup = true; throw e }
+      }
+      const singleDescFinal = forceNew ? `${singleDesc} [${Date.now().toString(36)}]` : singleDesc
+      const jn = await getOrCreateJournalNumber(pid, res.date)
+      const { data: inserted, error: err } = await supabase.from('ledger_entries').insert({
+        project_id: pid, date: res.date, type: res.transType || '',
+        description: singleDescFinal,
+        cash_out:    !isIncoming && pay === 'cash'    ? amount : 0,
+        bank_out:    !isIncoming && pay === 'bank'    ? amount : 0,
+        custody_out: !isIncoming && pay === 'custody' ? amount : 0,
+        cash_in:      isIncoming && pay === 'cash'    ? amount : 0,
+        bank_in:      isIncoming && pay === 'bank'    ? amount : 0,
+        custody_in:   isIncoming && pay === 'custody' ? amount : 0,
+        payable_in:  !isIncoming && pay === 'payable' ? amount : 0,
+        payable_out: 0,
+        vat_amount: Number(res.vatAmount) || 0, total_amount: amount,
+        status: 'approved', file_url: doc.file_url || '', journal_number: jn,
+        branch: doc.branch || null, purchase_category: doc.purchase_category || null,
+        category_main: normCat(res.transType || '') || res.category_main || null, category_sub: res.category_sub || null,
+      }).select('id').single()
+      if (err) throw new Error(err.message)
+      if (!inserted) throw new Error('فشل تسجيل القيد في الدفتر — لم يُعاد أي سجل')
+      if (doc.purchase_category && inserted?.id) {
+        await supabase.rpc('set_entry_purchase_category', { entry_id: inserted.id, category: doc.purchase_category })
+      }
+      await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
+    }
+  }
+
   async function approve(doc, forceNew = false) {
-    const res = doc._edit || doc.analysis_result
-    if (doc.purchase_category && res) res.transType = doc.purchase_category
+    const rawRes = doc._edit || doc.analysis_result
+    if (doc.purchase_category && rawRes) rawRes.transType = doc.purchase_category
+
+    const invoiceList = rawRes?.invoices
+
+    // فواتير متعددة — اعتمد كل فاتورة بقيدها المستقل
+    if (invoiceList?.length > 1) {
+      updateDoc(doc.id, { _state: 'approving', _validationError: null, _dupCheck: false })
+      try {
+        for (const inv of invoiceList) {
+          await _approveOne(doc, inv, true)
+        }
+        const newName = readableName(doc, invoiceList[0])
+        await supabase.from('documents').update({
+          status: 'approved', file_name: newName, category_main: null, category_sub: null,
+        }).eq('id', doc.id)
+        setDocs(ds => ds.filter(d => d.id !== doc.id))
+      } catch(e) { updateDoc(doc.id, { _state: 'analyzed', _error: e.message }) }
+      return
+    }
+
+    // فاتورة واحدة
+    const res = invoiceList?.[0] ?? rawRes
 
     // ── تحقق الإلزامي لمحمصة كون ──────────────────────────────────────
-    const isMahmasa = projectName === 'محمصة كون'
+    const docProjName = projMap[doc.project_id] || projectName
+    const isMahmasa = docProjName === 'محمصة كون'
     if (isMahmasa && res?.type !== 'sales' && res?.type !== 'transfer') {
       const missingType = !res?.transType
       const missingPay  = !res?.paySource
@@ -146,222 +436,16 @@ export default function PendingDocuments() {
     updateDoc(doc.id, { _state: 'approving', _validationError: null, _dupCheck: false })
 
     try {
-      const pay        = res.paySource || 'custody'
-      const isIncoming = res.transType?.includes('تحصيل جملة')
-
-      if (res.type === 'sales') {
-        // ── مبيعات ──────────────────────────────────────────────────────
-        const cash    = Number(res.cashSales)    || 0
-        const network = Number(res.networkSales) || 0
-        const hunger  = Number(res.hungerSales)  || 0
-        const jahez   = Number(res.jahez)         || 0
-        const keeta   = Number(res.keeta)         || 0
-        const date    = res.date
-
-        const { error: e1 } = await supabase.from('sales').insert({
-          project_id: pidRef.current, date,
-          cash_sales: cash, network_sales: network,
-          hunger_sales: hunger, jahez_sales: jahez, keeta_sales: keeta,
-          description: 'تقرير POS', branch: doc.branch || null,
-        })
-        if (e1) throw new Error(e1.message)
-
-        const jn = await getOrCreateJournalNumber(pidRef.current, date)
-        const mkEntry = (type, desc, cash_in, bank_in, amt) => ({
-          project_id: pidRef.current, date, type, description: desc,
-          cash_in, cash_out: 0, bank_in, bank_out: 0, custody_in: 0, custody_out: 0,
-          total_amount: amt, status: 'approved', journal_number: jn,
-          file_url: doc.file_url || '', branch: doc.branch || null,
-        })
-        const entries = []
-        if (cash    > 0) entries.push(mkEntry('💵 مبيعات كاش',          'مبيعات كاش — POS',          cash,    0,       cash))
-        if (network > 0) entries.push(mkEntry('🏦 مبيعات شبكة',         'مبيعات شبكة — POS',         0,       network, network))
-        if (hunger  > 0) entries.push(mkEntry('🍔 مبيعات هنقر ستيشن',   'مبيعات هنقر ستيشن — POS',   0,       hunger,  hunger))
-        if (jahez   > 0) entries.push(mkEntry('🛵 مبيعات جاهز',          'مبيعات جاهز — POS',          0,       jahez,   jahez))
-        if (keeta   > 0) entries.push(mkEntry('🛺 مبيعات كيتا',          'مبيعات كيتا — POS',          0,       keeta,   keeta))
-        if (entries.length) {
-          if (!forceNew) {
-            const first = entries[0]
-            const isDup = await checkLedgerDup(pidRef.current, date, first.type, first.description, first.total_amount)
-            if (isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
-          }
-          if (forceNew) {
-            const uid = Date.now().toString(36)
-            entries.forEach(e => { e.description += ` [${uid}]` })
-          }
-          const { data: insertedEntries, error: e2 } = await supabase.from('ledger_entries').insert(entries).select('id')
-          if (e2) throw new Error(e2.message)
-          if (!insertedEntries?.length) throw new Error('فشل تسجيل القيود في الدفتر')
-          await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
-        }
-
-      } else if (res.type === 'transfer') {
-        // ── تحويل داخلي (صرف عهدة / إيداع نقدي) ────────────────────────
-        const amount = Number(res.amount) || 0
-        const jn = await getOrCreateJournalNumber(pidRef.current, res.date)
-        const isCustody = res.transType?.includes('صرف عهدة')
-        const entryFields = isCustody
-          ? { cash_in: 0, bank_in: 0, custody_in: amount, cash_out: 0, bank_out: amount, custody_out: 0 }
-          : { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: amount, bank_out: 0, custody_out: 0 }
-        const transferType = res.transType || (isCustody ? '🔄 تحويل داخلي — صرف عهدة' : '🏧 تحويل داخلي — إيداع نقدي')
-        const transferDesc = res.description || doc.file_name
-        if (!forceNew) {
-          const isDup = await checkLedgerDup(pidRef.current, res.date, transferType, transferDesc, amount)
-          if (isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
-        }
-        const transferDescFinal = forceNew
-          ? `${transferDesc} [${Date.now().toString(36)}]`
-          : transferDesc
-        const { data: transferInserted, error: err } = await supabase.from('ledger_entries').insert({
-          project_id:    pidRef.current,
-          date:          res.date,
-          type:          transferType,
-          description:   transferDescFinal,
-          ...entryFields,
-          vat_amount:    0,
-          total_amount:  amount,
-          status:        'approved',
-          file_url:      doc.file_url || '',
-          journal_number: jn,
-          branch:        doc.branch || null,
-        }).select('id').single()
-        if (err) throw new Error(err.message)
-        if (!transferInserted) throw new Error('فشل تسجيل القيد في الدفتر')
-        await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
-
-      } else if (pay === 'credit') {
-        // ── مشتريات آجلة — تُسجَّل في حساب المورد فقط ─────────────────
-        const supplierId = doc._supplierId
-        if (!supplierId) throw new Error('يرجى اختيار المورد قبل التسجيل')
-        const amount = Number(res.totalAmount || res.amount) || 0
-        const jn = await getOrCreateJournalNumber(pidRef.current, res.date)
-        const { error: err } = await supabase.from('supplier_transactions').insert({
-          supplier_id: supplierId,
-          project_id:  pidRef.current,
-          type:        'invoice',
-          amount,
-          date:        res.date,
-          notes:       res.description || doc.file_name,
-          document_id: doc.id,
-          journal_number: jn,
-        })
-        if (err) throw new Error(err.message)
-        await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
-
-      } else if (res.type === 'expense' && res.items?.length > 0) {
-        // ── مصروف متعدد البنود: قيد واحد + document_items ───────────────
-        const jn         = await getOrCreateJournalNumber(pidRef.current, res.date)
-        const itemsTotal = res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0)
-        const totalAmt   = Number(res.totalAmount || res.amount) || itemsTotal
-        const vatTotal   = Number(res.vatAmount) || 0
-        const transType  = res.transType || '🛒 مصروفات تشغيلية'
-        const itemsDesc  = res.description || doc.file_name
-
-        if (!forceNew) {
-          const isDup = await checkLedgerDup(pidRef.current, res.date, transType, itemsDesc, totalAmt)
-          if (isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
-        }
-        const itemsDescFinal = forceNew
-          ? `${itemsDesc} [${Date.now().toString(36)}]`
-          : itemsDesc
-
-        // قيد واحد بإجمالي الفاتورة — INSERT أولاً وتحقق من نجاحه قبل أي شيء
-        const { data: itemsInserted, error: ledgerErr } = await supabase.from('ledger_entries').insert({
-          project_id:   pidRef.current,
-          date:         res.date,
-          type:         transType,
-          description:  itemsDescFinal,
-          cash_out:     !isIncoming && pay === 'cash'    ? totalAmt : 0,
-          bank_out:     !isIncoming && pay === 'bank'    ? totalAmt : 0,
-          custody_out:  !isIncoming && pay === 'custody' ? totalAmt : 0,
-          cash_in:      isIncoming && pay === 'cash'    ? totalAmt : 0,
-          bank_in:      isIncoming && pay === 'bank'    ? totalAmt : 0,
-          custody_in:   isIncoming && pay === 'custody' ? totalAmt : 0,
-          vat_amount:   vatTotal,
-          total_amount: totalAmt,
-          status:       'approved',
-          file_url:     doc.file_url || '',
-          journal_number: jn,
-          branch:       doc.branch || null,
-          purchase_category: doc.purchase_category || null,
-          category_main: null,
-          category_sub:  null,
-        }).select('id').single()
-        if (ledgerErr) throw new Error(ledgerErr.message)
-        if (!itemsInserted) throw new Error('فشل تسجيل القيد في الدفتر')
-
-        // بنود مفصّلة في document_items
-        const itemRows = res.items.map((item, i) => {
-          const amt    = Number(item.amount) || 0
-          const itemVat = itemsTotal > 0 ? parseFloat((vatTotal * amt / itemsTotal).toFixed(2)) : 0
-          return {
-            document_id:   doc.id,
-            project_id:    pidRef.current,
-            journal_number: jn,
-            description:   item.description || res.description || '',
-            amount:        amt,
-            vat_amount:    itemVat,
-            category_main: item.category_main || null,
-            category_sub:  item.category_sub  || null,
-            sort_order:    i + 1,
-          }
-        })
-        const { error: itemsErr } = await supabase.from('document_items').insert(itemRows)
-        if (itemsErr) throw new Error(itemsErr.message)
-
-        await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
-
-      } else {
-        // ── مصروف بند واحد (قديم أو expense بدون items) ─────────────────
-        const amount = Number(res.amount || res.totalAmount) || 0
-        const singleDesc = res.description || doc.file_name
-        if (!forceNew) {
-          const isDup = await checkLedgerDup(pidRef.current, res.date, res.transType || '', singleDesc, amount)
-          if (isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
-        }
-        const singleDescFinal = forceNew
-          ? `${singleDesc} [${Date.now().toString(36)}]`
-          : singleDesc
-        const jn = await getOrCreateJournalNumber(pidRef.current, res.date)
-        // INSERT أولاً — تحقق من النجاح قبل أي عملية أخرى
-        const { data: inserted, error: err } = await supabase.from('ledger_entries').insert({
-          project_id:        pidRef.current,
-          date:              res.date,
-          type:              res.transType || '',
-          description:       singleDescFinal,
-          cash_out:    !isIncoming && pay === 'cash'    ? amount : 0,
-          bank_out:    !isIncoming && pay === 'bank'    ? amount : 0,
-          custody_out: !isIncoming && pay === 'custody' ? amount : 0,
-          cash_in:      isIncoming && pay === 'cash'    ? amount : 0,
-          bank_in:      isIncoming && pay === 'bank'    ? amount : 0,
-          custody_in:   isIncoming && pay === 'custody' ? amount : 0,
-          vat_amount:        Number(res.vatAmount) || 0,
-          total_amount:      amount,
-          status:            'approved',
-          file_url:          doc.file_url || '',
-          journal_number:    jn,
-          branch:            doc.branch || null,
-          purchase_category: doc.purchase_category || null,
-          category_main:     res.category_main || null,
-          category_sub:      res.category_sub  || null,
-        }).select('id').single()
-        if (err) throw new Error(err.message)
-        if (!inserted) throw new Error('فشل تسجيل القيد في الدفتر — لم يُعاد أي سجل')
-        if (doc.purchase_category && inserted?.id) {
-          await supabase.rpc('set_entry_purchase_category', { entry_id: inserted.id, category: doc.purchase_category })
-        }
-        await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
-      }
-
+      await _approveOne(doc, res, forceNew)
       const newName = readableName(doc, res)
       await supabase.from('documents').update({
-        status:    'approved',
-        file_name: newName,
-        category_main: null,
-        category_sub:  null,
+        status: 'approved', file_name: newName, category_main: null, category_sub: null,
       }).eq('id', doc.id)
       setDocs(ds => ds.filter(d => d.id !== doc.id))
-    } catch(e) { updateDoc(doc.id, { _state: 'analyzed', _error: e.message }) }
+    } catch(e) {
+      if (e?.isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
+      updateDoc(doc.id, { _state: 'analyzed', _error: e.message })
+    }
   }
 
   async function reject(doc) {
@@ -370,6 +454,41 @@ export default function PendingDocuments() {
       await supabase.from('documents').update({ status: 'rejected' }).eq('id', doc.id)
       setDocs(ds => ds.filter(d => d.id !== doc.id))
     } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
+  }
+
+  // اعتماد فاتورة واحدة من مستند متعدد الفواتير
+  async function approveInvoice(doc, invIdx) {
+    const rawRes  = doc._edit || doc.analysis_result
+    const invList = rawRes?.invoices || []
+    const inv     = invList[invIdx]
+    if (!inv) return
+    updateDoc(doc.id, { _state: 'approving', _error: '' })
+    try {
+      await _approveOne(doc, inv, true)
+      const remaining = invList.filter((_, i) => i !== invIdx)
+      if (remaining.length === 0) {
+        const newName = readableName(doc, inv)
+        await supabase.from('documents').update({ status: 'approved', file_name: newName, category_main: null, category_sub: null }).eq('id', doc.id)
+        setDocs(ds => ds.filter(d => d.id !== doc.id))
+      } else {
+        updateDoc(doc.id, { _state: 'analyzed', _edit: { ...rawRes, invoices: remaining } })
+      }
+    } catch(e) {
+      if (e?.isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
+      updateDoc(doc.id, { _state: 'analyzed', _error: e.message })
+    }
+  }
+
+  // رفض فاتورة واحدة من مستند متعدد الفواتير
+  function rejectInvoice(doc, invIdx) {
+    const rawRes    = doc._edit || doc.analysis_result
+    const invList   = rawRes?.invoices || []
+    const remaining = invList.filter((_, i) => i !== invIdx)
+    if (remaining.length === 0) {
+      reject(doc)
+    } else {
+      updateDoc(doc.id, { _edit: { ...rawRes, invoices: remaining } })
+    }
   }
 
   const timeAgo = t => {
@@ -392,8 +511,22 @@ export default function PendingDocuments() {
           <h1 className="text-2xl font-bold text-slate-800">مستندات بانتظار المراجعة</h1>
           <p className="text-sm text-slate-500 mt-1">{docs.length} مستند</p>
         </div>
-        <button onClick={() => loadDocs(pidRef.current)}
-          className="text-sm text-blue-600 hover:text-blue-800 font-medium">↻ تحديث</button>
+        <div className="flex items-center gap-3">
+          {isSuperAdmin && (
+            <select
+              value={filterProjId}
+              onChange={e => setFilterProjId(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+            >
+              <option value="">كل المشاريع</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+          <button onClick={() => { setLoading(true); loadDocs(isSuperAdmin ? (filterProjId || null) : pidRef.current).then(() => setLoading(false)) }}
+            className="text-sm text-blue-600 hover:text-blue-800 font-medium">↻ تحديث</button>
+        </div>
       </div>
 
       {docs.length === 0 ? (
@@ -403,31 +536,79 @@ export default function PendingDocuments() {
         </div>
       ) : docs.map(doc => (
         <DocCard key={doc.id} doc={doc}
+          projName={isSuperAdmin ? (projMap[doc.project_id] || '') : ''}
           onLoadImage={() => loadImage(doc)}
           onAnalyze={() => analyze(doc)}
           onApprove={() => approve(doc)}
           onApproveForced={() => approve(doc, true)}
           onDupIgnore={() => reject(doc)}
           onReject={() => reject(doc)}
-          onEdit={(f, v) => updateDoc(doc.id, { _edit: { ...(doc._edit || doc.analysis_result || {}), [f]: v } })}
+          onApproveInvoice={invIdx => approveInvoice(doc, invIdx)}
+          onRejectInvoice={invIdx => rejectInvoice(doc, invIdx)}
+          onEdit={(f, v) => {
+            const cur = doc._edit || doc.analysis_result || {}
+            const extra = f === 'transType' ? { _aiSuggestedType: false } : {}
+            // إذا wrapped في invoices[0] — عدّل داخل المصفوفة مباشرة
+            if (cur.invoices?.length === 1) {
+              updateDoc(doc.id, { ...extra, _edit: { ...cur, invoices: [{ ...cur.invoices[0], [f]: v }] } })
+            } else {
+              updateDoc(doc.id, { ...extra, _edit: { ...cur, [f]: v } })
+            }
+          }}
+          onEditInvoice={(invIdx, f, v) => {
+            const cur = doc._edit || doc.analysis_result || {}
+            const invoices = (cur.invoices || []).map((inv, i) => i === invIdx ? { ...inv, [f]: v } : inv)
+            updateDoc(doc.id, { _edit: { ...cur, invoices } })
+          }}
           onEditItem={(idx, f, v) => {
-            const cur   = doc._edit || doc.analysis_result || {}
-            const items = (cur.items || []).map((it, i) => i === idx ? { ...it, [f]: v } : it)
-            updateDoc(doc.id, { _edit: { ...cur, items } })
+            const cur = doc._edit || doc.analysis_result || {}
+            if (cur.invoices?.length === 1) {
+              const inv   = cur.invoices[0]
+              const items = (inv.items || []).map((it, i) => i === idx ? { ...it, [f]: v } : it)
+              updateDoc(doc.id, { _edit: { ...cur, invoices: [{ ...inv, items }] } })
+            } else {
+              const items = (cur.items || []).map((it, i) => i === idx ? { ...it, [f]: v } : it)
+              updateDoc(doc.id, { _edit: { ...cur, items } })
+            }
           }}
           onDeleteItem={idx => {
-            const cur   = doc._edit || doc.analysis_result || {}
-            const items = (cur.items || []).filter((_, i) => i !== idx)
-            updateDoc(doc.id, { _edit: { ...cur, items } })
+            const cur = doc._edit || doc.analysis_result || {}
+            if (cur.invoices?.length === 1) {
+              const inv   = cur.invoices[0]
+              const items = (inv.items || []).filter((_, i) => i !== idx)
+              updateDoc(doc.id, { _edit: { ...cur, invoices: [{ ...inv, items }] } })
+            } else {
+              const items = (cur.items || []).filter((_, i) => i !== idx)
+              updateDoc(doc.id, { _edit: { ...cur, items } })
+            }
           }}
           onAddItem={() => {
-            const cur   = doc._edit || doc.analysis_result || {}
-            const items = [...(cur.items || []), { description: '', amount: '', category_main: '', category_sub: '' }]
-            updateDoc(doc.id, { _edit: { ...cur, items } })
+            const cur = doc._edit || doc.analysis_result || {}
+            const blank = { description: '', amount: '', category_sub: '' }
+            if (cur.invoices?.length === 1) {
+              const inv   = cur.invoices[0]
+              const items = [...(inv.items || []), blank]
+              updateDoc(doc.id, { _edit: { ...cur, invoices: [{ ...inv, items }] } })
+            } else {
+              const items = [...(cur.items || []), blank]
+              updateDoc(doc.id, { _edit: { ...cur, items } })
+            }
+          }}
+          onAddInvoice={() => {
+            const cur  = doc._edit || doc.analysis_result || {}
+            const prev = cur.invoices?.length ? cur.invoices : [{ ...cur }]
+            const today = new Date().toISOString().split('T')[0]
+            const blank = {
+              type: 'expense', date: prev[0]?.date || today,
+              totalAmount: '', vatAmount: 0, transType: '',
+              paySource: prev[0]?.paySource || '', description: '',
+              items: [{ description: '', amount: '', category_sub: '' }],
+            }
+            updateDoc(doc.id, { _edit: { invoices: [...prev, blank] }, _showImage: true })
           }}
           timeAgo={timeAgo}
-          transTypes={transTypes}
-          categories={categories}
+          transTypes={isSuperAdmin ? (transTypesMap[doc.project_id] || FALLBACK_TRANS_TYPES) : transTypes}
+          categories={isSuperAdmin ? (categoriesMap[doc.project_id] || []) : categories}
           branches={branches}
           suppliers={suppliers}
           onBranchChange={b => updateDoc(doc.id, { branch: b })}
@@ -450,21 +631,13 @@ function openPdfBlob(base64, fileName) {
 }
 
 // ── ItemRow ──────────────────────────────────────────────────────────────────
-function ItemRow({ item, index, parentCats, categories, onEdit, onDelete }) {
-  const itemParent = parentCats.find(p =>
-    p.name === item.category_main ||
-    normCat(p.name) === normCat(item.category_main)
-  )
-  const itemSubs = itemParent ? categories.filter(c => c.parent_id === itemParent.id) : []
-  const mainValue = itemParent ? itemParent.name : (item.category_main || '')
+// category_main مشتق تلقائياً من transType — البند يُظهر category_sub فقط
+function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromType }) {
+  const allCats   = categories || []
+  const parentCat = allCats.filter(c => !c.parent_id)
+    .find(p => normCat(p.name) === normCat(categoryMainFromType || ''))
+  const itemSubs  = parentCat ? allCats.filter(c => c.parent_id === parentCat.id) : []
   const subValue  = item.category_sub || ''
-
-  // تصحيح تلقائي: إذا AI أعطى اسماً مختلفاً عن الاسم الدقيق في DB، نصحح في الحال
-  useEffect(() => {
-    if (itemParent && item.category_main !== itemParent.name) {
-      onEdit('category_main', itemParent.name)
-    }
-  }, [itemParent?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="border-b border-slate-100 last:border-0 p-2 space-y-1.5">
@@ -479,51 +652,30 @@ function ItemRow({ item, index, parentCats, categories, onEdit, onDelete }) {
         <button onClick={onDelete}
           className="text-red-300 hover:text-red-600 transition-colors text-base leading-none px-1">✕</button>
       </div>
-      <div className="flex gap-2 pr-5">
-        {parentCats.length > 0 ? (
-          <select
-            value={mainValue}
-            onChange={e => { onEdit('category_main', e.target.value); onEdit('category_sub', '') }}
-            className="flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
-            style={{ borderColor: '#fde68a' }}>
-            <option value="">— الرئيسي —</option>
-            {/* إذا القيمة الحالية غير موجودة في القائمة نضيفها كخيار مؤقت */}
-            {item.category_main && !parentCats.some(p => p.name === mainValue) && (
-              <option value={mainValue}>{mainValue}</option>
-            )}
-            {parentCats.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-          </select>
-        ) : (
-          <input value={item.category_main || ''} onChange={e => onEdit('category_main', e.target.value)}
-            placeholder="التصنيف الرئيسي"
-            className="flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
-            style={{ borderColor: '#fde68a' }}/>
-        )}
-        {itemSubs.length > 0 ? (
-          <select value={subValue} onChange={e => onEdit('category_sub', e.target.value)}
-            className="flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
-            style={{ borderColor: '#bbf7d0' }}>
-            <option value="">— الفرعي —</option>
-            {item.category_sub && !itemSubs.some(s => s.name === subValue) && (
-              <option value={subValue}>{subValue}</option>
-            )}
-            {itemSubs.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-          </select>
-        ) : (
-          <input value={subValue} onChange={e => onEdit('category_sub', e.target.value)}
-            placeholder={itemParent ? 'التصنيف الفرعي' : 'التصنيف الفرعي'}
-            className="flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
-            style={{ borderColor: '#bbf7d0' }}/>
-        )}
+      <div className="pr-5">
+        <select value={subValue} onChange={e => onEdit('category_sub', e.target.value)}
+          className="w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
+          style={{ borderColor: '#bbf7d0' }}>
+          <option value="">— التصنيف الفرعي —</option>
+          {item.category_sub && !itemSubs.some(s => s.name === subValue) && (
+            <option value={subValue}>{subValue}</option>
+          )}
+          {itemSubs.length > 0
+            ? itemSubs.map(s => <option key={s.id} value={s.name}>{s.name}</option>)
+            : <option value="أخرى">أخرى</option>
+          }
+        </select>
       </div>
     </div>
   )
 }
 
 // ── DocCard ──────────────────────────────────────────────────────────────────
-function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditItem, onDeleteItem, onAddItem, onBranchChange, onSupplierChange, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, ROLE_AR, ROLE_COLOR }) {
-  const res      = doc._edit || doc.analysis_result
-  const busy     = ['analyzing','approving','rejecting'].includes(doc._state)
+function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, ROLE_AR, ROLE_COLOR }) {
+  const rawRes        = doc._edit || doc.analysis_result
+  const isMultiInvoice = rawRes?.invoices?.length > 1
+  const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
+  const busy          = ['analyzing','approving','rejecting'].includes(doc._state)
   const isImage  = doc.file_type?.startsWith('image/')
   const fmt      = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
 
@@ -535,7 +687,9 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
   const invoiceTotal = Number(res?.totalAmount || res?.amount) || 0
   const totalDiff    = itemsTotal > 0 ? itemsTotal - invoiceTotal : 0   // موجب = البنود أكثر، سالب = أقل
 
+  // الأولوية: transType أولاً، ثم category_main كـ fallback للمستندات القديمة
   const selectedParent = parentCats.find(p =>
+    normCat(p.name) === normCat(res?.transType || '') ||
     p.name === (res?.category_main || '') ||
     normCat(p.name) === normCat(res?.category_main || '')
   )
@@ -558,6 +712,9 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
           <div className="text-xs text-slate-400 mt-0.5">منذ {timeAgo(doc.uploaded_at)}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          {projName && (
+            <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full font-medium">{projName}</span>
+          )}
           {doc.branch && (
             <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700">🏢 {doc.branch}</span>
           )}
@@ -639,7 +796,47 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
           </button>
         )}
 
-        {/* نتيجة التحليل */}
+        {/* نتيجة التحليل — فواتير متعددة */}
+        {(doc.status === 'analyzed' || doc._state === 'analyzed') && isMultiInvoice && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold rounded-lg px-3 py-2 border"
+              style={{ background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' }}>
+              📑 {rawRes.invoices.length} فواتير في هذه الصورة — عدّل كل فاتورة ثم اعتمد الكل
+            </div>
+            {rawRes.invoices.map((inv, idx) => (
+              <InvoiceSubPanel
+                key={idx}
+                invoice={inv}
+                index={idx}
+                transTypes={transTypes}
+                categories={categories}
+                onEdit={(f, v) => onEditInvoice(idx, f, v)}
+                onApprove={() => onApproveInvoice(idx)}
+                onReject={() => onRejectInvoice(idx)}
+                approving={busy}
+              />
+            ))}
+            <div className="flex gap-2 pt-1">
+              <button onClick={onApprove} disabled={busy}
+                className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
+                {doc._state === 'approving'
+                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
+                  : `✓ اعتماد ${rawRes.invoices.length} فواتير`
+                }
+              </button>
+              <button onClick={onReject} disabled={busy}
+                className="px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
+                {doc._state === 'rejecting' ? '...' : '✕ رد'}
+              </button>
+            </div>
+            <button onClick={onAddInvoice} disabled={busy}
+              className="w-full py-2 text-blue-600 border border-dashed border-blue-300 bg-blue-50 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors disabled:opacity-50">
+              ➕ إضافة فاتورة أخرى من نفس الصورة
+            </button>
+          </div>
+        )}
+
+        {/* نتيجة التحليل — فاتورة واحدة */}
         {(doc.status === 'analyzed' || doc._state === 'analyzed') && res && (
           <div className="space-y-3">
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">نتيجة التحليل — عدّل إن لزم ثم اعتمد</div>
@@ -654,14 +851,16 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                     {[
                       { label: 'كاش',         val: res.cashSales,    show: true },
                       { label: 'شبكة / مدى',  val: res.networkSales, show: true },
-                      { label: 'هنقر ستيشن',  val: res.hungerSales,  show: !!(res.hungerSales > 0) },
-                      { label: 'جاهز',        val: res.jahez,        show: !!(res.jahez > 0) },
-                      { label: 'كيتا',        val: res.keeta,        show: !!(res.keeta > 0) },
+                      { label: 'تحويل 💸',     val: res.transferSales, show: !!(res.transferSales > 0) },
+                      { label: 'هنقر ستيشن',  val: res.hungerSales,   show: !!(res.hungerSales > 0) },
+                      { label: 'جاهز',         val: res.jahez,         show: !!(res.jahez > 0) },
+                      { label: 'كيتا',         val: res.keeta,         show: !!(res.keeta > 0) },
+                      { label: 'مرسول',        val: res.mrsool,        show: !!(res.mrsool > 0) },
                     ].filter(c => c.show).map(c => (
                       <div key={c.label}><span className="text-slate-400 text-xs block">{c.label}</span><span className="font-semibold text-green-700">{fmt(c.val)}</span></div>
                     ))}
-                    <div><span className="text-slate-400 text-xs block">الإجمالي</span><span className="font-bold text-green-800">{fmt(res.totalSales || (res.cashSales||0)+(res.networkSales||0)+(res.hungerSales||0)+(res.jahez||0)+(res.keeta||0))}</span></div>
-                    <div><span className="text-slate-400 text-xs block">ضريبة المخرجات (15%)</span><span className="font-semibold" style={{color:'#b45309'}}>{fmt(((res.totalSales||(res.cashSales||0)+(res.networkSales||0))/1.15*0.15))}</span></div>
+                    <div><span className="text-slate-400 text-xs block">الإجمالي</span><span className="font-bold text-green-800">{fmt(res.totalSales || (res.cashSales||0)+(res.networkSales||0)+(res.transferSales||0)+(res.hungerSales||0)+(res.jahez||0)+(res.keeta||0)+(res.mrsool||0))}</span></div>
+                    <div><span className="text-slate-400 text-xs block">ضريبة المخرجات (15%)</span><span className="font-semibold" style={{color:'#b45309'}}>{fmt(((res.totalSales||(res.cashSales||0)+(res.networkSales||0)+(res.transferSales||0))/1.15*0.15))}</span></div>
                   </>
                 ) : (
                   <>
@@ -678,7 +877,7 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                         {res.vatAmount > 0 ? fmt(res.vatAmount) : '—'}
                       </span>
                     </div>
-                    <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{ cash:'الصندوق', bank:'البنك', custody:'العهدة' }[res.paySource] || res.paySource || '—'}</span></div>
+                    <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{ cash:'الصندوق', bank:'البنك', custody:'العهدة', payable:'آجل 🏪' }[res.paySource] || res.paySource || '—'}</span></div>
                   </>
                 )}
 
@@ -763,35 +962,45 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                   </div>
 
-                  {res.type !== 'sales' && (
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">
-                        مصدر الدفع {doc._validationError?.missingPay && <span className="text-red-500 font-bold">*مطلوب</span>}
-                      </label>
-                      <select value={res.paySource || ''} onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
-                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingPay ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
-                        <option value="">— اختر —</option>
-                        <option value="cash">💵 الصندوق</option>
-                        <option value="bank">🏦 البنك / مدى</option>
-                        <option value="custody">👤 العهدة</option>
-                        {suppliers.length > 0 && <option value="credit">🏪 آجل / مورد</option>}
-                      </select>
+                  {/* نوع المستند — دائماً قابل للتعديل لتصحيح التصنيف الخاطئ */}
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">نوع المستند</label>
+                    <select value={res.type || ''} onChange={e => onEdit('type', e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                      <option value="sales">📊 مبيعات POS</option>
+                      <option value="expense">🧾 فاتورة مصروفات</option>
+                      <option value="transfer">🔄 تحويل</option>
+                    </select>
+                  </div>
 
-                  {res.paySource === 'credit' && suppliers.length > 0 && (
-                    <div className="mt-2">
-                      <label className="text-xs text-slate-400 block mb-1">المورد</label>
-                      <select value={doc._supplierId || ''} onChange={e => onSupplierChange(e.target.value)}
-                        className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                        style={{ borderColor: '#fcd34d', background: '#fffbeb' }}>
-                        <option value="">— اختر المورد —</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </div>
-                  )}
-                    </div>
-                  )}
+                  {/* مصدر الدفع — دائماً قابل للتعديل */}
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">
+                      مصدر الدفع {doc._validationError?.missingPay && <span className="text-red-500 font-bold">*مطلوب</span>}
+                    </label>
+                    <select value={res.paySource || ''} onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingPay ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
+                      <option value="">— اختر —</option>
+                      <option value="cash">💵 الصندوق</option>
+                      <option value="bank">🏦 البنك / مدى</option>
+                      <option value="custody">👤 العهدة</option>
+                      <option value="payable">🏪 آجل</option>
+                      {suppliers.length > 0 && <option value="credit">🏪 آجل / مورد</option>}
+                    </select>
+                    {res.paySource === 'credit' && suppliers.length > 0 && (
+                      <div className="mt-2">
+                        <label className="text-xs text-slate-400 block mb-1">المورد</label>
+                        <select value={doc._supplierId || ''} onChange={e => onSupplierChange(e.target.value)}
+                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
+                          style={{ borderColor: '#fcd34d', background: '#fffbeb' }}>
+                          <option value="">— اختر المورد —</option>
+                          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </div>
 
-                  {/* إجمالي الفاتورة قابل للتعديل حتى في expense items */}
+                  {/* إجمالي الفاتورة */}
                   {res.type !== 'sales' && (
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">
@@ -813,27 +1022,32 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                     </div>
                   )}
 
-                  {res.type !== 'sales' && (
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">
-                        نوع الحركة {doc._validationError?.missingType && <span className="text-red-500 font-bold">*مطلوب</span>}
-                      </label>
-                      <select value={res.transType || ''} onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
-                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingType ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
-                        <option value="">— اختر —</option>
-                        {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </div>
-                  )}
+                  {/* نوع الحركة — دائماً قابل للتعديل */}
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 flex items-center gap-1.5">
+                      <span>نوع الحركة</span>
+                      {doc._validationError?.missingType && <span className="text-red-500 font-bold">*مطلوب</span>}
+                      {doc._aiSuggestedType && res.transType && (
+                        <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#eff6ff', color: '#1d4ed8' }}>🤖 اقتراح ذكي</span>
+                      )}
+                    </label>
+                    <select value={res.transType || ''} onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
+                      className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingType ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
+                      <option value="">— اختر —</option>
+                      {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
 
                   {res.type === 'sales' && (
                     <>
                       {[
-                        { key: 'cashSales',    label: '💵 مبيعات كاش' },
-                        { key: 'networkSales', label: '🏦 مبيعات شبكة / مدى' },
-                        { key: 'hungerSales',  label: '🍔 هنقر ستيشن' },
-                        { key: 'jahez',        label: '🛵 جاهز' },
-                        { key: 'keeta',        label: '🛺 كيتا' },
+                        { key: 'cashSales',     label: '💵 مبيعات كاش' },
+                        { key: 'networkSales',  label: '🏦 مبيعات شبكة / مدى' },
+                        { key: 'transferSales', label: '💸 مبيعات تحويل' },
+                        { key: 'hungerSales',   label: '🍔 هنقر ستيشن' },
+                        { key: 'jahez',         label: '🛵 جاهز' },
+                        { key: 'keeta',         label: '🛺 كيتا' },
+                        { key: 'mrsool',        label: '🛵 مرسول' },
                       ].map(({ key, label }) => (
                         <div key={key}>
                           <label className="text-xs text-slate-400 block mb-1">{label}</label>
@@ -844,7 +1058,7 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                       ))}
                       <div className="col-span-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm flex justify-between">
                         <span className="text-green-700 font-semibold">الإجمالي المحسوب</span>
-                        <span className="font-mono font-bold text-green-800">{fmt((Number(res.cashSales)||0)+(Number(res.networkSales)||0)+(Number(res.hungerSales)||0)+(Number(res.jahez)||0)+(Number(res.keeta)||0))}</span>
+                        <span className="font-mono font-bold text-green-800">{fmt((Number(res.cashSales)||0)+(Number(res.networkSales)||0)+(Number(res.transferSales)||0)+(Number(res.hungerSales)||0)+(Number(res.jahez)||0)+(Number(res.keeta)||0)+(Number(res.mrsool)||0))}</span>
                       </div>
                     </>
                   )}
@@ -869,7 +1083,8 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                     <div className="border border-slate-200 rounded-xl overflow-hidden">
                       {res.items.map((item, i) => (
                         <ItemRow key={i} item={item} index={i}
-                          parentCats={parentCats} categories={categories}
+                          categories={categories}
+                          categoryMainFromType={normCat(res.transType || '')}
                           onEdit={(f, v) => onEditItem(i, f, v)}
                           onDelete={() => onDeleteItem(i)}/>
                       ))}
@@ -882,51 +1097,31 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                   </div>
                 )}
 
-                {/* التصنيف للمستندات القديمة */}
+                {/* التصنيف الفرعي — الرئيسي يُشتق تلقائياً من نوع الحركة */}
                 {res.type !== 'sales' && !isExpenseItems && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">🏷️ التصنيف الرئيسي</label>
-                      {parentCats.length > 0 ? (
-                        <select value={resolvedMain} onChange={e => { onEdit('category_main', e.target.value); onEdit('category_sub', '') }}
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">📌 التصنيف الفرعي</label>
+                    {subCats.length > 0 ? (() => {
+                      const resolvedSub = subCats.find(s =>
+                        s.name === (res.category_sub || '') ||
+                        normCat(s.name) === normCat(res.category_sub || '')
+                      )?.name || (res.category_sub || '')
+                      return (
+                        <select value={resolvedSub} onChange={e => onEdit('category_sub', e.target.value)}
                           className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                          style={{ borderColor: '#fde68a' }}>
-                          <option value="">— اختر التصنيف —</option>
-                          {res.category_main && !parentCats.some(p => p.name === resolvedMain) && (
-                            <option value={resolvedMain}>{resolvedMain}</option>
+                          style={{ borderColor: '#bbf7d0' }}>
+                          <option value="">— اختر الفئة الفرعية —</option>
+                          {res.category_sub && !subCats.some(s => s.name === resolvedSub) && (
+                            <option value={resolvedSub}>{resolvedSub}</option>
                           )}
-                          {parentCats.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                          {subCats.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                         </select>
-                      ) : (
-                        <input value={res.category_main || ''} onChange={e => onEdit('category_main', e.target.value)}
-                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                          style={{ borderColor: '#fde68a' }}/>
-                      )}
-                    </div>
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">📌 التصنيف الفرعي</label>
-                      {subCats.length > 0 ? (() => {
-                        const resolvedSub = subCats.find(s =>
-                          s.name === (res.category_sub || '') ||
-                          normCat(s.name) === normCat(res.category_sub || '')
-                        )?.name || (res.category_sub || '')
-                        return (
-                          <select value={resolvedSub} onChange={e => onEdit('category_sub', e.target.value)}
-                            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                            style={{ borderColor: '#bbf7d0' }}>
-                            <option value="">— اختر الفئة الفرعية —</option>
-                            {res.category_sub && !subCats.some(s => s.name === resolvedSub) && (
-                              <option value={resolvedSub}>{resolvedSub}</option>
-                            )}
-                            {subCats.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                          </select>
-                        )
-                      })() : (
-                        <input value={res.category_sub || ''} onChange={e => onEdit('category_sub', e.target.value)}
-                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                          style={{ borderColor: '#bbf7d0' }}/>
-                      )}
-                    </div>
+                      )
+                    })() : (
+                      <input value={res.category_sub || ''} onChange={e => onEdit('category_sub', e.target.value)}
+                        className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
+                        style={{ borderColor: '#bbf7d0' }}/>
+                    )}
                   </div>
                 )}
               </div>
@@ -948,6 +1143,10 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
                 {doc._state === 'rejecting' ? '...' : '✕ رد'}
               </button>
             </div>
+            <button onClick={onAddInvoice} disabled={busy}
+              className="w-full py-2 text-blue-600 border border-dashed border-blue-300 bg-blue-50 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors disabled:opacity-50">
+              ➕ إضافة فاتورة أخرى من نفس الصورة
+            </button>
           </div>
         )}
 
@@ -959,6 +1158,155 @@ function DocCard({ doc, onLoadImage, onAnalyze, onApprove, onApproveForced, onDu
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── InvoiceSubPanel — بطاقة فاتورة واحدة ضمن نتيجة متعددة ───────────────────
+function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApprove, onReject, approving }) {
+  const fmt = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
+  const isSales   = invoice.type === 'sales'
+  const totalDisp = isSales
+    ? (Number(invoice.cashSales)||0) + (Number(invoice.networkSales)||0) + (Number(invoice.hungerSales)||0) + (Number(invoice.jahez)||0) + (Number(invoice.keeta)||0)
+    : Number(invoice.totalAmount || invoice.amount) || 0
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      {/* header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-100">
+        <span className="text-xs font-bold text-slate-600">فاتورة {index + 1}</span>
+        <div className="flex items-center gap-3">
+          {invoice.date && <span className="text-xs text-slate-400">{invoice.date}</span>}
+          <span className={`text-xs font-mono font-bold ${isSales ? 'text-green-700' : 'text-red-700'}`}>
+            {fmt(totalDisp)}
+          </span>
+        </div>
+      </div>
+
+      {/* summary row */}
+      {(invoice.description || invoice.transType) && (
+        <div className="px-3 py-2 flex items-center gap-2 text-xs text-slate-500">
+          {invoice.transType && (
+            <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full shrink-0">{invoice.transType}</span>
+          )}
+          {invoice.description && <span className="truncate">{invoice.description}</span>}
+        </div>
+      )}
+
+      {/* edit */}
+      <details>
+        <summary className="px-3 py-2 text-xs text-blue-600 cursor-pointer list-none flex items-center gap-1 border-t border-slate-100">
+          <span>▶</span> تعديل
+        </summary>
+        <div className="px-3 pb-3 pt-2 space-y-2 bg-slate-50 border-t border-slate-100">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
+              <input type="date" value={invoice.date || ''} onChange={e => onEdit('date', e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"/>
+            </div>
+            {!isSales && (
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">مصدر الدفع</label>
+                <select value={invoice.paySource || ''} onChange={e => onEdit('paySource', e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white">
+                  <option value="">— اختر —</option>
+                  <option value="cash">💵 الصندوق</option>
+                  <option value="bank">🏦 البنك</option>
+                  <option value="custody">👤 العهدة</option>
+                </select>
+              </div>
+            )}
+            {!isSales && (
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">المبلغ</label>
+                <input type="number" value={invoice.totalAmount ?? invoice.amount ?? ''}
+                  onChange={e => onEdit(invoice.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
+              </div>
+            )}
+            {!isSales && (
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">نوع الحركة</label>
+                <select value={invoice.transType || ''} onChange={e => onEdit('transType', e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white">
+                  <option value="">— اختر —</option>
+                  {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            )}
+            {isSales && [
+              { key: 'cashSales',    label: '💵 كاش' },
+              { key: 'networkSales', label: '🏦 شبكة' },
+              { key: 'hungerSales',  label: '🍔 هنقر' },
+              { key: 'jahez',        label: '🛵 جاهز' },
+              { key: 'keeta',        label: '🛺 كيتا' },
+            ].map(({ key, label }) => (
+              <div key={key}>
+                <label className="text-xs text-slate-400 block mb-1">{label}</label>
+                <input type="number" value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)}
+                  placeholder="0.00"
+                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
+              </div>
+            ))}
+            <div className="col-span-2">
+              <label className="text-xs text-slate-400 block mb-1">الوصف</label>
+              <input value={invoice.description || ''} onChange={e => onEdit('description', e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
+            </div>
+
+            {/* ── بنود الفاتورة ── */}
+            {!isSales && (
+              <div className="col-span-2 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500">البنود ({(invoice.items || []).length})</span>
+                  <button
+                    onClick={() => onEdit('items', [...(invoice.items || []), { description: '', amount: '', category_sub: '' }])}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors">
+                    + إضافة بند
+                  </button>
+                </div>
+                {(invoice.items || []).length > 0 && (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    {(invoice.items || []).map((item, i) => (
+                      <ItemRow key={i} item={item} index={i}
+                        categories={categories || []}
+                        categoryMainFromType={normCat(invoice.transType || '')}
+                        onEdit={(f, v) => {
+                          const items = (invoice.items || []).map((it, j) => j === i ? { ...it, [f]: v } : it)
+                          onEdit('items', items)
+                        }}
+                        onDelete={() => onEdit('items', (invoice.items || []).filter((_, j) => j !== i))}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </details>
+
+      {/* أزرار الاعتماد والرفض الفردي */}
+      {(onApprove || onReject) && (
+        <div className="flex gap-2 px-3 pb-3 pt-1">
+          {onApprove && (
+            <button onClick={onApprove} disabled={approving}
+              className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
+              {approving
+                ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
+                : '✅ اعتماد هذه الفاتورة'
+              }
+            </button>
+          )}
+          {onReject && (
+            <button onClick={onReject} disabled={approving}
+              className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
+              ❌ رفض
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

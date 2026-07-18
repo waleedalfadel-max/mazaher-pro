@@ -33,7 +33,11 @@ export default function InvoiceUpload() {
   const [dragOver, setDragOver]   = useState(false)
   const [myDocs, setMyDocs]             = useState([])
   const [myDocsLoading, setMyDocsLoading] = useState(true)
+  const [paySource, setPaySource] = useState('')
   const inputRef = useRef()
+
+  // "بـ عسل" فقط حالياً: مسؤول المشتريات يختار مصدر الدفع صراحة عند الرفع (بما فيها "آجل")
+  const showPaySourcePicker = role === 'purchasing' && (projectName || '').includes('بـ عسل')
 
   const loadMyDocs = useCallback(async () => {
     if (!projectId || !userName) return
@@ -115,6 +119,16 @@ export default function InvoiceUpload() {
         updateFile(i, { status: 'analyzing' })
         try {
           const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '')
+
+          // مصدر الدفع المُختار صراحة عند الرفع ("بـ عسل" فقط) — يطغى على تخمين الذكاء الاصطناعي
+          if (showPaySourcePicker && paySource) {
+            if (result?.invoices) {
+              result.invoices = result.invoices.map(inv =>
+                inv.type === 'sales' ? inv : { ...inv, paySource }
+              )
+            }
+          }
+
           const invoiceCount = result?.invoices?.length || 0
           if (invoiceCount > 1) {
             if (role === 'purchasing' || role === 'cashier') {
@@ -178,6 +192,21 @@ export default function InvoiceUpload() {
           </li>
         </ul>
       </div>
+
+      {/* مصدر الدفع — "بـ عسل" فقط لمسؤول المشتريات */}
+      {showPaySourcePicker && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-2">
+          <label className="text-sm font-bold text-slate-600 block">مصدر الدفع</label>
+          <select value={paySource} onChange={e => setPaySource(e.target.value)}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="">— اختر —</option>
+            <option value="cash">💵 الصندوق</option>
+            <option value="bank">🏦 البنك / مدى</option>
+            <option value="custody">👤 العهدة</option>
+            <option value="payable">🏪 آجل</option>
+          </select>
+        </div>
+      )}
 
       {/* Drop Zone */}
       {!uploading && (
@@ -287,8 +316,8 @@ export default function InvoiceUpload() {
 
       {/* أزرار الإجراء */}
       {!uploading && pendingCount > 0 && (
-        <button onClick={upload}
-          className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+        <button onClick={upload} disabled={showPaySourcePicker && !paySource}
+          className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           ⬆️ رفع {pendingCount} {pendingCount === 1 ? 'مستند' : 'مستندات'}
         </button>
       )}
