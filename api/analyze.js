@@ -7,32 +7,51 @@ export const config = {
 }
 
 function tryParseJSON(text) {
-  const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
-  const start = clean.indexOf('{')
+  // تنظيف: BOM + control characters + markdown fences
+  const cleaned = text
+    .replace(/^﻿/, '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim()
+
+  // محاولة parse مباشر أولاً
+  try { return JSON.parse(cleaned) } catch {}
+
+  // brace counting — يدعم { و [
+  let start = cleaned.indexOf('{')
+  const startArr = cleaned.indexOf('[')
+  if (start === -1 || (startArr !== -1 && startArr < start)) start = startArr
   if (start === -1) throw new Error('No JSON object found')
 
-  // brace-counting لإيجاد نهاية الـ JSON بدقة
-  let depth = 0, inStr = false, esc = false, end = -1
-  for (let i = start; i < clean.length; i++) {
-    const ch = clean[i]
-    if (esc)               { esc = false; continue }
-    if (ch === '\\' && inStr) { esc = true; continue }
-    if (ch === '"')        { inStr = !inStr; continue }
-    if (inStr)             continue
-    if (ch === '{')        depth++
-    if (ch === '}')        { depth--; if (depth === 0) { end = i; break } }
-  }
-  if (end === -1) throw new Error('Unmatched braces in JSON')
+  let depth = 0, inStr = false, esc = false
 
-  const jsonStr = clean.slice(start, end + 1)
-  try {
-    return JSON.parse(jsonStr)
-  } catch (e) {
-    const fixed = jsonStr
-      .replace(/[\x00-\x1F\x7F]/g, ' ')
-      .replace(/,(\s*[}\]])/g, '$1')
-    JSON.parse(fixed) // throws with position if still broken
+  for (let i = start; i < cleaned.length; i++) {
+    const c = cleaned[i]
+    if (esc)               { esc = false; continue }
+    if (c === '\\' && inStr) { esc = true; continue }
+    if (c === '"')           { inStr = !inStr; continue }
+    if (inStr)               continue
+    if (c === '{' || c === '[') depth++
+    if (c === '}' || c === ']') {
+      depth--
+      if (depth === 0) {
+        const slice = cleaned.slice(start, i + 1)
+        try {
+          return JSON.parse(slice)
+        } catch (e) {
+          // محاولة تصحيح شائعة
+          const fixed = slice
+            .replace(/[\x00-\x1F\x7F]/g, ' ')
+            .replace(/,(\s*[}\]])/g, '$1')
+            .replace(/([{,]\s*)([A-Za-z_]\w*)(\s*:)/g, '$1"$2"$3')
+          try { return JSON.parse(fixed) } catch {}
+          throw new Error('JSON parse failed: ' + e.message)
+        }
+      }
+    }
   }
+  throw new Error('No JSON object found')
 }
 
 export default async function handler(req, res) {
@@ -46,6 +65,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    const body = req.body
+    console.log('=== API Request ===')
+    console.log('model:', body?.model)
+    console.log('system:', body?.system?.slice?.(0, 80))
+    console.log('messages[0].content blocks:', body?.messages?.[0]?.content?.map(b => b.type))
+
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -53,16 +78,34 @@ export default async function handler(req, res) {
         'anthropic-version':  '2023-06-01',
         'content-type':       'application/json',
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     })
 
+    console.log('=== API Response Status ===', upstream.status)
     const data = await upstream.json()
-    const rawText = data?.content?.[0]?.text || ''
+    console.log('=== Raw Response keys ===', Object.keys(data))
+    console.log('stop_reason:', data?.stop_reason)
+    console.log('content[0] type:', data?.content?.[0]?.type)
+    console.log('text preview:', (data?.content?.[0]?.text || '').slice(0, 200))
+
+    // كشف أخطاء Claude API (overloaded, invalid_request, etc.)
+    if (data.type === 'error' || data.error) {
+      console.log('=== Claude API Error ===', JSON.stringify(data.error || data))
+      return res.status(200).json({
+        error: 'CLAUDE_API_ERROR',
+        claudeError: data.error || data,
+        status: upstream.status,
+      })
+    }
+
+    const rawText = Buffer.from(data?.content?.[0]?.text || '', 'utf8').toString('utf8')
 
     // تحقق من صحة JSON في النص قبل الإرسال — يكشف المشكلة مبكراً
     try {
       tryParseJSON(rawText)
     } catch (parseError) {
+      console.log('=== Parse Error ===', parseError.message)
+      console.log('rawText:', rawText.slice(0, 500))
       return res.status(200).json({
         error: 'JSON_PARSE_ERROR',
         rawText: rawText.substring(0, 1000),
@@ -70,8 +113,10 @@ export default async function handler(req, res) {
       })
     }
 
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
     res.status(upstream.status).json(data)
   } catch (err) {
+    console.log('=== Handler Error ===', err.message)
     res.status(500).json({ error: err.message })
   }
 }
