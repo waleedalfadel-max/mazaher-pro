@@ -8,10 +8,51 @@ function daysBetween(d1, d2) {
   return Math.abs(t1 - t2) / 86400000
 }
 
+// كل تركيبات بحجم size من مصفوفة arr (بدون تكرار عناصر، ترتيب غير مهم)
+function combinationsOfSize(arr, size) {
+  const results = []
+  function helper(start, combo) {
+    if (combo.length === size) { results.push(combo.slice()); return }
+    for (let i = start; i < arr.length; i++) {
+      combo.push(arr[i])
+      helper(i + 1, combo)
+      combo.pop()
+    }
+  }
+  helper(0, [])
+  return results
+}
+
+// يبحث عن أفضل تركيبة من candidates (حجم من 2 إلى maxParts) يقترب مجموعها من targetAmt
+// بفارق ≤ tolerance — يُفضَّل الفارق الأصغر، وعند التعادل يُفضَّل التركيبة الأقل عناصر
+function findBestCombination(candidates, targetAmt, maxParts, tolerance) {
+  let best = null
+  let bestDiff = Infinity
+  for (let size = 2; size <= Math.min(maxParts, candidates.length); size++) {
+    for (const combo of combinationsOfSize(candidates, size)) {
+      const sum  = combo.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+      const diff = Math.abs(sum - targetAmt)
+      if (diff <= tolerance && diff < bestDiff) {
+        best = combo
+        bestDiff = diff
+        if (diff === 0) return best
+      }
+    }
+  }
+  return best
+}
+
 // مطابقة مثلى (وليست جشعة بترتيب المسح): تبني كل الأزواج المرشّحة (سطر كشف × قيد دفتر)
 // اللي تحقق شرط التاريخ±dayWindow والمبلغ±tolerance، ترتّبها حسب دقة التطابق تصاعدياً،
 // ثم تستهلكها بالترتيب — يمنع تطابق حركة غلط لو فيه حركتين متقاربتين بنفس الفترة.
-export function matchLinesToLedger(bankLines, ledgerEntries, { tolerance = 1, dayWindow = 1 } = {}) {
+//
+// مرحلة ثانية (aggregate): لبعض القيود المسجَّلة بتحسيب كمبلغ صافٍ واحد (مثل راتب)
+// بينما البنك يسجّلها كحركتين أو ثلاث منفصلة بنفس الفترة (مثل تحويل + رسومه) —
+// تُجرَّب فقط على القيود المتبقية بعد المطابقة الفردية، وضمن نافذة ±aggregateDayWindow
+// من تاريخ كل قيد على حدة (وليس على مستوى الكشف كامل) لتفادي أي بطء.
+export function matchLinesToLedger(bankLines, ledgerEntries, {
+  tolerance = 1, dayWindow = 1, aggregateDayWindow = 2, aggregateMaxParts = 3,
+} = {}) {
   // مبيعات الشبكة تُطابق على مستوى الفترة كاملة في computeNetworkAggregate — تُستبعد هنا
   const candidateLines = bankLines
     .map((line, i) => ({ ...line, _idx: i }))
@@ -48,9 +89,37 @@ export function matchLinesToLedger(bankLines, ledgerEntries, { tolerance = 1, da
     matchedCount++
   }
 
+  // ── مرحلة المطابقة المركّبة — فقط على ما تبقّى بدون تطابق ──
+  const matchedEntries = []
+  const stillUnmatchedEntries = candidateEntries.filter(e => !usedEntries.has(e._idx))
+
+  for (const entry of stillUnmatchedEntries) {
+    const bankInAmt  = Number(entry.bank_in)  || 0
+    const bankOutAmt = Number(entry.bank_out) || 0
+    const entryAmt = bankInAmt > 0 ? bankInAmt : bankOutAmt
+    const entryDir = bankInAmt > 0 ? 'in' : 'out'
+    if (entryAmt <= 0) continue
+
+    const localCandidates = candidateLines.filter(l =>
+      !usedLines.has(l._idx) &&
+      l.direction === entryDir &&
+      daysBetween(l.date, entry.date) <= aggregateDayWindow
+    )
+    if (localCandidates.length < 2) continue
+
+    const combo = findBestCombination(localCandidates, entryAmt, aggregateMaxParts, tolerance)
+    if (!combo) continue
+
+    combo.forEach(l => usedLines.add(l._idx))
+    usedEntries.add(entry._idx)
+    matchedCount++
+    matchedEntries.push({ ...entry, matchType: 'aggregate', matchedLines: combo })
+  }
+
   return {
     matchedCount,
-    unmatchedLines:   candidateLines.filter(l => !usedLines.has(l._idx)),   // غير مسجل بتحسيب
+    matchedEntries,                                                          // قيود طابقت بشكل مركّب (لعرض لاحق عند الحاجة)
+    unmatchedLines:   candidateLines.filter(l => !usedLines.has(l._idx)),     // غير مسجل بتحسيب
     unmatchedEntries: candidateEntries.filter(e => !usedEntries.has(e._idx)), // موجود بتحسيب لكن غير موجود بالبنك
   }
 }
