@@ -3,8 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 function todayStr() { return new Date().toISOString().split('T')[0] }
 const fmt = v => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })

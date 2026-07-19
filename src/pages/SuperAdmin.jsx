@@ -6,8 +6,8 @@ import { uploadAppLogo, fetchLogoUrl } from '../lib/appLogo'
 import { clearProjectCache } from '../lib/projectSettings'
 import staticLogo from '../assets/logo.png'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 const ROLES = [
   { value: 'owner',      label: 'المالك' },
@@ -75,7 +75,7 @@ function UserRow({ user, onSave, onDelete }) {
   )
 
   return (
-    <div className="flex items-center gap-3 py-2 border-b last:border-0" style={{ borderColor: '#f0ede6' }}>
+    <div className="flex items-center gap-3 py-2 border-b last:border-0" style={{ borderColor: '#D4E8E6' }}>
       <div className="flex-1 min-w-0">
         <span className="font-medium text-sm" style={{ color: NAVY }}>{user.name}</span>
         {user.branch && (
@@ -325,7 +325,7 @@ function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
           <button onClick={() => openTab('settings')}
             className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
             style={activeTab === 'settings'
-              ? { background: 'rgba(201,162,39,0.15)', color: GOLD }
+              ? { background: 'rgba(110,183,176,0.15)', color: GOLD }
               : { background: '#f5f4f0', color: '#64748b' }}>
             {activeTab === 'settings' ? '▲ إخفاء' : '⚙️ الأنواع'}
           </button>
@@ -346,7 +346,7 @@ function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
 
       {/* قسم المستخدمين */}
       {activeTab === 'users' && (
-        <div className="px-5 pb-5" style={{ borderTop: '1px solid #f0ede6' }}>
+        <div className="px-5 pb-5" style={{ borderTop: '1px solid #D4E8E6' }}>
           <div className="pt-4">
             {loadingUsers ? (
               <div className="flex justify-center py-4">
@@ -375,7 +375,7 @@ function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
 
       {/* قسم الإعدادات */}
       {activeTab === 'settings' && (
-        <div className="px-5 pb-5" style={{ borderTop: '1px solid #f0ede6' }}>
+        <div className="px-5 pb-5" style={{ borderTop: '1px solid #D4E8E6' }}>
           <div className="pt-4">
             <SettingsSection projectId={p.id} />
           </div>

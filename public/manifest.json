@@ -1,31 +1,25 @@
 {
   "name": "تحسيب",
   "short_name": "تحسيب",
-  "description": "خدمة المتابعة المالية الذكية",
+  "description": "إدارة مالية احترافية للمطاعم والمقاهي",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f2444",
-  "theme_color": "#0f2444",
-  "dir": "rtl",
+  "background_color": "#F4F8F7",
+  "theme_color": "#6EB7B0",
   "lang": "ar",
+  "dir": "rtl",
   "icons": [
     {
-      "src": "https://dnuxevxxgmgptptmuzdy.supabase.co/storage/v1/object/public/documents/__app__/logo.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "https://dnuxevxxgmgptptmuzdy.supabase.co/storage/v1/object/public/documents/__app__/logo.png",
+      "src": "/شعار تحسيب الجديد.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     },
     {
-      "src": "/favicon.png",
-      "sizes": "64x64",
+      "src": "/شعار تحسيب الجديد.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     }
   ]
 }

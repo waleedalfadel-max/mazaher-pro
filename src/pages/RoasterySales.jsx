@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { compressImage } from '../lib/imageCompress'
 
-const NAVY   = '#0f2444'
+const NAVY   = '#1B3A5C'
 const BRANCH = 'المحمصة الرئيسية'
 const MODEL  = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
 

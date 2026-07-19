@@ -1,4 +1,5 @@
 {
+  "alias": ["tahseeb-pro.vercel.app"],
   "functions": {
     "api/analyze.js": {
       "maxDuration": 30
