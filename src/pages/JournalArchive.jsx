@@ -2,21 +2,22 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 // اسم الحساب النقدي المرتبط بالحركة
 function getCashAccount(r) {
-  if ((r.cash_in    || 0) > 0 || (r.cash_out    || 0) > 0) return 'الصندوق النقدي'
-  if ((r.bank_in    || 0) > 0 || (r.bank_out    || 0) > 0) return 'الحساب البنكي'
-  if ((r.custody_in || 0) > 0 || (r.custody_out || 0) > 0) return 'العهدة'
+  if ((r.cash_in       || 0) > 0 || (r.cash_out       || 0) > 0) return 'الصندوق النقدي'
+  if ((r.bank_in       || 0) > 0 || (r.bank_out       || 0) > 0) return 'الحساب البنكي'
+  if ((r.custody_in    || 0) > 0 || (r.custody_out    || 0) > 0) return 'العهدة'
+  if ((r.receivable_in || 0) > 0 || (r.receivable_out || 0) > 0) return 'ذمم مدينة'
   return '—'
 }
 
 // حساب طرفَي القيد (مدين / دائن)
 function getEntryAccounts(r) {
-  const d = (r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)
-  const c = (r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)
+  const d = (r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0)
+  const c = (r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0)
   const amount     = d > 0 ? d : c
   const cashAcc    = getCashAccount(r)
   const typeLabel  = r.type || '—'
@@ -39,8 +40,8 @@ async function exportGroupPdf(group, fmt) {
   ])
 
   const { rows, date, journalNumber } = group
-  const totalDebit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
-  const totalCredit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
+  const totalDebit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0), 0)
+  const totalCredit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0), 0)
   const balance     = totalDebit - totalCredit
 
   const el = document.createElement('div')
@@ -177,7 +178,7 @@ export default function JournalArchive() {
     setLoading(true)
     let q = supabase
       .from('ledger_entries')
-      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,file_url,created_at')
+      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_in,receivable_out,total_amount,status,journal_number,file_url,created_at')
       .eq('project_id', pid)
       .not('status', 'eq', 'cancelled')
       .order('date', { ascending: false })
@@ -248,8 +249,8 @@ export default function JournalArchive() {
   const fmt = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
 
   function dayTotals(rows) {
-    const debit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
-    const credit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
+    const debit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0), 0)
+    const credit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0), 0)
     return { debit, credit, balance: debit - credit }
   }
 

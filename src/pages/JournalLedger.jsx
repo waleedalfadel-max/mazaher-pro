@@ -3,8 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage } from '../lib/storage'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 const now = new Date()
 const thisMonthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
@@ -143,7 +143,8 @@ function AttachModal({ entry, projectId, role, onClose, onAdded }) {
 
 // ── الصفحة الرئيسية ──────────────────────────────────────────────
 export default function JournalLedger() {
-  const { role, projectId } = useAuth()
+  const { role, projectId, isSuperAdmin } = useAuth()
+  const canEdit = role === 'accountant' || role === 'owner' || isSuperAdmin
   const [rows, setRows]             = useState([])
   const [loading, setLoading]       = useState(true)
   const [filter, setFilter]         = useState({ from: thisMonthStart, to: today })
@@ -342,14 +343,14 @@ export default function JournalLedger() {
                 <th className="px-4 py-3 text-right text-xs font-bold text-white">الحالة</th>
                 <th className="px-4 py-3 text-center text-xs font-bold" style={{ color: GOLD }}>مستند</th>
                 <th className="px-4 py-3 text-center text-xs font-bold" style={{ color: GOLD }}>مرفقات</th>
-                {(role === 'accountant' || role === 'owner') && (
+                {canEdit && (
                   <th className="px-4 py-3 text-center text-xs font-bold text-white w-16">إلغاء</th>
                 )}
               </tr>
             </thead>
             <tbody className="divide-y" style={{ borderColor: '#f5f4f0' }}>
               {visibleRows.length === 0 && (
-                <tr><td colSpan={(role === 'accountant' || role === 'owner') ? 10 : 9}
+                <tr><td colSpan={canEdit ? 10 : 9}
                   className="text-center py-12 text-slate-400">
                   {search ? 'لا توجد نتائج للبحث' : 'لا توجد قيود في هذه الفترة'}
                 </td></tr>
@@ -412,7 +413,7 @@ export default function JournalLedger() {
                     </td>
 
                     {/* زر الإلغاء */}
-                    {(role === 'accountant' || role === 'owner') && (
+                    {canEdit && (
                       <td className="px-4 py-3 text-center">
                         {r.status !== 'cancelled' ? (
                           <button
@@ -443,7 +444,7 @@ export default function JournalLedger() {
                   <td className="px-4 py-3 text-right font-bold tabular-nums text-xs" style={{ color: '#86efac' }}>{fmt(totals.debit)}</td>
                   <td className="px-4 py-3 text-right font-bold tabular-nums text-xs" style={{ color: '#fca5a5' }}>{fmt(totals.credit)}</td>
                   <td/><td/><td/>
-                  {(role === 'accountant' || role === 'owner') && <td/>}
+                  {canEdit && <td/>}
                 </tr>
               </tfoot>
             )}

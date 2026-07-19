@@ -1,10 +1,17 @@
 import { supabase } from './supabase'
 
-const FALLBACK_TYPES = [
+export const FALLBACK_TYPES = [
   '💵 مبيعات كاش','🏦 مبيعات شبكة','🛒 مصروفات تشغيلية','💰 مصروفات ثابتة',
   '👤 صرف عهدة','🏛️ ضريبة القيمة المضافة',
   '🔄 تحويل داخلي — صرف عهدة','🏧 تحويل داخلي — إيداع نقدي','📥 تحصيل جملة',
+  '📥 تحصيل ذمم هنقر','📥 تحصيل ذمم جاهز','📥 تحصيل ذمم كيتا','📥 تحصيل ذمم مرسول',
+  '🛵 مبيعات مرسول',
 ]
+
+// يكشف نصوص مخزنة كـ ??? بسبب encoding خاطئ
+export function isCorrupted(label) {
+  return !label || label.includes('?') || /^[\x00-\x7F]+$/.test(label.replace(/\s/g, ''))
+}
 
 const _cache = {}
 
@@ -22,7 +29,10 @@ export async function getTransactionTypes(projectId) {
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const types = data?.settings?.transaction_types?.map(t => t.label) || FALLBACK_TYPES
+  const raw = data?.settings?.transaction_types?.map(t => t.label) || []
+  // إذا وُجدت labels سليمة في Supabase استخدمها، وإلا ارجع FALLBACK_TYPES
+  const valid = raw.filter(l => !isCorrupted(l))
+  const types = valid.length > 0 ? valid : FALLBACK_TYPES
   _cache[projectId] = types
   return types
 }

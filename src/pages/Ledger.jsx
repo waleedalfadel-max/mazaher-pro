@@ -4,8 +4,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { getTransactionTypes } from '../lib/projectSettings'
 
-const NAVY = '#0f2444'
-const GOLD = '#c9a227'
+const NAVY = '#1B3A5C'
+const GOLD = '#6EB7B0'
 
 const STATUS_BADGE = {
   approved:  'bg-green-100 text-green-700',
@@ -74,22 +74,25 @@ export default function Ledger() {
 
   // Compute running balances for all non-cancelled entries (ascending order)
   const enriched = useMemo(() => {
-    let cash = 0, bank = 0, custody = 0
+    let cash = 0, bank = 0, custody = 0, receivable = 0
     return allRows.map(r => {
       if (r.status !== 'cancelled') {
-        cash    += (r.cash_in    || 0) - (r.cash_out    || 0)
-        bank    += (r.bank_in    || 0) - (r.bank_out    || 0)
-        custody += (r.custody_in || 0) - (r.custody_out || 0)
-        return { ...r, _cashBal: cash, _bankBal: bank, _custodyBal: custody }
+        cash       += (r.cash_in       || 0) - (r.cash_out       || 0)
+        bank       += (r.bank_in       || 0) - (r.bank_out       || 0)
+        custody    += (r.custody_in    || 0) - (r.custody_out    || 0)
+        receivable += (r.receivable_in || 0) - (r.receivable_out || 0)
+        return { ...r, _cashBal: cash, _bankBal: bank, _custodyBal: custody, _receivableBal: receivable }
       }
-      return { ...r, _cashBal: null, _bankBal: null, _custodyBal: null }
+      return { ...r, _cashBal: null, _bankBal: null, _custodyBal: null, _receivableBal: null }
     })
   }, [allRows])
 
   // Current balance = last non-cancelled row's running balance
   const currentBal = useMemo(() => {
     const last = [...enriched].reverse().find(r => r._cashBal !== null)
-    return last ? { cash: last._cashBal, bank: last._bankBal, custody: last._custodyBal } : { cash: 0, bank: 0, custody: 0 }
+    return last
+      ? { cash: last._cashBal, bank: last._bankBal, custody: last._custodyBal, receivable: last._receivableBal }
+      : { cash: 0, bank: 0, custody: 0, receivable: 0 }
   }, [enriched])
 
   // Apply date + type filters, then reverse for newest-first display
@@ -104,14 +107,17 @@ export default function Ledger() {
   async function saveEdit() {
     if (!editRow) return
     await supabase.from('ledger_entries').update({
-      type:        editRow.type,
-      description: editRow.description,
-      cash_out:    Number(editRow.cash_out)    || 0,
-      cash_in:     Number(editRow.cash_in)     || 0,
-      bank_out:    Number(editRow.bank_out)    || 0,
-      bank_in:     Number(editRow.bank_in)     || 0,
-      custody_out: Number(editRow.custody_out) || 0,
-      custody_in:  Number(editRow.custody_in)  || 0,
+      date:           editRow.date,
+      type:           editRow.type,
+      description:    editRow.description,
+      cash_out:       Number(editRow.cash_out)       || 0,
+      cash_in:        Number(editRow.cash_in)        || 0,
+      bank_out:       Number(editRow.bank_out)       || 0,
+      bank_in:        Number(editRow.bank_in)        || 0,
+      custody_out:    Number(editRow.custody_out)    || 0,
+      custody_in:     Number(editRow.custody_in)     || 0,
+      receivable_out: Number(editRow.receivable_out) || 0,
+      receivable_in:  Number(editRow.receivable_in)  || 0,
     }).eq('id', editRow.id)
     setEditRow(null)
     load(projectId)
@@ -131,23 +137,25 @@ export default function Ledger() {
     if (!newRow || !projectId) return
     setSaving(true)
     const jn = await getOrCreateJournalNumber(projectId, newRow.date)
-    const amounts = ['cash_in','cash_out','bank_in','bank_out','custody_in','custody_out']
+    const amounts = ['cash_in','cash_out','bank_in','bank_out','custody_in','custody_out','receivable_in','receivable_out']
       .map(k => Number(newRow[k]) || 0)
     const total = Math.max(...amounts)
     const { error } = await supabase.from('ledger_entries').insert({
-      project_id:    projectId,
-      date:          newRow.date,
-      type:          newRow.type,
-      description:   newRow.description,
-      cash_in:       Number(newRow.cash_in)     || 0,
-      cash_out:      Number(newRow.cash_out)    || 0,
-      bank_in:       Number(newRow.bank_in)     || 0,
-      bank_out:      Number(newRow.bank_out)    || 0,
-      custody_in:    Number(newRow.custody_in)  || 0,
-      custody_out:   Number(newRow.custody_out) || 0,
-      total_amount:  total,
-      status:        'approved',
-      file_url:      '',
+      project_id:     projectId,
+      date:           newRow.date,
+      type:           newRow.type,
+      description:    newRow.description,
+      cash_in:        Number(newRow.cash_in)        || 0,
+      cash_out:       Number(newRow.cash_out)       || 0,
+      bank_in:        Number(newRow.bank_in)        || 0,
+      bank_out:       Number(newRow.bank_out)       || 0,
+      custody_in:     Number(newRow.custody_in)     || 0,
+      custody_out:    Number(newRow.custody_out)    || 0,
+      receivable_in:  Number(newRow.receivable_in)  || 0,
+      receivable_out: Number(newRow.receivable_out) || 0,
+      total_amount:   total,
+      status:         'approved',
+      file_url:       '',
       journal_number: jn,
     })
     setSaving(false)
@@ -204,7 +212,7 @@ export default function Ledger() {
           {canEdit && (
             <div className="flex-1 min-w-[8rem]">
               <div className="mb-1 h-4" />
-              <button onClick={() => setNewRow({ date: new Date().toISOString().split('T')[0], type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'' })}
+              <button onClick={() => setNewRow({ date: new Date().toISOString().split('T')[0], type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'', receivable_in:'', receivable_out:'' })}
                 className="w-full px-4 py-1.5 text-sm font-bold rounded-xl transition-all text-center"
                 style={{ background: NAVY, color: '#fff' }}>
                 + إضافة قيد
@@ -229,19 +237,21 @@ export default function Ledger() {
                   'خرج صندوق','دخل صندوق',
                   'خرج بنك','دخل بنك',
                   'خرج عهدة','دخل عهدة',
+                  'خرج ذمم','دخل ذمم',
                 ].map(h => (
                   <th key={h} className="px-3 py-3 text-right text-xs font-semibold whitespace-nowrap">{h}</th>
                 ))}
                 <th className="px-3 py-3 text-right text-xs font-semibold text-green-300 whitespace-nowrap">رصيد صندوق</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold text-blue-300 whitespace-nowrap">رصيد بنك</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold text-amber-300 whitespace-nowrap">رصيد عهدة</th>
+                <th className="px-3 py-3 text-right text-xs font-semibold text-purple-300 whitespace-nowrap">رصيد ذمم</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold">الحالة</th>
                 <th className="px-3 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filteredRows.length === 0 && (
-                <tr><td colSpan={14} className="text-center py-10 text-slate-400">لا توجد بيانات</td></tr>
+                <tr><td colSpan={17} className="text-center py-10 text-slate-400">لا توجد بيانات</td></tr>
               )}
               {filteredRows.map(r => (
                 <tr key={r.id} className={`hover:bg-slate-50 transition-colors ${r.status === 'cancelled' ? 'opacity-50' : ''}`}>
@@ -252,8 +262,10 @@ export default function Ledger() {
                   <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.cash_in    > 0 ? fmt(r.cash_in)    : '—'}</td>
                   <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.bank_out    > 0 ? fmt(r.bank_out)    : '—'}</td>
                   <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.bank_in    > 0 ? fmt(r.bank_in)    : '—'}</td>
-                  <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.custody_out > 0 ? fmt(r.custody_out) : '—'}</td>
-                  <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.custody_in > 0 ? fmt(r.custody_in) : '—'}</td>
+                  <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.custody_out    > 0 ? fmt(r.custody_out)    : '—'}</td>
+                  <td className="px-3 py-3 text-green-600 tabular-nums text-xs text-right">{r.custody_in     > 0 ? fmt(r.custody_in)     : '—'}</td>
+                  <td className="px-3 py-3 text-red-600   tabular-nums text-xs text-right">{r.receivable_out > 0 ? fmt(r.receivable_out) : '—'}</td>
+                  <td className="px-3 py-3 text-purple-600 tabular-nums text-xs text-right">{r.receivable_in > 0 ? fmt(r.receivable_in)  : '—'}</td>
                   {/* Running balances */}
                   <td className={`px-3 py-3 tabular-nums text-xs text-right font-semibold font-mono ${
                     r._cashBal == null ? 'text-slate-300' : r._cashBal < 0 ? 'text-red-600' : 'text-green-600'
@@ -264,6 +276,9 @@ export default function Ledger() {
                   <td className={`px-3 py-3 tabular-nums text-xs text-right font-semibold font-mono ${
                     r._custodyBal == null ? 'text-slate-300' : r._custodyBal < 0 ? 'text-red-600' : 'text-amber-600'
                   }`}>{fmtBal(r._custodyBal)}</td>
+                  <td className={`px-3 py-3 tabular-nums text-xs text-right font-semibold font-mono ${
+                    r._receivableBal == null ? 'text-slate-300' : r._receivableBal < 0 ? 'text-red-600' : 'text-purple-600'
+                  }`}>{fmtBal(r._receivableBal)}</td>
                   <td className="px-3 py-3">
                     <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_BADGE[r.status] || 'bg-slate-100 text-slate-500'}`}>
                       {STATUS_LABEL[r.status] || r.status}
@@ -315,10 +330,10 @@ export default function Ledger() {
                 <input value={newRow.description} onChange={e => setNewRow(r => ({ ...r, description: e.target.value }))}
                   placeholder="اختياري" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
               </div>
-              {['cash_out','cash_in','bank_out','bank_in','custody_out','custody_in'].map(k => (
+              {['cash_out','cash_in','bank_out','bank_in','custody_out','custody_in','receivable_out','receivable_in'].map(k => (
                 <div key={k}>
                   <label className="text-xs text-slate-500 block mb-1">
-                    {{ cash_out:'خرج صندوق', cash_in:'دخل صندوق', bank_out:'خرج بنك', bank_in:'دخل بنك', custody_out:'خرج عهدة', custody_in:'دخل عهدة' }[k]}
+                    {{ cash_out:'خرج صندوق', cash_in:'دخل صندوق', bank_out:'خرج بنك', bank_in:'دخل بنك', custody_out:'خرج عهدة', custody_in:'دخل عهدة', receivable_out:'خرج ذمم', receivable_in:'دخل ذمم' }[k]}
                   </label>
                   <input type="number" value={newRow[k]} onChange={e => setNewRow(r => ({ ...r, [k]: e.target.value }))}
                     placeholder="0" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
@@ -343,7 +358,12 @@ export default function Ledger() {
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4">
             <h3 className="text-lg font-bold text-slate-800">تعديل الحركة</h3>
             <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">التاريخ</label>
+                <input type="date" value={editRow.date || ''} onChange={e => setEditRow(r => ({ ...r, date: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              </div>
+              <div>
                 <label className="text-xs text-slate-500 block mb-1">النوع</label>
                 <select value={editRow.type || ''} onChange={e => setEditRow(r => ({ ...r, type: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
@@ -356,10 +376,10 @@ export default function Ledger() {
                 <input value={editRow.description || ''} onChange={e => setEditRow(r => ({ ...r, description: e.target.value }))}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
               </div>
-              {['cash_out','cash_in','bank_out','bank_in','custody_out','custody_in'].map(k => (
+              {['cash_out','cash_in','bank_out','bank_in','custody_out','custody_in','receivable_out','receivable_in'].map(k => (
                 <div key={k}>
                   <label className="text-xs text-slate-500 block mb-1">
-                    {{ cash_out:'خرج صندوق', cash_in:'دخل صندوق', bank_out:'خرج بنك', bank_in:'دخل بنك', custody_out:'خرج عهدة', custody_in:'دخل عهدة' }[k]}
+                    {{ cash_out:'خرج صندوق', cash_in:'دخل صندوق', bank_out:'خرج بنك', bank_in:'دخل بنك', custody_out:'خرج عهدة', custody_in:'دخل عهدة', receivable_out:'خرج ذمم', receivable_in:'دخل ذمم' }[k]}
                   </label>
                   <input type="number" value={editRow[k] || ''} onChange={e => setEditRow(r => ({ ...r, [k]: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
