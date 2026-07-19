@@ -598,6 +598,7 @@ export default function PendingDocuments() {
       ) : docs.map(doc => (
         <DocCard key={doc.id} doc={doc}
           projName={isSuperAdmin ? (projMap[doc.project_id] || '') : ''}
+          branchProjectName={projMap[doc.project_id] || projectName || ''}
           onLoadImage={() => loadImage(doc)}
           onAnalyze={() => analyze(doc)}
           onApprove={() => approve(doc)}
@@ -735,9 +736,16 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
 }
 
 // ── DocCard ──────────────────────────────────────────────────────────────────
-function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, payableSuppliers, ROLE_AR, ROLE_COLOR }) {
+function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, payableSuppliers, ROLE_AR, ROLE_COLOR }) {
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
+  const hideBranchPicker = branchProjectName?.includes('بـ عسل')
+
+  useEffect(() => {
+    if (hideBranchPicker && !doc.branch && branches.length > 0) {
+      onBranchChange(branches[0])
+    }
+  }, [hideBranchPicker, doc.branch, branches])
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
   const busy          = ['analyzing','approving','rejecting'].includes(doc._state)
   const isImage  = doc.file_type?.startsWith('image/')
@@ -1035,7 +1043,7 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
             </div>
 
             {/* ── منتقي الفرع — يظهر إذا لم يكن للمستند فرع ── */}
-            {!doc.branch && branches.length > 0 && (
+            {!doc.branch && branches.length > 0 && !hideBranchPicker && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3">
                 <span className="text-amber-600 text-sm shrink-0">🏢 الفرع</span>
                 <select

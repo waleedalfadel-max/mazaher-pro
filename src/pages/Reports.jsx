@@ -17,13 +17,6 @@ const QUICK_PERIODS = [
 
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
 
-const TABS = [
-  { key: 'income',    label: 'قائمة الدخل',         icon: '📊' },
-  { key: 'purchases', label: 'المصروفات',             icon: '🛒' },
-  { key: 'vat',       label: 'الضريبة',              icon: '🏛️' },
-  { key: 'balance',   label: 'الأرصدة',              icon: '⚖️' },
-]
-
 function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
@@ -87,15 +80,8 @@ function IncomeRow({ label, value, bold, indent, color, line }) {
   )
 }
 
-const OWNER_TABS = [
-  { key: 'sales',     label: 'المبيعات',       icon: '💵' },
-  { key: 'purchases', label: 'المصروفات',       icon: '🛒' },
-  { key: 'vat',       label: 'الضريبة',         icon: '🏛️' },
-]
-
 const ALL_TABS = [
   { key: 'sales',     label: 'المبيعات',    icon: '💵' },
-  { key: 'income',    label: 'قائمة الدخل', icon: '📊' },
   { key: 'purchases', label: 'المصروفات',   icon: '🛒' },
   { key: 'vat',       label: 'الضريبة',     icon: '🏛️' },
   { key: 'balance',   label: 'الأرصدة',     icon: '⚖️' },
@@ -829,43 +815,6 @@ export default function Reports() {
               </div>
             )
           })()}
-
-          {/* ══════════════════ TAB 1: قائمة الدخل ══════════════════ */}
-          {activeTab === 'income' && (
-            <div className="space-y-4">
-              {engineSummary ? (
-                <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-                  <div className="px-5 py-4" style={{ background: NAVY }}>
-                    <h2 className="font-bold text-white text-sm">📊 قائمة الدخل</h2>
-                    <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
-                  </div>
-                  <div className="p-5">
-                    <IncomeRow label="مبيعات كاش"               value={engineSummary.cashSales}    indent />
-                    <IncomeRow label="مبيعات شبكة / إلكترونية" value={engineSummary.networkSales} indent />
-                    <IncomeRow label="إجمالي المبيعات"          value={engineSummary.totalSales}   bold line color="#1d4ed8" />
-                    {(engineSummary.cogs > 0) ? (
-                      <>
-                        <IncomeRow label="🥩 تكلفة البضاعة المباعة" value={-engineSummary.cogs} indent color="#dc2626" />
-                        <IncomeRow label={`💰 مجمل الربح — هامش ${engineSummary.totalSales > 0 ? (engineSummary.grossProfit / engineSummary.totalSales * 100).toFixed(1) : 0}%`}
-                          value={engineSummary.grossProfit} bold line
-                          color={engineSummary.grossProfit >= 0 ? '#0369a1' : '#dc2626'} />
-                        <IncomeRow label="🛒 المصروفات التشغيلية" value={-engineSummary.operatingExpenses} indent color="#dc2626" />
-                      </>
-                    ) : (
-                      <IncomeRow label="🛒 إجمالي المصروفات" value={-engineSummary.totalExpenses} indent color="#dc2626" />
-                    )}
-                    <IncomeRow label="✅ صافي الربح"             value={engineSummary.netProfit}    bold line
-                      color={engineSummary.netProfit >= 0 ? '#16a34a' : '#dc2626'} />
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white rounded-2xl p-12 text-center text-slate-400 shadow-sm" style={cardBorder}>
-                  <div className="text-3xl mb-2">📊</div>
-                  <p className="text-sm">لا توجد بيانات في هذه الفترة</p>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* ══════════════════ TAB 2: ضريبة القيمة المضافة ══════════════════ */}
           {activeTab === 'vat' && (

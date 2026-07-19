@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
+import { uploadToStorage } from '../lib/storage'
 
 // v1: "بـ عسل" فقط حالياً — باقي المشاريع ما عندها بيانات موردين بعد
 const TARGET_PROJECT = 'بـ عسل'
@@ -78,20 +79,22 @@ export default function PayableSuppliers() {
 
   function openPay(invoice) {
     setError('')
-    setPayModal({ invoice, amount: invoice.remaining.toFixed(2), paySource: '' })
+    setPayModal({ invoice, amount: invoice.remaining.toFixed(2), paySource: '', proofFile: null })
   }
 
   async function submitPayment() {
     if (!payModal) return
-    const { invoice, amount, paySource } = payModal
+    const { invoice, amount, paySource, proofFile } = payModal
     const amt = Number(amount) || 0
     if (amt <= 0) { setError('أدخل مبلغاً صحيحاً'); return }
     if (amt > invoice.remaining + 0.01) { setError('المبلغ أكبر من المتبقي على هذه الفاتورة'); return }
     if (!paySource) { setError('اختر مصدر الدفع'); return }
+    if (!proofFile) { setError('ارفع مستند إثبات السداد'); return }
 
     setBusy(true)
     setError('')
     try {
+      const fileUrl = await uploadToStorage(proofFile, projectId)
       const jn = await getOrCreateJournalNumber(projectId, todayStr())
       const { error: insErr } = await supabase.from('ledger_entries').insert({
         project_id: projectId, date: todayStr(), type: invoice.type,
@@ -105,7 +108,7 @@ export default function PayableSuppliers() {
         supplier_id: invoice.supplier_id, paid_invoice_id: invoice.id,
         category_main: invoice.category_main || null, category_sub: invoice.category_sub || null,
         vat_amount: 0, total_amount: amt, status: 'approved',
-        journal_number: jn, branch: null, file_url: '',
+        journal_number: jn, branch: null, file_url: fileUrl,
       })
       if (insErr) throw new Error(insErr.message)
       setPayModal(null)
@@ -208,8 +211,18 @@ export default function PayableSuppliers() {
               </select>
             </div>
 
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">مستند إثبات السداد (إلزامي)</label>
+              <input type="file" accept="image/*,.pdf"
+                onChange={e => setPayModal(m => ({ ...m, proofFile: e.target.files?.[0] || null }))}
+                className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 file:ml-2 file:px-2 file:py-1 file:rounded-md file:border-0 file:bg-blue-50 file:text-blue-700 file:text-xs file:font-semibold"/>
+              {payModal.proofFile && (
+                <div className="text-xs text-green-600 mt-1">✅ {payModal.proofFile.name}</div>
+              )}
+            </div>
+
             <div className="flex gap-2">
-              <button onClick={submitPayment} disabled={busy}
+              <button onClick={submitPayment} disabled={busy || !payModal.proofFile}
                 className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50">
                 {busy ? '...' : '✅ تأكيد السداد'}
               </button>
