@@ -98,7 +98,7 @@ export async function getFinancialSummary(projectId, fromDate, toDate) {
   // المصروفات الحقيقية فقط (بدون مسحوبات / أقساط / قروض / ضريبة)
   const realExpenseEntries = expenseEntries.filter(isRealExpense)
   const sumOut = entries => entries.reduce((s, e) =>
-    s + (Number(e.cash_out) || 0) + (Number(e.bank_out) || 0) + (Number(e.custody_out) || 0), 0)
+    s + (Number(e.cash_out) || 0) + (Number(e.bank_out) || 0) + (Number(e.custody_out) || 0) + (Number(e.receivable_out) || 0), 0)
 
   const totalExpenses = sumOut(realExpenseEntries)
 

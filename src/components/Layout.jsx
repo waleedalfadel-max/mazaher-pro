@@ -45,6 +45,7 @@ export default function Layout({ children }) {
     { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['accountant', 'superadmin'] },
     { to: '/bank-reconciliation', label: 'المطابقة البنكية', icon: '🧮', roles: ['accountant', 'superadmin'] },
     { to: '/payable-suppliers', label: 'الذمم الدائنة', icon: '🏪', roles: ['accountant', 'superadmin'], cond: n => (n || '').includes('بـ عسل') },
+    { to: '/app-reconciliation', label: 'مطابقة التطبيقات', icon: '📱', roles: ['accountant', 'superadmin'], cond: n => (n || '').includes('بـ عسل') },
     { to: '/pending',         label: 'مستندات جديدة',    icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
     { to: '/users',           label: 'المستخدمون',       icon: '👥', roles: ['accountant'] },
     { to: '/admin',           label: 'إدارة العملاء',    icon: '⚙️', roles: ['superadmin'] },

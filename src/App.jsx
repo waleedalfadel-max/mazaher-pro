@@ -20,6 +20,7 @@ import Suppliers from './pages/Suppliers'
 import RoasterySales from './pages/RoasterySales'
 import BankReconciliation from './pages/BankReconciliation'
 import PayableSuppliers from './pages/PayableSuppliers'
+import AppReconciliation from './pages/AppReconciliation'
 
 function TrialFormRedirect() {
   window.location.replace('/trial-form.html' + window.location.search)
@@ -97,6 +98,12 @@ function AppRoutes() {
       <Route path="/payable-suppliers" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <PayableSuppliers />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/app-reconciliation" element={
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
+          <AppReconciliation />
         </ProtectedRoute>
       } />
 

@@ -413,3 +413,74 @@ JSON فقط بدون أي نص أو markdown قبله أو بعده.`
 
   return Array.isArray(result.lines) ? result.lines : []
 }
+
+// يحلّل كشف/إيصال تحويل من تطبيق توصيل (صورة أو PDF) ويستخرج المبيعات المعلَنة،
+// العمولة، الضريبة، أي استقطاعات أخرى، وصافي المبلغ المحوّل فعلياً — انظر src/pages/AppReconciliation.jsx
+export async function analyzeAppStatement(fileBase64, mimeType, fileName) {
+  const mime    = normalizeMimeType(mimeType, fileName)
+  const isImage = VALID_IMAGE_TYPES.includes(mime)
+  const isPdf   = mime === 'application/pdf'
+
+  if (!isImage && !isPdf) {
+    throw new Error(`نوع الملف غير مدعوم: ${mime} — المدعوم: PDF أو صورة (JPEG/PNG/WEBP/GIF)`)
+  }
+
+  const contentBlock = isImage
+    ? { type: 'image',    source: { type: 'base64', media_type: mime,              data: fileBase64 } }
+    : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: fileBase64 } }
+
+  const prompt = `أنت محلل مالي خبير. المرفق كشف أو إيصال تحويل من تطبيق توصيل طلبات، من ملف اسمه: ${fileName}.
+
+استخرج من هذا الكشف:
+- reportedSales: إجمالي المبيعات كما يذكرها التطبيق نفسه بالكشف (رقم) — إذا غير مذكور صراحة اجعله null
+- commission: إجمالي العمولة التي خصمها التطبيق (رقم) — إذا غير مذكور ضعه 0
+- tax: إجمالي الضريبة على العمولة (رقم) — إذا غير مذكور ضعه 0
+- otherDeductions: أي استقطاعات أو تعويضات أخرى مذكورة بالكشف، كل واحدة بوصفها ومبلغها — مصفوفة [{"description":"...","amount":0.00}] — إذا لا يوجد اتركها []
+- netTransferred: صافي المبلغ المحوّل فعلياً للحساب البنكي كما هو مذكور بالكشف (الرقم الأهم — يجب أن يكون موجوداً دائماً)
+
+أعد فقط: {"reportedSales":0.00,"commission":0.00,"tax":0.00,"otherDeductions":[],"netTransferred":0.00}
+JSON فقط بدون أي نص أو markdown قبله أو بعده.`
+
+  const res = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 2000,
+      system: 'أجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون ```json أو أي markdown، بدون شرح.',
+      messages: [{
+        role: 'user',
+        content: [contentBlock, { type: 'text', text: prompt }],
+      }],
+    }),
+  })
+
+  if (!res.ok) {
+    let detail = ''
+    try { const e = await res.json(); detail = e?.error?.message || JSON.stringify(e) } catch {}
+    throw new Error(`Claude API error ${res.status}: ${detail}`)
+  }
+
+  const data = await res.json()
+
+  if (data.error === 'CLAUDE_API_ERROR') {
+    const msg = data.claudeError?.message || JSON.stringify(data.claudeError)
+    throw new Error(`خطأ من Claude API: ${msg}`)
+  }
+  if (data.error === 'JSON_PARSE_ERROR') {
+    throw new Error(`خطأ في تحليل رد كشف التطبيق:\n${data.parseError}`)
+  }
+
+  const text  = data.content[0].text.trim()
+  const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
+  const result = extractJSON(clean)
+  if (!result) throw new Error('لا يوجد JSON صالح في رد تحليل كشف التطبيق')
+
+  return {
+    reportedSales:   result.reportedSales != null ? Number(result.reportedSales) : null,
+    commission:      Number(result.commission) || 0,
+    tax:             Number(result.tax) || 0,
+    otherDeductions: Array.isArray(result.otherDeductions) ? result.otherDeductions : [],
+    netTransferred:  Number(result.netTransferred) || 0,
+  }
+}
