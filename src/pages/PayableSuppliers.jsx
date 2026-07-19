@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
@@ -12,6 +13,7 @@ const todayStr = () => new Date().toISOString().split('T')[0]
 
 export default function PayableSuppliers() {
   const { projectId, projectName } = useAuth()
+  const [searchParams] = useSearchParams()
   const [suppliers, setSuppliers] = useState([])
   const [entries, setEntries]     = useState([])
   const [loading, setLoading]     = useState(true)
@@ -27,6 +29,13 @@ export default function PayableSuppliers() {
     if (!projectId) return
     load()
   }, [projectId])
+
+  useEffect(() => {
+    const supplierParam = searchParams.get('supplier')
+    if (supplierParam && suppliers.some(s => s.id === supplierParam)) {
+      setExpandedId(supplierParam)
+    }
+  }, [searchParams, suppliers])
 
   async function load() {
     setLoading(true)

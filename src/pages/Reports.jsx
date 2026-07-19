@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings, isCorrupted } from '../lib/projectSettings'
 import { getFinancialSummary, isSales, isExcluded, isCOGS, isWithdrawal, isDebt } from '../lib/financialEngine'
+import { aggregateSupplierBalances } from '../lib/payableBalances'
 
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
@@ -85,11 +87,14 @@ const ALL_TABS = [
   { key: 'purchases', label: 'المصروفات',   icon: '🛒' },
   { key: 'vat',       label: 'الضريبة',     icon: '🏛️' },
   { key: 'balance',   label: 'الأرصدة',     icon: '⚖️' },
+  { key: 'payables',  label: 'الذمم',       icon: '🧾' },
 ]
 
 export default function Reports() {
-  const { projectId, role } = useAuth()
+  const { projectId, role, projectName } = useAuth()
+  const navigate = useNavigate()
   const isOwner = role === 'owner'
+  const isBaAsal = (projectName || '').includes('بـ عسل')
   const init = getPeriodRange('month')
   const [from, setFrom]                 = useState(init.from)
   const [to,   setTo]                   = useState(init.to)
@@ -113,6 +118,8 @@ export default function Reports() {
   const [pickerYear,      setPickerYear]      = useState(new Date().getFullYear())
   const [pickerMonth,     setPickerMonth]     = useState(new Date().getMonth() + 1)
   const [prevPeriodSales, setPrevPeriodSales] = useState(null)
+  const [payableBalance,     setPayableBalance]     = useState(0)
+  const [payableSupplierRows, setPayableSupplierRows] = useState([])
   const [prevEntries,     setPrevEntries]     = useState([])
   const pdfRef          = useRef()
   const docsRowRefs     = useRef([])
@@ -200,6 +207,7 @@ export default function Reports() {
       { data: purchaseDocsData },
       { data: allBranchSalesData },
       { data: prevEntriesData },
+      { data: payableSuppliersData },
       engineResult,
     ] = await Promise.all([
       applyBranch(supabase.from('sales').select('cash_sales,network_sales')
@@ -211,7 +219,7 @@ export default function Reports() {
       supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
         .eq('project_id', projectId).eq('status','approved')
         .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59').order('uploaded_at'),
-      applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out')
+      applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id')
         .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled')),
       supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
         .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate),
@@ -225,6 +233,7 @@ export default function Reports() {
       applyBranch(supabase.from('ledger_entries').select('type,date,cash_in,bank_in,receivable_in')
         .eq('project_id', projectId).neq('status','cancelled')
         .gte('date', prevFromD).lte('date', prevToD)),
+      supabase.from('payable_suppliers').select('id,name').eq('project_id', projectId).order('name'),
       getFinancialSummary(projectId, fromDate, toDate),
     ])
     setEngineSummary(engineResult)
@@ -284,6 +293,11 @@ export default function Reports() {
       bank:    at.reduce((s,r) => s+(r.bank_in||0)-(r.bank_out||0), 0),
       custody: at.reduce((s,r) => s+(r.custody_in||0)-(r.custody_out||0), 0),
     })
+    setPayableBalance(at.reduce((s,r) => s+(r.payable_in||0)-(r.payable_out||0), 0))
+    setPayableSupplierRows(
+      aggregateSupplierBalances(payableSuppliersData || [], at)
+        .sort((a, b) => b.balance - a.balance)
+    )
     const prevSalesTotal = (prevEntriesData || [])
       .filter(e => isSales(e.type))
       .reduce((s, e) => s + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0), 0)
@@ -501,7 +515,7 @@ export default function Reports() {
         <>
           {/* ── تبويبات ── */}
           {(() => {
-            const visibleTabs = ALL_TABS
+            const visibleTabs = ALL_TABS.filter(t => t.key !== 'payables' || isBaAsal)
             return (
               <div className="flex flex-row w-full gap-1 p-1 rounded-2xl" style={{ background: '#e8e5dc' }}>
                 {visibleTabs.map(t => (
@@ -957,6 +971,49 @@ export default function Reports() {
                   <IncomeRow label="صافي الفترة"             value={data.totalIn - data.totalOut}   bold line color={data.totalIn>=data.totalOut?'#1d4ed8':'#dc2626'} />
                   <IncomeRow label="إجمالي الأرصدة النقدية"  value={balances.cash+balances.bank+balances.custody} bold line />
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════ TAB: الذمم الدائنة (بـ عسل فقط) ══════════════════ */}
+          {activeTab === 'payables' && isBaAsal && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <KpiCard label="إجمالي الذمم الدائنة" icon="🧾" value={payableBalance} />
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
+                <div className="px-5 py-4" style={{ background: NAVY }}>
+                  <h2 className="font-bold text-white text-sm">🧾 أرصدة الموردين</h2>
+                </div>
+                {payableSupplierRows.length === 0 ? (
+                  <div className="p-10 text-center text-slate-400 text-sm">لا يوجد موردون بعد</div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-slate-400 border-b" style={{ borderColor: '#e8e5dc' }}>
+                        <th className="text-right py-3 px-5 font-medium">المورد</th>
+                        <th className="text-left py-3 px-5 font-medium">إجمالي الفواتير</th>
+                        <th className="text-left py-3 px-5 font-medium">إجمالي المسدد</th>
+                        <th className="text-left py-3 px-5 font-medium">الرصيد المتبقي</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {payableSupplierRows.map(r => (
+                        <tr key={r.id} className="border-b hover:bg-slate-50 cursor-pointer transition-colors"
+                          style={{ borderColor: '#f1f5f9' }}
+                          onClick={() => navigate(`/payable-suppliers?supplier=${r.id}`)}>
+                          <td className="py-3 px-5 font-medium text-slate-700">{r.name}</td>
+                          <td className="py-3 px-5 text-left font-mono">{r.invoiced.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-5 text-left font-mono text-green-700">{r.paid.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-5 text-left font-mono font-bold" style={{ color: r.balance > 0 ? '#dc2626' : NAVY }}>
+                            {r.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           )}

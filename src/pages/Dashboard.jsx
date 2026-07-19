@@ -247,10 +247,10 @@ export default function Dashboard() {
   }, [showMainPicker])
 
   useEffect(() => {
-    if (!pid) { setBalances({ cash:0, bank:0, custody:0 }); setLoading(false); return }
+    if (!pid) { setBalances({ cash:0, bank:0, custody:0, payable:0 }); setLoading(false); return }
     const initRange = getRange('month')
     Promise.all([loadBalances(pid, initRange.to), loadStats(initRange, pid)]).catch(e => {
-      console.error(e); setBalances({ cash:0, bank:0, custody:0 }); setLoading(false)
+      console.error(e); setBalances({ cash:0, bank:0, custody:0, payable:0 }); setLoading(false)
     })
   }, [pid])
 
@@ -269,7 +269,7 @@ export default function Dashboard() {
   async function loadBalances(projectId, toDate) {
     try {
       let q = supabase.from('ledger_entries')
-        .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
+        .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,payable_in,payable_out')
         .eq('project_id', projectId).neq('status','cancelled')
       if (toDate) q = q.lte('date', toDate)
       const { data, error } = await q
@@ -279,6 +279,7 @@ export default function Dashboard() {
         cash:    rows.reduce((s,r) => s + (r.cash_in   ||0) - (r.cash_out   ||0), 0),
         bank:    rows.reduce((s,r) => s + (r.bank_in   ||0) - (r.bank_out   ||0), 0),
         custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
+        payable: rows.reduce((s,r) => s + (r.payable_in||0) - (r.payable_out||0), 0),
       })
       // ذمم تطبيقات التوصيل من حقلَي receivable_in/out المنفصلَين عن العهدة
       const sumRcvIn  = (t) => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_in ||0), 0)
@@ -290,7 +291,7 @@ export default function Dashboard() {
         mrsool:  sumRcvIn('مرسول')  - sumRcvOut('مرسول'),
       }
       setReceivables(rcv.hunger > 0 || rcv.jahez > 0 || rcv.keeta > 0 || rcv.mrsool > 0 ? rcv : null)
-    } catch(e) { console.error(e); setBalances({ cash:0, bank:0, custody:0 }) }
+    } catch(e) { console.error(e); setBalances({ cash:0, bank:0, custody:0, payable:0 }) }
   }
 
   async function loadStats(r, projectId) {
@@ -679,6 +680,13 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* بطاقة مستحق للموردين — لمشروع "بـ عسل" فقط، وفقط عند وجود رصيد مستحق */}
+      {(projectName || '').includes('بـ عسل') && balances?.payable > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          <KpiCard label="🧾 مستحق للموردين" value={balances.payable} accent="#7c3aed" bg="#f5f3ff" negative={false} />
+        </div>
+      )}
 
       {/* بطاقة الذمم المستحقة — تظهر فقط عند وجود ذمم */}
       {receivables && (
