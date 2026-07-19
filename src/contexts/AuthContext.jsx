@@ -20,6 +20,24 @@ export const ROLE_ICONS = {
 
 const AuthContext = createContext(null)
 
+// يستخرج اسم الـ subdomain من الرابط الحالي
+// localhost / 127.0.0.1   → '__dev__'  (بيئة تطوير — بدون قيود)
+// tahseeb.app / vercel.app → null      (نطاق رئيسي — super admin فقط)
+// tashormik.tahseeb.app   → 'tashormik'
+function getSubdomain() {
+  const host = window.location.hostname
+  if (host === 'localhost' || host === '127.0.0.1') return '__dev__'
+  if (
+    host.includes('vercel.app') ||
+    host === 'tahseeb.app' ||
+    host === 'www.tahseeb.app' ||
+    !host.includes('.')
+  ) return null
+  const parts = host.split('.')
+  if (parts.length < 3 || parts[0] === 'www') return null
+  return parts[0]
+}
+
 export function AuthProvider({ children }) {
   const [role,        setRole]        = useState(() => sessionStorage.getItem('mz_role')   || null)
   const [userName,    setUserName]    = useState(() => sessionStorage.getItem('mz_user')   || null)
@@ -29,11 +47,51 @@ export function AuthProvider({ children }) {
   const [modules,     setModules]     = useState(() => { try { return JSON.parse(sessionStorage.getItem('mz_modules') || '[]') } catch { return [] } })
 
   async function login(pin) {
-    const { data: user } = await supabase
+    const subdomain = getSubdomain()
+    const isDev     = subdomain === '__dev__'
+
+    // ── 1. هل هذا الـ PIN لـ superadmin؟ (بحث بدون فلتر مشروع) ────────────
+    const { data: superAdmin } = await supabase
       .from('app_users')
       .select('name, role, project_id, branch')
       .eq('pin', pin)
+      .eq('role', 'superadmin')
       .maybeSingle()
+
+    let user = null
+
+    if (superAdmin) {
+      // superadmin يدخل من أي رابط
+      user = superAdmin
+    } else if (isDev) {
+      // ── 2. بيئة التطوير: بدون قيود ────────────────────────────────────────
+      const { data } = await supabase
+        .from('app_users')
+        .select('name, role, project_id, branch')
+        .eq('pin', pin)
+        .maybeSingle()
+      user = data
+    } else {
+      // ── 3. إنتاج: فلتر حسب الـ subdomain ──────────────────────────────────
+      if (!subdomain) {
+        throw new Error('يرجى الدخول من رابط مشروعك الخاص')
+      }
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('subdomain', subdomain)
+        .maybeSingle()
+      if (!proj?.id) {
+        throw new Error('يرجى الدخول من رابط مشروعك الخاص')
+      }
+      const { data } = await supabase
+        .from('app_users')
+        .select('name, role, project_id, branch')
+        .eq('pin', pin)
+        .eq('project_id', proj.id)
+        .maybeSingle()
+      user = data
+    }
 
     if (!user) return null
 
