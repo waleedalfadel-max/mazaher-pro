@@ -19,6 +19,7 @@ import SuperAdmin from './pages/SuperAdmin'
 import Suppliers from './pages/Suppliers'
 import RoasterySales from './pages/RoasterySales'
 import BankReconciliation from './pages/BankReconciliation'
+import PayableSuppliers from './pages/PayableSuppliers'
 
 function TrialFormRedirect() {
   window.location.replace('/trial-form.html' + window.location.search)
@@ -90,6 +91,12 @@ function AppRoutes() {
       <Route path="/bank-reconciliation" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <BankReconciliation />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/payable-suppliers" element={
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
+          <PayableSuppliers />
         </ProtectedRoute>
       } />
 

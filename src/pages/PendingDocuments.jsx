@@ -6,6 +6,7 @@ import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64 } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
 import { compressImageBase64 } from '../lib/imageCompress'
+import { matchSupplier } from '../lib/supplierMatching'
 
 function readableName(doc, res) {
   if (res?.description?.trim()) return res.description.trim()
@@ -49,9 +50,11 @@ export default function PendingDocuments() {
   const [transTypes, setTransTypes]   = useState(FALLBACK_TRANS_TYPES)
   const [transTypesMap,  setTransTypesMap]  = useState({})   // superadmin: projectId → types[]
   const [categoriesMap,  setCategoriesMap]  = useState({})   // superadmin: projectId → categories[]
+  const [payableSuppliersMap, setPayableSuppliersMap] = useState({}) // superadmin: projectId → payable_suppliers[]
   const [categories, setCategories]   = useState([])
   const [branches,   setBranches]     = useState([])
   const [suppliers,  setSuppliers]    = useState([])
+  const [payableSuppliers, setPayableSuppliers] = useState([])
   const [projects,   setProjects]     = useState([])
   const [projMap,    setProjMap]      = useState({})
   const [filterProjId, setFilterProjId] = useState('')
@@ -83,6 +86,11 @@ export default function PendingDocuments() {
         .eq('is_active', true)
         .order('name')
         .then(({ data }) => setSuppliers(data || []))
+      supabase.from('payable_suppliers')
+        .select('id,name')
+        .eq('project_id', projectId)
+        .order('name')
+        .then(({ data }) => setPayableSuppliers(data || []))
     }
   }, [projectId, isSuperAdmin])
 
@@ -117,6 +125,21 @@ export default function PendingDocuments() {
           .eq('project_id', pid)
           .order('sort_order')
           .then(({ data }) => setCategoriesMap(m => ({ ...m, [pid]: data || [] })))
+      }
+    })
+  }, [docs, isSuperAdmin])
+
+  // superadmin: حمّل payable_suppliers لكل project_id موجود في الوثائق
+  useEffect(() => {
+    if (!isSuperAdmin) return
+    const pids = [...new Set(docs.map(d => d.project_id).filter(Boolean))]
+    pids.forEach(pid => {
+      if (!payableSuppliersMap[pid]) {
+        supabase.from('payable_suppliers')
+          .select('id,name')
+          .eq('project_id', pid)
+          .order('name')
+          .then(({ data }) => setPayableSuppliersMap(m => ({ ...m, [pid]: data || [] })))
       }
     })
   }, [docs, isSuperAdmin])
@@ -207,6 +230,36 @@ export default function PendingDocuments() {
         _showImage: true,
       })
     } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
+  }
+
+  // يحسم هوية المورد لفاتورة "آجل" — يربط بمورد موجود أو ينشئ سجلاً جديداً في payable_suppliers
+  // يرمي __SUPPLIER_CONFIRM_NEEDED__ لو فيه تشابه قريب ولسا ما تأكّد المحاسب (يحتاج تفاعل بالواجهة أولاً)
+  async function resolveSupplierId(pid, doc, res) {
+    const name = (doc._supplierName ?? res.supplier_name ?? '').trim()
+    if (!name) return null
+
+    if (doc._supplierResolution === 'existing' && doc._matchedSupplierId) {
+      return doc._matchedSupplierId
+    }
+    if (doc._supplierResolution === 'new') {
+      const { data, error } = await supabase.from('payable_suppliers')
+        .insert({ project_id: pid, name }).select('id').single()
+      if (error) throw new Error(error.message)
+      return data.id
+    }
+
+    const projectSuppliers = isSuperAdmin ? (payableSuppliersMap[pid] || []) : payableSuppliers
+    const { matchType, supplier } = matchSupplier(name, projectSuppliers)
+    if (matchType === 'exact') return supplier.id
+    if (matchType === 'fuzzy') {
+      const e = new Error('__SUPPLIER_CONFIRM_NEEDED__')
+      e.needsSupplierConfirm = true
+      throw e
+    }
+    const { data, error } = await supabase.from('payable_suppliers')
+      .insert({ project_id: pid, name }).select('id').single()
+    if (error) throw new Error(error.message)
+    return data.id
   }
 
   async function checkLedgerDup(pid, date, type, description, total_amount) {
@@ -322,6 +375,7 @@ export default function PendingDocuments() {
 
     } else if (res.type === 'expense' && res.items?.length > 0) {
       const jn         = await getOrCreateJournalNumber(pid, res.date)
+      const supplierId = pay === 'payable' ? await resolveSupplierId(pid, doc, res) : null
       const itemsTotal = res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0)
       const totalAmt   = Number(res.totalAmount || res.amount) || itemsTotal
       const vatTotal   = Number(res.vatAmount) || 0
@@ -342,6 +396,7 @@ export default function PendingDocuments() {
         custody_in:   isIncoming && pay === 'custody' ? totalAmt : 0,
         payable_in:  !isIncoming && pay === 'payable' ? totalAmt : 0,
         payable_out: 0,
+        supplier_id: supplierId,
         vat_amount: vatTotal, total_amount: totalAmt, status: 'approved',
         file_url: doc.file_url || '', journal_number: jn, branch: doc.branch || null,
         purchase_category: doc.purchase_category || null, category_main: null, category_sub: null,
@@ -372,6 +427,7 @@ export default function PendingDocuments() {
       }
       const singleDescFinal = forceNew ? `${singleDesc} [${Date.now().toString(36)}]` : singleDesc
       const jn = await getOrCreateJournalNumber(pid, res.date)
+      const supplierId = pay === 'payable' ? await resolveSupplierId(pid, doc, res) : null
       const { data: inserted, error: err } = await supabase.from('ledger_entries').insert({
         project_id: pid, date: res.date, type: res.transType || '',
         description: singleDescFinal,
@@ -383,6 +439,7 @@ export default function PendingDocuments() {
         custody_in:   isIncoming && pay === 'custody' ? amount : 0,
         payable_in:  !isIncoming && pay === 'payable' ? amount : 0,
         payable_out: 0,
+        supplier_id: supplierId,
         vat_amount: Number(res.vatAmount) || 0, total_amount: amount,
         status: 'approved', file_url: doc.file_url || '', journal_number: jn,
         branch: doc.branch || null, purchase_category: doc.purchase_category || null,
@@ -415,7 +472,10 @@ export default function PendingDocuments() {
           status: 'approved', file_name: newName, category_main: null, category_sub: null,
         }).eq('id', doc.id)
         setDocs(ds => ds.filter(d => d.id !== doc.id))
-      } catch(e) { updateDoc(doc.id, { _state: 'analyzed', _error: e.message }) }
+      } catch(e) {
+        const msg = e?.needsSupplierConfirm ? 'يرجى تأكيد هوية المورد أولاً — راجع بطاقة "يشبه مورد موجود" أعلاه' : e.message
+        updateDoc(doc.id, { _state: 'analyzed', _error: msg })
+      }
       return
     }
 
@@ -444,6 +504,7 @@ export default function PendingDocuments() {
       setDocs(ds => ds.filter(d => d.id !== doc.id))
     } catch(e) {
       if (e?.isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
+      if (e?.needsSupplierConfirm) { updateDoc(doc.id, { _state: 'analyzed', _error: 'يرجى تأكيد هوية المورد أولاً — راجع بطاقة "يشبه مورد موجود" أعلاه' }); return }
       updateDoc(doc.id, { _state: 'analyzed', _error: e.message })
     }
   }
@@ -611,8 +672,11 @@ export default function PendingDocuments() {
           categories={isSuperAdmin ? (categoriesMap[doc.project_id] || []) : categories}
           branches={branches}
           suppliers={suppliers}
+          payableSuppliers={isSuperAdmin ? (payableSuppliersMap[doc.project_id] || []) : payableSuppliers}
           onBranchChange={b => updateDoc(doc.id, { branch: b })}
           onSupplierChange={id => updateDoc(doc.id, { _supplierId: id })}
+          onSupplierNameChange={v => updateDoc(doc.id, { _supplierName: v, _supplierResolution: null, _matchedSupplierId: null })}
+          onSupplierResolve={(resolution, matchedId) => updateDoc(doc.id, { _supplierResolution: resolution, _matchedSupplierId: matchedId })}
           onClearValidation={() => updateDoc(doc.id, { _validationError: null })}
           ROLE_AR={ROLE_AR}
           ROLE_COLOR={ROLE_COLOR}
@@ -671,7 +735,7 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
 }
 
 // ── DocCard ──────────────────────────────────────────────────────────────────
-function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, ROLE_AR, ROLE_COLOR }) {
+function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, payableSuppliers, ROLE_AR, ROLE_COLOR }) {
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
@@ -700,6 +764,14 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
     if (doc._isUrl)          window.open(doc._imageData, '_blank')
     else if (doc._imageData) openPdfBlob(doc._imageData, doc.file_name)
   }
+
+  // مطابقة اسم المورد — فقط لفواتير "آجل"، تُعاد حسبتها حياً مع كل تعديل بالاسم
+  const isPayable      = res?.paySource === 'payable'
+  const supplierName   = doc._supplierName ?? res?.supplier_name ?? ''
+  const supplierMatch  = isPayable && supplierName.trim()
+    ? matchSupplier(supplierName, payableSuppliers || [])
+    : { matchType: 'none', supplier: null }
+  const needsSupplierConfirm = isPayable && supplierMatch.matchType === 'fuzzy' && !doc._supplierResolution
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -885,6 +957,34 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
                   <div className="col-span-2"><span className="text-slate-400 text-xs block">الوصف</span><span>{res.description}</span></div>
                 )}
               </div>
+
+              {/* اسم المورد — فواتير "آجل" فقط */}
+              {isPayable && (
+                <div className="border-t border-slate-200 pt-2 space-y-2">
+                  <label className="text-xs text-slate-400 block">🏪 اسم المورد</label>
+                  <input value={supplierName} onChange={e => onSupplierNameChange(e.target.value)}
+                    placeholder="اسم المورد"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+
+                  {needsSupplierConfirm && (
+                    <div className="rounded-xl p-3 space-y-2" style={{ background: '#fffbeb', border: '2px solid #f59e0b' }}>
+                      <div className="text-sm text-amber-800 font-semibold">
+                        ⚠️ يشبه مورد موجود: {supplierMatch.supplier.name} — هل هو نفس المورد؟
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => onSupplierResolve('existing', supplierMatch.supplier.id)}
+                          className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white" style={{ background: '#d97706' }}>
+                          نعم نفس المورد
+                        </button>
+                        <button onClick={() => onSupplierResolve('new', null)}
+                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold border border-amber-300 text-amber-800 bg-white">
+                          لا، مورد جديد
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* قائمة البنود */}
               {isExpenseItems && (
@@ -1129,7 +1229,8 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
 
             {/* أزرار الاعتماد */}
             <div className="flex gap-2 pt-1">
-              <button onClick={onApprove} disabled={busy}
+              <button onClick={onApprove} disabled={busy || needsSupplierConfirm}
+                title={needsSupplierConfirm ? 'يرجى تأكيد هوية المورد أولاً' : ''}
                 className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
                 {doc._state === 'approving'
                   ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>

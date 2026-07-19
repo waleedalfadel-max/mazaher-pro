@@ -73,7 +73,7 @@ function normalizeMimeType(mimeType, fileName = '') {
   return t
 }
 
-export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '', categories = [], projectName = '', transTypes = []) {
+export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '', categories = [], projectName = '', transTypes = [], extractSupplierName = false) {
   const mime    = normalizeMimeType(mimeType, fileName)
   const isImage = VALID_IMAGE_TYPES.includes(mime)
   const isPdf   = mime === 'application/pdf'
@@ -101,6 +101,11 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
   // default expense transType = first non-sales/transfer type in the list
   const defaultExpenseType = typesAsStrings.find(t => !t.includes('مبيعات') && !t.includes('تحويل') && !t.includes('تحصيل'))
     || '🛒 مصروفات تشغيلية'
+
+  // استخراج اسم المورد — مشروط فقط (مصدر دفع "آجل" بمشروع "بـ عسل" حالياً)، لا يغيّر البرومبت لأي حالة أخرى
+  const supplierNameField = extractSupplierName ? ',"supplier_name":"اسم المورد كما هو مكتوب حرفياً"' : ''
+  const supplierNameRule  = extractSupplierName ? `
+- supplier_name: استخرج اسم المورد/البائع (اسم المحل أو الشركة أو الشخص) كما هو مكتوب حرفياً على الفاتورة تماماً — بدون تخمين أو تصحيح إملائي. إذا كان النص غير واضح، اكتب أفضل قراءة ممكنة مع إضافة (?) في النهاية.` : ''
 
   // build strict category list for the prompt
   let categorySection = ''
@@ -224,7 +229,7 @@ ${categorySection}
 {"type":"transfer","transType":"تحويل داخلي — صرف عهدة أو تحويل داخلي — إيداع نقدي","date":"YYYY-MM-DD","amount":0.00,"description":"وصف التحويل"}
 
 ٣. أي مستند آخر (فاتورة شراء، إيصال، سند، كشف) — فكّك لبنود:
-{"type":"expense","date":"YYYY-MM-DD","totalAmount":0.00,"vatAmount":0.00,"transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"اسم المورد أو وصف الفاتورة","items":[{"description":"وصف البند","amount":0.00,"category_main":"التصنيف الرئيسي","category_sub":"التصنيف الفرعي"}]}
+{"type":"expense","date":"YYYY-MM-DD","totalAmount":0.00,"vatAmount":0.00,"transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"اسم المورد أو وصف الفاتورة"${supplierNameField},"items":[{"description":"وصف البند","amount":0.00,"category_main":"التصنيف الرئيسي","category_sub":"التصنيف الفرعي"}]}
 
 قواعد صارمة — لا استثناء:
 - إذا كان المستند ملخص مبيعات أو تقرير مبيعات استخدم النوع الأول (sales) دائماً
@@ -260,7 +265,7 @@ ${categorySection}
 - items: فكّك كل سطر في الفاتورة إلى بند منفصل. المبالغ في items: اقرأ من عمود "إجمالي شامل" أو "الإجمالي شامل الضريبة" لكل بند — وليس من عمود "السعر" أو "سعر الوحدة". هذا يعني كل مبلغ بند يشمل ضريبته الخاصة.
 - إذا لم تجد بنوداً مفصّلة، ضع بنداً واحداً بالمبلغ الإجمالي الكامل شامل الضريبة (totalAmount) — وليس صافياً.
 - category_main: انسخ الاسم حرفياً من القائمة أعلاه بما فيه الإيموجي — ممنوع اختراع أسماء جديدة أو تعديل الأسماء
-- category_sub: انسخ الاسم حرفياً من الفرعيات تحت category_main المختار — إذا لا يوجد فرعي مناسب اتركه فارغاً ""
+- category_sub: انسخ الاسم حرفياً من الفرعيات تحت category_main المختار — إذا لا يوجد فرعي مناسب اتركه فارغاً ""${supplierNameRule}
 - إذا الصورة تحتوي على أكثر من فاتورة أو إيصال منفصل (مثلاً فاتورتان في صفحة أو صور مجمّعة): استخرج كل فاتورة بشكل مستقل
 - في جميع الحالات أعد النتيجة بهذا الشكل الموحّد: {"invoices":[{...الفاتورة الأولى بنفس الحقول المعتادة...},{...الفاتورة الثانية...}]}
 - إذا كانت فاتورة واحدة فقط: {"invoices":[{...الفاتورة...}]}

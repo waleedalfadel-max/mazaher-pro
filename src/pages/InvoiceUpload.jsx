@@ -118,7 +118,7 @@ export default function InvoiceUpload() {
 
         updateFile(i, { status: 'analyzing' })
         try {
-          const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '')
+          const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '', [], showPaySourcePicker && paySource === 'payable')
 
           // مصدر الدفع المُختار صراحة عند الرفع ("بـ عسل" فقط) — يطغى على تخمين الذكاء الاصطناعي
           if (showPaySourcePicker && paySource) {
