@@ -43,6 +43,25 @@ function resolveItemCategoryMain(categories, item, fallbackTransType) {
   return normCat(item.category_main) || normCat(fallbackTransType) || null
 }
 
+// يحسم type + category_main لقيد الفاتورة الواحد عند تعدد التصنيفات بين البنود:
+// نفس تصنيف الكل لو متطابقين، وإلا تصنيف البند الأكبر مبلغاً + إشارة "متعدد التصنيفات"
+function resolveInvoiceType(items, categories, transTypes, fallbackTransType) {
+  const resolvedMains = items.map(it => resolveItemCategoryMain(categories, it, fallbackTransType))
+  const uniqueMains   = [...new Set(resolvedMains.map(m => normCat(m || '')).filter(Boolean))]
+  let chosenMain
+  let mixed = false
+  if (uniqueMains.length <= 1) {
+    chosenMain = resolvedMains.find(Boolean) || fallbackTransType
+  } else {
+    mixed = true
+    let maxIdx = 0
+    items.forEach((it, i) => { if ((Number(it.amount) || 0) > (Number(items[maxIdx].amount) || 0)) maxIdx = i })
+    chosenMain = resolvedMains[maxIdx]
+  }
+  const matchedType = (transTypes || []).find(t => normCat(t) === normCat(chosenMain))
+  return { type: matchedType || fallbackTransType || '🛒 مصروفات تشغيلية', categoryMain: normCat(chosenMain) || null, mixed }
+}
+
 // مصدر الدفع الافتراضي بناءً على اسم المشروع ودور الرافع
 function getDefaultPaySource(projName, uploadedBy) {
   if (projName?.includes('تشورميك')) return 'bank'
@@ -289,6 +308,7 @@ export default function PendingDocuments() {
     const pay        = docProjName?.includes('تشورميك') ? 'bank' : (res.paySource || 'custody')
     const isIncoming = res.transType?.includes('تحصيل جملة')
     const docCategories = isSuperAdmin ? (categoriesMap[pid] || []) : categories
+    const docTransTypes = isSuperAdmin ? (transTypesMap[pid] || FALLBACK_TRANS_TYPES) : transTypes
 
     if (res.type === 'sales') {
       const cash     = Number(res.cashSales)     || 0
@@ -391,8 +411,12 @@ export default function PendingDocuments() {
       const itemsTotal = res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0)
       const totalAmt   = Number(res.totalAmount || res.amount) || itemsTotal
       const vatTotal   = Number(res.vatAmount) || 0
-      const transType  = res.transType || '🛒 مصروفات تشغيلية'
-      const itemsDesc  = res.description || doc.file_name
+      const single = res.items.length === 1
+      const { type: transType, categoryMain, mixed } = single
+        ? { type: res.transType || '🛒 مصروفات تشغيلية', categoryMain: normCat(res.transType || '') || null, mixed: false }
+        : resolveInvoiceType(res.items, docCategories, docTransTypes, res.transType)
+      const baseDesc   = res.description || doc.file_name
+      const itemsDesc  = mixed ? `${baseDesc} — فاتورة متعددة التصنيفات — راجع البنود` : baseDesc
       if (!forceNew) {
         const isDup = await checkLedgerDup(pid, res.date, transType, itemsDesc, totalAmt)
         if (isDup) { const e = new Error('__DUP__'); e.isDup = true; throw e }
@@ -411,7 +435,7 @@ export default function PendingDocuments() {
         supplier_id: supplierId,
         vat_amount: vatTotal, total_amount: totalAmt, status: 'approved',
         file_url: doc.file_url || '', journal_number: jn, branch: doc.branch || null,
-        purchase_category: doc.purchase_category || null, category_main: null, category_sub: null,
+        purchase_category: doc.purchase_category || null, category_main: categoryMain, category_sub: null,
       }).select('id').single()
       if (ledgerErr) throw new Error(ledgerErr.message)
       if (!itemsInserted) throw new Error('فشل تسجيل القيد في الدفتر')
@@ -499,7 +523,9 @@ export default function PendingDocuments() {
     const docProjName = projMap[doc.project_id] || projectName
     const isMahmasa = docProjName === 'محمصة كون'
     if (isMahmasa && res?.type !== 'sales' && res?.type !== 'transfer') {
-      const missingType = !res?.transType
+      const isMultiItem = res?.items?.length > 1
+      // فاتورة متعددة البنود: لا حقل "تصنيف أساسي" عام لنتحقق منه — التصنيف أصبح لكل بند (مسبوق تلقائياً من الذكاء الاصطناعي)
+      const missingType = !isMultiItem && !res?.transType
       const missingPay  = !res?.paySource
       if (missingType || missingPay) {
         updateDoc(doc.id, { _validationError: { missingType, missingPay } })
@@ -635,14 +661,14 @@ export default function PendingDocuments() {
             const invoices = (cur.invoices || []).map((inv, i) => i === invIdx ? { ...inv, [f]: v } : inv)
             updateDoc(doc.id, { _edit: { ...cur, invoices } })
           }}
-          onEditItem={(idx, f, v) => {
+          onEditItem={(idx, patch) => {
             const cur = doc._edit || doc.analysis_result || {}
             if (cur.invoices?.length === 1) {
               const inv   = cur.invoices[0]
-              const items = (inv.items || []).map((it, i) => i === idx ? { ...it, [f]: v } : it)
+              const items = (inv.items || []).map((it, i) => i === idx ? { ...it, ...patch } : it)
               updateDoc(doc.id, { _edit: { ...cur, invoices: [{ ...inv, items }] } })
             } else {
-              const items = (cur.items || []).map((it, i) => i === idx ? { ...it, [f]: v } : it)
+              const items = (cur.items || []).map((it, i) => i === idx ? { ...it, ...patch } : it)
               updateDoc(doc.id, { _edit: { ...cur, items } })
             }
           }}
@@ -659,7 +685,7 @@ export default function PendingDocuments() {
           }}
           onAddItem={() => {
             const cur = doc._edit || doc.analysis_result || {}
-            const blank = { description: '', amount: '', category_sub: '' }
+            const blank = { description: '', amount: '', category_main: '', category_sub: '' }
             if (cur.invoices?.length === 1) {
               const inv   = cur.invoices[0]
               const items = [...(inv.items || []), blank]
@@ -677,7 +703,7 @@ export default function PendingDocuments() {
               type: 'expense', date: prev[0]?.date || today,
               totalAmount: '', vatAmount: 0, transType: '',
               paySource: prev[0]?.paySource || '', description: '',
-              items: [{ description: '', amount: '', category_sub: '' }],
+              items: [{ description: '', amount: '', category_main: '', category_sub: '' }],
             }
             updateDoc(doc.id, { _edit: { invoices: [...prev, blank] }, _showImage: true })
           }}
@@ -709,29 +735,46 @@ function openPdfBlob(base64, fileName) {
 }
 
 // ── ItemRow ──────────────────────────────────────────────────────────────────
-// category_main مشتق تلقائياً من transType — البند يُظهر category_sub فقط
+// فاتورة ببند واحد (categoryMainFromType مُمرَّر): الأب ثابت من تصنيف الفاتورة العام.
+// فاتورة متعددة البنود (categoryMainFromType === undefined): كل بند يختار تصنيفه الأساسي بنفسه.
+// onEdit يستقبل كائن تصحيح (patch) — يسمح بتحديث حقلين معاً بنداء واحد ذرّي (مثل تصفير
+// category_sub عند تغيير category_main دون تسلسل نداءات يتصادم على نفس الإغلاق القديم).
 function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromType }) {
-  const allCats   = categories || []
-  const parentCat = allCats.filter(c => !c.parent_id)
-    .find(p => normCat(p.name) === normCat(categoryMainFromType || ''))
-  const itemSubs  = parentCat ? allCats.filter(c => c.parent_id === parentCat.id) : []
-  const subValue  = item.category_sub || ''
+  const allCats     = categories || []
+  const parentCats  = allCats.filter(c => !c.parent_id)
+  const independentMode = categoryMainFromType === undefined
+  const mainValue   = independentMode ? (item.category_main || '') : (categoryMainFromType || '')
+  const parentCat   = parentCats.find(p => normCat(p.name) === normCat(mainValue))
+  const itemSubs    = parentCat ? allCats.filter(c => c.parent_id === parentCat.id) : []
+  const subValue    = item.category_sub || ''
 
   return (
     <div className="border-b border-slate-100 last:border-0 p-2 space-y-1.5">
       <div className="flex gap-2 items-center">
         <span className="text-xs text-slate-400 shrink-0 w-4 text-center">{index + 1}</span>
-        <input value={item.description || ''} onChange={e => onEdit('description', e.target.value)}
+        <input value={item.description || ''} onChange={e => onEdit({ description: e.target.value })}
           placeholder="وصف البند"
           className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"/>
-        <input type="number" value={item.amount || ''} onChange={e => onEdit('amount', e.target.value)}
+        <input type="number" value={item.amount || ''} onChange={e => onEdit({ amount: e.target.value })}
           placeholder="0.00"
           className="w-24 border border-slate-200 rounded-lg px-2 py-1 text-sm text-left font-mono focus:outline-none focus:ring-1 focus:ring-blue-300"/>
         <button onClick={onDelete}
           className="text-red-300 hover:text-red-600 transition-colors text-base leading-none px-1">✕</button>
       </div>
-      <div className="pr-5">
-        <select value={subValue} onChange={e => onEdit('category_sub', e.target.value)}
+      <div className={independentMode ? 'pr-5 grid grid-cols-2 gap-1.5' : 'pr-5'}>
+        {independentMode && (
+          <select value={mainValue}
+            onChange={e => onEdit({ category_main: e.target.value, category_sub: '' })}
+            className="w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
+            style={{ borderColor: '#fde68a' }}>
+            <option value="">— التصنيف الأساسي —</option>
+            {item.category_main && !parentCats.some(p => p.name === mainValue) && (
+              <option value={mainValue}>{mainValue}</option>
+            )}
+            {parentCats.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          </select>
+        )}
+        <select value={subValue} onChange={e => onEdit({ category_sub: e.target.value })}
           className="w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
           style={{ borderColor: '#bbf7d0' }}>
           <option value="">— التصنيف الفرعي —</option>
@@ -766,6 +809,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
 
   const parentCats     = categories.filter(c => !c.parent_id)
   const isExpenseItems = res?.type === 'expense' && res.items?.length > 0
+  const itemCount       = isExpenseItems ? res.items.length : 0
 
   // مجموع البنود محسوب دائماً من البنود الفعلية
   const itemsTotal   = isExpenseItems ? res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0) : 0
@@ -830,7 +874,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
 
         {doc._validationError && (
           <div className="bg-red-50 border-2 border-red-400 rounded-xl p-3 text-red-700 text-sm font-semibold flex items-center gap-2">
-            ⚠️ يرجى اختيار {doc._validationError.missingType && doc._validationError.missingPay ? 'نوع الحركة ومصدر الدفع' : doc._validationError.missingType ? 'نوع الحركة' : 'مصدر الدفع'} قبل الاعتماد
+            ⚠️ يرجى اختيار {doc._validationError.missingType && doc._validationError.missingPay ? 'التصنيف الأساسي ومصدر الدفع' : doc._validationError.missingType ? 'التصنيف الأساسي' : 'مصدر الدفع'} قبل الاعتماد
           </div>
         )}
 
@@ -1143,21 +1187,24 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
                     </div>
                   )}
 
-                  {/* نوع الحركة — دائماً قابل للتعديل */}
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 flex items-center gap-1.5">
-                      <span>نوع الحركة</span>
-                      {doc._validationError?.missingType && <span className="text-red-500 font-bold">*مطلوب</span>}
-                      {doc._aiSuggestedType && res.transType && (
-                        <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#eff6ff', color: '#1d4ed8' }}>🤖 اقتراح ذكي</span>
-                      )}
-                    </label>
-                    <select value={res.transType || ''} onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
-                      className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingType ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
-                      <option value="">— اختر —</option>
-                      {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
+                  {/* التصنيف الأساسي — على مستوى الفاتورة فقط عندما تكون ببند واحد أو بلا بنود؛
+                      الفواتير متعددة البنود تُصنَّف لكل بند على حدة (انظر جدول البنود أدناه) */}
+                  {!(isExpenseItems && itemCount > 1) && (
+                    <div>
+                      <label className="text-xs text-slate-400 mb-1 flex items-center gap-1.5">
+                        <span>التصنيف الأساسي</span>
+                        {doc._validationError?.missingType && <span className="text-red-500 font-bold">*مطلوب</span>}
+                        {doc._aiSuggestedType && res.transType && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#eff6ff', color: '#1d4ed8' }}>🤖 اقتراح ذكي</span>
+                        )}
+                      </label>
+                      <select value={res.transType || ''} onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
+                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingType ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
+                        <option value="">— اختر —</option>
+                        {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                  )}
 
                   {res.type === 'sales' && (
                     <>
@@ -1205,8 +1252,8 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
                       {res.items.map((item, i) => (
                         <ItemRow key={i} item={item} index={i}
                           categories={categories}
-                          categoryMainFromType={normCat(res.transType || '')}
-                          onEdit={(f, v) => onEditItem(i, f, v)}
+                          categoryMainFromType={itemCount > 1 ? undefined : normCat(res.transType || '')}
+                          onEdit={patch => onEditItem(i, patch)}
                           onDelete={() => onDeleteItem(i)}/>
                       ))}
                     </div>
@@ -1287,7 +1334,8 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
 // ── InvoiceSubPanel — بطاقة فاتورة واحدة ضمن نتيجة متعددة ───────────────────
 function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApprove, onReject, approving }) {
   const fmt = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
-  const isSales   = invoice.type === 'sales'
+  const isSales      = invoice.type === 'sales'
+  const isMultiItem  = (invoice.items?.length || 0) > 1
   const totalDisp = isSales
     ? (Number(invoice.cashSales)||0) + (Number(invoice.networkSales)||0) + (Number(invoice.hungerSales)||0) + (Number(invoice.jahez)||0) + (Number(invoice.keeta)||0)
     : Number(invoice.totalAmount || invoice.amount) || 0
@@ -1347,9 +1395,9 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
                   className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
               </div>
             )}
-            {!isSales && (
+            {!isSales && !isMultiItem && (
               <div>
-                <label className="text-xs text-slate-400 block mb-1">نوع الحركة</label>
+                <label className="text-xs text-slate-400 block mb-1">التصنيف الأساسي</label>
                 <select value={invoice.transType || ''} onChange={e => onEdit('transType', e.target.value)}
                   className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white">
                   <option value="">— اختر —</option>
@@ -1383,7 +1431,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-slate-500">البنود ({(invoice.items || []).length})</span>
                   <button
-                    onClick={() => onEdit('items', [...(invoice.items || []), { description: '', amount: '', category_sub: '' }])}
+                    onClick={() => onEdit('items', [...(invoice.items || []), { description: '', amount: '', category_main: '', category_sub: '' }])}
                     className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors">
                     + إضافة بند
                   </button>
@@ -1393,9 +1441,9 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
                     {(invoice.items || []).map((item, i) => (
                       <ItemRow key={i} item={item} index={i}
                         categories={categories || []}
-                        categoryMainFromType={normCat(invoice.transType || '')}
-                        onEdit={(f, v) => {
-                          const items = (invoice.items || []).map((it, j) => j === i ? { ...it, [f]: v } : it)
+                        categoryMainFromType={isMultiItem ? undefined : normCat(invoice.transType || '')}
+                        onEdit={patch => {
+                          const items = (invoice.items || []).map((it, j) => j === i ? { ...it, ...patch } : it)
                           onEdit('items', items)
                         }}
                         onDelete={() => onEdit('items', (invoice.items || []).filter((_, j) => j !== i))}
