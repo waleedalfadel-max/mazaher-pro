@@ -111,6 +111,7 @@ export default function Reports() {
   const [selectedBranch,  setSelectedBranch]  = useState('all')
   const [branchEntries,   setBranchEntries]   = useState([])
   const [purchaseDocs,    setPurchaseDocs]    = useState([])
+  const [docItems,        setDocItems]        = useState([])
   const [allBranchSales,  setAllBranchSales]  = useState([])
   const [expandedCats,    setExpandedCats]    = useState(new Set())
   const [engineSummary,   setEngineSummary]   = useState(null)
@@ -286,6 +287,19 @@ export default function Reports() {
     setData({ cashSales, networkSales, totalSales, opEx, fixEx, loans, draws, grossProfit, netProfit, netFlow, margin, totalIn, totalOut, outputVat, netSales, inputVat, netVat, vatEntries })
     setEntries(ledgerFull || [])
     setDocs(documents || [])
+
+    // بنود التصنيف التفصيلية لكل حركة مصروف (لتقرير المصروفات) — عبر journal_number
+    const jnSet = [...new Set((ledgerFull||[]).filter(e => e.journal_number).map(e => e.journal_number))]
+    let docItemsData = []
+    if (jnSet.length > 0) {
+      const { data: diData } = await supabase
+        .from('document_items')
+        .select('journal_number,description,amount,category_main,category_sub')
+        .eq('project_id', projectId)
+        .in('journal_number', jnSet)
+      docItemsData = diData || []
+    }
+    setDocItems(docItemsData)
 
     const at = allTime || []
     setBalances({
@@ -1102,7 +1116,18 @@ export default function Reports() {
               if (!out) return
               if (isExcluded(e.type) || isSales(e.type)) return
               if (isWithdrawal(e.type) || isDebt(e.type)) return
-              addItem(e.type || '— غير محدد', e.category_sub || null, out, e.description)
+
+              // فواتير البنود: توزيع out تناسبياً على تصنيف كل بند الفعلي (بدل category_sub الفارغ على القيد نفسه)
+              const matchingItems = e.journal_number ? docItems.filter(it => it.journal_number === e.journal_number) : []
+              const itemsTotal    = matchingItems.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+              if (matchingItems.length > 0 && itemsTotal > 0) {
+                matchingItems.forEach(it => {
+                  const share = out * (Number(it.amount) || 0) / itemsTotal   // مجموع الحصص = out تماماً
+                  addItem(it.category_main || e.type || '— غير محدد', it.category_sub || null, share, it.description || e.description)
+                })
+              } else {
+                addItem(e.type || '— غير محدد', e.category_sub || null, out, e.description)
+              }
             })
 
             // المسحوبات والالتزامات — للعرض المنفصل
