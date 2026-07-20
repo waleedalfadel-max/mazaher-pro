@@ -32,6 +32,17 @@ const ROLE_COLOR = {
 // مقارنة مرنة — تبقي العربية فقط، تحذف الإيموجي والرموز والمسافات الزائدة
 const normCat = s => (s || '').replace(/[^؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim()
 
+// يشتق category_main الصحيح لبند: الأب الفعلي الذي يحتوي category_sub بجدول categories —
+// يبقى صحيحاً سواء كان category_sub من الذكاء الاصطناعي أو مُعدَّلاً يدوياً بالواجهة
+function resolveItemCategoryMain(categories, item, fallbackTransType) {
+  const sub = (categories || []).find(c => c.parent_id && normCat(c.name) === normCat(item.category_sub || ''))
+  if (sub) {
+    const parent = categories.find(p => p.id === sub.parent_id)
+    if (parent) return parent.name
+  }
+  return normCat(item.category_main) || normCat(fallbackTransType) || null
+}
+
 // مصدر الدفع الافتراضي بناءً على اسم المشروع ودور الرافع
 function getDefaultPaySource(projName, uploadedBy) {
   if (projName?.includes('تشورميك')) return 'bank'
@@ -277,6 +288,7 @@ export default function PendingDocuments() {
     const docProjName = projMap[pid] || projectName || ''
     const pay        = docProjName?.includes('تشورميك') ? 'bank' : (res.paySource || 'custody')
     const isIncoming = res.transType?.includes('تحصيل جملة')
+    const docCategories = isSuperAdmin ? (categoriesMap[pid] || []) : categories
 
     if (res.type === 'sales') {
       const cash     = Number(res.cashSales)     || 0
@@ -410,7 +422,8 @@ export default function PendingDocuments() {
           document_id: doc.id, project_id: pid, journal_number: jn,
           description: item.description || res.description || '',
           amount: amt, vat_amount: itemVat,
-          category_main: normCat(transType) || null, category_sub: item.category_sub || null,
+          category_main: resolveItemCategoryMain(docCategories, item, transType),
+          category_sub: item.category_sub || null,
           sort_order: i + 1,
         }
       })
