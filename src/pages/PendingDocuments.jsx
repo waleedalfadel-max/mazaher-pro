@@ -810,6 +810,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
   const parentCats     = categories.filter(c => !c.parent_id)
   const isExpenseItems = res?.type === 'expense' && res.items?.length > 0
   const itemCount       = isExpenseItems ? res.items.length : 0
+  const isFutureDate    = res?.date && res.date > new Date().toISOString().split('T')[0]
 
   // مجموع البنود محسوب دائماً من البنود الفعلية
   const itemsTotal   = isExpenseItems ? res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0) : 0
@@ -1114,7 +1115,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
             )}
 
             {/* ── تعديل البيانات ── */}
-            <details className="group" open={!!doc._validationError}>
+            <details className="group" open={!!doc._validationError || isFutureDate}>
               <summary className="text-sm text-blue-600 cursor-pointer hover:text-blue-800 font-medium list-none flex items-center gap-1">
                 <span className="group-open:rotate-90 transition-transform inline-block">▶</span> تعديل البيانات
               </summary>
@@ -1123,6 +1124,11 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
+                    {isFutureDate && (
+                      <div className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-1">
+                        ⚠️ هذا التاريخ في المستقبل — تأكد أن القراءة صحيحة قبل الاعتماد
+                      </div>
+                    )}
                     <input type="date" value={res.date || ''} onChange={e => onEdit('date', e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                   </div>
@@ -1336,6 +1342,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
   const fmt = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
   const isSales      = invoice.type === 'sales'
   const isMultiItem  = (invoice.items?.length || 0) > 1
+  const isFutureDate = invoice.date && invoice.date > new Date().toISOString().split('T')[0]
   const totalDisp = isSales
     ? (Number(invoice.cashSales)||0) + (Number(invoice.networkSales)||0) + (Number(invoice.hungerSales)||0) + (Number(invoice.jahez)||0) + (Number(invoice.keeta)||0)
     : Number(invoice.totalAmount || invoice.amount) || 0
@@ -1364,7 +1371,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
       )}
 
       {/* edit */}
-      <details>
+      <details open={isFutureDate}>
         <summary className="px-3 py-2 text-xs text-blue-600 cursor-pointer list-none flex items-center gap-1 border-t border-slate-100">
           <span>▶</span> تعديل
         </summary>
@@ -1372,6 +1379,11 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
+              {isFutureDate && (
+                <div className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-1">
+                  ⚠️ هذا التاريخ في المستقبل — تأكد أن القراءة صحيحة قبل الاعتماد
+                </div>
+              )}
               <input type="date" value={invoice.date || ''} onChange={e => onEdit('date', e.target.value)}
                 className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"/>
             </div>
