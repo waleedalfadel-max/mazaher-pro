@@ -822,6 +822,13 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
   const itemCount       = isExpenseItems ? res.items.length : 0
   const isFutureDate    = res?.date && res.date > new Date().toISOString().split('T')[0]
 
+  // "نوع المستند = تحويل" مخصص فقط للتحويلات الداخلية الحقيقية — قصر خيارات "التصنيف الأساسي"
+  // على الأنواع التحويلية فقط، مع الحفاظ على أي قيمة محفوظة سابقاً حتى لو لم تعد ضمن الفلتر
+  const isTransferDoc      = res?.type === 'transfer'
+  const filteredTransTypes = isTransferDoc
+    ? transTypes.filter(t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي'))
+    : transTypes
+
   // مجموع البنود محسوب دائماً من البنود الفعلية
   const itemsTotal   = isExpenseItems ? res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0) : 0
   const invoiceTotal = Number(res?.totalAmount || res?.amount) || 0
@@ -1217,7 +1224,10 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
                       <select value={res.transType || ''} onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
                         className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingType ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
                         <option value="">— اختر —</option>
-                        {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                        {res.transType && isTransferDoc && !filteredTransTypes.includes(res.transType) && (
+                          <option value={res.transType}>{res.transType}</option>
+                        )}
+                        {filteredTransTypes.map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
                   )}
@@ -1353,6 +1363,10 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
   const isSales      = invoice.type === 'sales'
   const isMultiItem  = (invoice.items?.length || 0) > 1
   const isFutureDate = invoice.date && invoice.date > new Date().toISOString().split('T')[0]
+  const isTransferDoc      = invoice.type === 'transfer'
+  const filteredTransTypes = isTransferDoc
+    ? transTypes.filter(t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي'))
+    : transTypes
   const totalDisp = isSales
     ? (Number(invoice.cashSales)||0) + (Number(invoice.networkSales)||0) + (Number(invoice.hungerSales)||0) + (Number(invoice.jahez)||0) + (Number(invoice.keeta)||0)
     : Number(invoice.totalAmount || invoice.amount) || 0
@@ -1423,7 +1437,10 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
                 <select value={invoice.transType || ''} onChange={e => onEdit('transType', e.target.value)}
                   className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white">
                   <option value="">— اختر —</option>
-                  {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  {invoice.transType && isTransferDoc && !filteredTransTypes.includes(invoice.transType) && (
+                    <option value={invoice.transType}>{invoice.transType}</option>
+                  )}
+                  {filteredTransTypes.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
             )}
