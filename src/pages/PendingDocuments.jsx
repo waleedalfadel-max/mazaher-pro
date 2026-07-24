@@ -369,11 +369,21 @@ export default function PendingDocuments() {
       const jn = await getOrCreateJournalNumber(pid, res.date)
       const isCustody  = res.transType?.includes('صرف عهدة')
       const isCollect  = res.transType?.includes('تحصيل ذمم')
+      const isDeposit  = !isCustody && !isCollect && (!res.transType || res.transType.includes('إيداع نقدي'))
       const entryFields = isCollect
         ? { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: 0, bank_out: 0, custody_out: 0, receivable_in: 0, receivable_out: amount }
         : isCustody
           ? { cash_in: 0, bank_in: 0, custody_in: amount, cash_out: 0, bank_out: amount, custody_out: 0, receivable_in: 0, receivable_out: 0 }
-          : { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: amount, bank_out: 0, custody_out: 0, receivable_in: 0, receivable_out: 0 }
+          : isDeposit
+            ? { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: amount, bank_out: 0, custody_out: 0, receivable_in: 0, receivable_out: 0 }
+            : {
+                // transType حقيقي آخر (مثل "مسحوبات سليمان") — لا يمثّل تحويلاً داخلياً فعلياً، فيُقرأ مصدر الدفع الفعلي
+                cash_in: 0, bank_in: 0, custody_in: 0,
+                cash_out:    pay === 'cash'    ? amount : 0,
+                bank_out:    pay === 'bank'    ? amount : 0,
+                custody_out: pay === 'custody' ? amount : 0,
+                receivable_in: 0, receivable_out: 0,
+              }
       const transferType = res.transType || (isCustody ? '🔄 تحويل داخلي — صرف عهدة' : '🏧 تحويل داخلي — إيداع نقدي')
       const transferDesc = res.description || doc.file_name
       if (!forceNew) {
