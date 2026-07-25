@@ -36,6 +36,7 @@ export default function Layout({ children }) {
   const NAV_ITEMS = [
     { to: '/',                label: 'لوحة التحكم',      icon: '📊', roles: ['owner', 'accountant'] },
     { to: '/cashier',         label: 'لوحة الكاشير',     icon: '💰', roles: ['cashier'] },
+    { to: '/quick-sale',      label: 'إدخال سريع للمبيعات', icon: '💵', roles: ['cashier'], cond: n => n === 'ديوانية مزاهر' },
     { to: '/reports',         label: 'التقارير',          icon: '📈', roles: ['owner', 'accountant', 'superadmin'] },
 { to: '/roastery-sales',  label: 'مبيعات المحمصة 🏭', icon: '🏭', roles: ['accountant'], cond: n => n === 'محمصة كون' },
     { to: '/suppliers',       label: 'الموردين',          icon: '🏪', roles: ['accountant'], module: 'suppliers' },

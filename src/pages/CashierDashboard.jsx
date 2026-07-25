@@ -289,6 +289,13 @@ export default function CashierDashboard() {
         )}
       </div>
 
+      {/* تنبيه — كاشير ديوانية مزاهر: استخدم الإدخال السريع للمبيعات بدل رفع ملخص POS هنا */}
+      {role === 'cashier' && projectName === 'ديوانية مزاهر' && (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 font-medium">
+          💵 لتسجيل مبيعة، استخدم "إدخال سريع للمبيعات" من القائمة الجانبية — هذي الصفحة لرفع مستندات أخرى فقط (مثل فواتير المصروفات).
+        </div>
+      )}
+
       {/* قائمة نوع المادة — لمسؤول المشتريات فقط */}
       {role === 'purchasing' && purchaseTypes.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm p-5 space-y-3" style={{ border: `2px solid ${purchaseCategory ? GOLD : '#e8e5dc'}` }}>

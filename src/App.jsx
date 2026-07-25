@@ -21,6 +21,7 @@ import RoasterySales from './pages/RoasterySales'
 import BankReconciliation from './pages/BankReconciliation'
 import PayableSuppliers from './pages/PayableSuppliers'
 import AppReconciliation from './pages/AppReconciliation'
+import QuickSale from './pages/QuickSale'
 
 function TrialFormRedirect() {
   window.location.replace('/trial-form.html' + window.location.search)
@@ -122,6 +123,12 @@ function AppRoutes() {
       <Route path="/cashier" element={
         <ProtectedRoute allowedRoles={['cashier', 'accountant']}>
           <CashierDashboard />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/quick-sale" element={
+        <ProtectedRoute allowedRoles={['cashier']}>
+          <QuickSale />
         </ProtectedRoute>
       } />
 
