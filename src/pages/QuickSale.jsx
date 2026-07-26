@@ -165,7 +165,14 @@ export default function QuickSale() {
         </div>
       )}
 
-      {/* بطاقتا إجمالي اليوم لحد الآن */}
+      {/* بطاقة الإجمالي العام — أبرز بصرياً من البطاقتين الفرعيتين */}
+      <div className="rounded-2xl p-5 text-center shadow-sm" style={{ background: NAVY }}>
+        <div className="text-sm font-bold mb-1" style={{ color: 'rgba(255,255,255,0.7)' }}>💰 إجمالي اليوم</div>
+        <div className="text-4xl font-bold font-mono text-white">{fmt(cashTotal + bankTotal)}</div>
+        <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.6)' }}>{cashRows.length + bankRows.length} عملية</div>
+      </div>
+
+      {/* بطاقتا إجمالي اليوم لحد الآن — كاش/شبكة */}
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-2xl p-4 text-center" style={{ background: '#fffbeb', border: '2px solid #fde68a' }}>
           <div className="text-xs font-bold text-amber-700 mb-1">💵 كاش اليوم</div>
@@ -235,11 +242,13 @@ export default function QuickSale() {
             {todayRows.map(r => (
               <div key={r.id} className="flex items-center justify-between px-4 py-3">
                 <div className="flex items-center gap-2 text-sm">
-                  <span>{r.channel === 'cash' ? '💵' : '🏦'}</span>
+                  <span className="font-bold" style={{ color: NAVY }}>{r.channel === 'cash' ? '💵 كاش' : '🏦 شبكة'}</span>
+                  <span className="text-slate-400">—</span>
+                  <span className="font-mono font-bold" style={{ color: NAVY }}>{fmt(r.amount)} ريال</span>
+                  <span className="text-slate-400">—</span>
                   <span className="text-slate-500 text-xs">
                     {new Date(r.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
                   </span>
-                  <span className="font-mono font-bold" style={{ color: NAVY }}>{fmt(r.amount)}</span>
                 </div>
                 <button onClick={() => handleDelete(r.id)}
                   className="text-red-400 hover:text-red-600 text-sm font-medium transition-colors">
