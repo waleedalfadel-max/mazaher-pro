@@ -8,6 +8,11 @@ const GOLD = '#6EB7B0'
 
 const fmt = v => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const todayStr = () => new Date().toISOString().split('T')[0]
+const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
+const formatArabicDate = d => {
+  const [y, m, day] = (d || '').split('-').map(Number)
+  return y ? `${day} ${MONTHS_AR[m - 1]} ${y}` : d
+}
 
 export default function QuickSale() {
   const { projectId } = useAuth()
@@ -20,20 +25,36 @@ export default function QuickSale() {
   const [closeSuccess, setCloseSuccess] = useState(null) // { cash, bank }
   const [todayRows, setTodayRows]     = useState([])
   const [loading, setLoading]         = useState(true)
+  // "يوم العمل" يُحدَّد بوجود صفوف closed=false (أحداث)، وليس بتاريخ تقويمي ثابت
+  const [workDate, setWorkDate]           = useState(todayStr())
+  const [workStartedAt, setWorkStartedAt] = useState(null) // created_at لأقدم صف مفتوح
+  const [dateAnomaly, setDateAnomaly]     = useState(null) // تواريخ متعددة بين الصفوف المفتوحة، إن وُجدت
   const closingRef = useRef(false)
-  const today = todayStr()
 
   useEffect(() => {
     if (!projectId) return
-    loadToday().then(() => setLoading(false))
+    loadOpenDay().then(() => setLoading(false))
   }, [projectId])
 
-  async function loadToday() {
+  // يجلب كل الصفوف المفتوحة (closed=false) بلا أي شرط على date — العضوية بـ"اليوم المفتوح"
+  // تُحدَّد بالحالة فقط، فلا يُفقَد أي صف حتى لو تراكمت صفوف بتواريخ مختلفة سابقاً
+  async function loadOpenDay() {
     const { data } = await supabase.from('quick_sales_draft')
-      .select('id,channel,amount,created_at')
-      .eq('project_id', projectId).eq('date', today).eq('closed', false)
-      .order('created_at', { ascending: false })
-    setTodayRows(data || [])
+      .select('id,channel,amount,date,created_at')
+      .eq('project_id', projectId).eq('closed', false)
+      .order('created_at', { ascending: true })
+    const rows = data || []
+    setTodayRows([...rows].reverse()) // العرض: الأحدث أعلى
+    if (rows.length > 0) {
+      setWorkDate(rows[0].date)
+      setWorkStartedAt(rows[0].created_at)
+      const distinct = [...new Set(rows.map(r => r.date))]
+      setDateAnomaly(distinct.length > 1 ? distinct : null)
+    } else {
+      setWorkDate(todayStr())
+      setWorkStartedAt(null)
+      setDateAnomaly(null)
+    }
   }
 
   const amt = Number(amount) || 0
@@ -47,14 +68,14 @@ export default function QuickSale() {
     setSaving(true); setError('')
     try {
       const { error: insErr } = await supabase.from('quick_sales_draft').insert({
-        project_id: projectId, date: today, channel, amount: amt, closed: false,
+        project_id: projectId, date: workDate, channel, amount: amt, closed: false,
       })
       if (insErr) throw new Error(insErr.message)
 
       setLastSuccess({ amount: amt, channel })
       setChannel(null)
       setAmount('')
-      await loadToday()
+      await loadOpenDay()
       setTimeout(() => setLastSuccess(s => (s?.amount === amt ? null : s)), 3000)
     } catch (e) {
       setError(e.message)
@@ -68,7 +89,7 @@ export default function QuickSale() {
     try {
       const { error: delErr } = await supabase.from('quick_sales_draft').delete().eq('id', id).eq('closed', false)
       if (delErr) throw new Error(delErr.message)
-      await loadToday()
+      await loadOpenDay()
     } catch (e) {
       setError(e.message)
     }
@@ -80,41 +101,43 @@ export default function QuickSale() {
     closingRef.current = true
     setClosing(true); setError(''); setCloseSuccess(null)
     try {
-      // إعادة جلب فورية للصفوف المفتوحة فعلياً — وليس الاعتماد على todayRows بالحالة
+      // إعادة جلب فورية لكل الصفوف المفتوحة فعلياً — بلا شرط على date، وبلا اعتماد على todayRows بالحالة
       const { data: openRows, error: fetchErr } = await supabase.from('quick_sales_draft')
-        .select('id,channel,amount')
-        .eq('project_id', projectId).eq('date', today).eq('closed', false)
+        .select('id,channel,amount,date')
+        .eq('project_id', projectId).eq('closed', false)
+        .order('created_at', { ascending: true })
       if (fetchErr) throw new Error(fetchErr.message)
-      if (!openRows?.length) { await loadToday(); return } // أُقفلت بالفعل بضغطة سابقة — لا شيء لفعله
+      if (!openRows?.length) { await loadOpenDay(); return } // أُقفلت بالفعل بضغطة سابقة — لا شيء لفعله
 
+      const closeDate = openRows[0].date // تاريخ أقدم صف بهذا الجلب تحديداً — أضمن مصدر حتى لو تغيّر شيء بين التحميل والضغط
       const cTotal = openRows.filter(r => r.channel === 'cash').reduce((s, r) => s + Number(r.amount), 0)
       const bTotal = openRows.filter(r => r.channel === 'bank').reduce((s, r) => s + Number(r.amount), 0)
-      const jn = await getOrCreateJournalNumber(projectId, today)
+      const jn = await getOrCreateJournalNumber(projectId, closeDate)
 
       if (cTotal > 0) {
         const { error: e1 } = await supabase.from('ledger_entries').insert({
-          project_id: projectId, date: today, type: '💵 مبيعات كاش',
+          project_id: projectId, date: closeDate, type: '💵 مبيعات كاش',
           description: 'إقفال يومي — إدخال سريع', cash_in: cTotal, cash_out: 0,
           bank_in: 0, bank_out: 0, custody_in: 0, custody_out: 0,
           total_amount: cTotal, status: 'approved', journal_number: jn, branch: null,
         })
         if (e1) throw new Error(e1.message)
         const { error: e2 } = await supabase.from('sales').insert({
-          project_id: projectId, date: today, cash_sales: cTotal, network_sales: 0,
+          project_id: projectId, date: closeDate, cash_sales: cTotal, network_sales: 0,
           hunger_sales: 0, jahez_sales: 0, keeta_sales: 0, description: 'إقفال يومي — إدخال سريع',
         })
         if (e2) throw new Error(e2.message)
       }
       if (bTotal > 0) {
         const { error: e3 } = await supabase.from('ledger_entries').insert({
-          project_id: projectId, date: today, type: '🏦 مبيعات شبكة',
+          project_id: projectId, date: closeDate, type: '🏦 مبيعات شبكة',
           description: 'إقفال يومي — إدخال سريع', cash_in: 0, cash_out: 0,
           bank_in: bTotal, bank_out: 0, custody_in: 0, custody_out: 0,
           total_amount: bTotal, status: 'approved', journal_number: jn, branch: null,
         })
         if (e3) throw new Error(e3.message)
         const { error: e4 } = await supabase.from('sales').insert({
-          project_id: projectId, date: today, cash_sales: 0, network_sales: bTotal,
+          project_id: projectId, date: closeDate, cash_sales: 0, network_sales: bTotal,
           hunger_sales: 0, jahez_sales: 0, keeta_sales: 0, description: 'إقفال يومي — إدخال سريع',
         })
         if (e4) throw new Error(e4.message)
@@ -125,7 +148,7 @@ export default function QuickSale() {
       if (closeErr) throw new Error(closeErr.message)
 
       setCloseSuccess({ cash: cTotal, bank: bTotal })
-      await loadToday()
+      await loadOpenDay()
     } catch (e) {
       setError(e.message)
     } finally {
@@ -146,6 +169,21 @@ export default function QuickSale() {
         <h1 className="text-2xl font-bold text-slate-800">💵 إدخال سريع للمبيعات</h1>
         <p className="text-slate-500 text-sm mt-1">سجّل كل عملية بيع فور حدوثها</p>
       </div>
+
+      {todayRows.length > 0 && (
+        <div className="rounded-2xl p-3 text-center text-sm font-semibold"
+          style={{ background: '#f0fdf4', border: '2px solid #bbf7d0', color: '#166534' }}>
+          📅 يوم العمل الحالي: {formatArabicDate(workDate)}
+          {workStartedAt && ` (بدأ الساعة ${new Date(workStartedAt).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })})`}
+        </div>
+      )}
+
+      {dateAnomaly && (
+        <div className="rounded-2xl p-3 text-sm font-semibold text-center"
+          style={{ background: '#fef2f2', border: '2px solid #fecaca', color: '#991b1b' }}>
+          ⚠️ توجد عمليات مفتوحة بتواريخ مختلفة ({dateAnomaly.map(formatArabicDate).join('، ')}) — ستُدمج كلها بقيد واحد عند "إقفال اليوم"
+        </div>
+      )}
 
       {lastSuccess && (
         <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
