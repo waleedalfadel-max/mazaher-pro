@@ -509,6 +509,11 @@ export default function PendingDocuments() {
 
     // فواتير متعددة — اعتمد كل فاتورة بقيدها المستقل
     if (invoiceList?.length > 1) {
+      const badIdx = invoiceList.findIndex(inv => inv.type === 'transfer' && !inv.paySource)
+      if (badIdx !== -1) {
+        updateDoc(doc.id, { _error: `⚠️ الفاتورة رقم ${badIdx + 1} من نوع "تحويل" — يجب اختيار مصدر الدفع لها قبل اعتماد الكل` })
+        return
+      }
       updateDoc(doc.id, { _state: 'approving', _validationError: null, _dupCheck: false })
       try {
         for (const inv of invoiceList) {
@@ -542,6 +547,13 @@ export default function PendingDocuments() {
         return
       }
     }
+
+    // ── تحقق عام لكل المشاريع: تحويل بلا مصدر دفع يسقط صامتاً على "عهدة" بـ_approveOne ──
+    if (res?.type === 'transfer' && !res?.paySource) {
+      updateDoc(doc.id, { _validationError: { missingPay: true, missingTransferPay: true } })
+      return
+    }
+
     updateDoc(doc.id, { _state: 'approving', _validationError: null, _dupCheck: false })
 
     try {
@@ -572,6 +584,10 @@ export default function PendingDocuments() {
     const invList = rawRes?.invoices || []
     const inv     = invList[invIdx]
     if (!inv) return
+    if (inv.type === 'transfer' && !inv.paySource) {
+      updateDoc(doc.id, { _error: '⚠️ يجب اختيار مصدر الدفع قبل اعتماد التحويل' })
+      return
+    }
     updateDoc(doc.id, { _state: 'approving', _error: '' })
     try {
       await _approveOne(doc, inv, true)
@@ -892,7 +908,9 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
 
         {doc._validationError && (
           <div className="bg-red-50 border-2 border-red-400 rounded-xl p-3 text-red-700 text-sm font-semibold flex items-center gap-2">
-            ⚠️ يرجى اختيار {doc._validationError.missingType && doc._validationError.missingPay ? 'التصنيف الأساسي ومصدر الدفع' : doc._validationError.missingType ? 'التصنيف الأساسي' : 'مصدر الدفع'} قبل الاعتماد
+            {doc._validationError.missingTransferPay
+              ? '⚠️ يجب اختيار مصدر الدفع قبل اعتماد التحويل'
+              : `⚠️ يرجى اختيار ${doc._validationError.missingType && doc._validationError.missingPay ? 'التصنيف الأساسي ومصدر الدفع' : doc._validationError.missingType ? 'التصنيف الأساسي' : 'مصدر الدفع'} قبل الاعتماد`}
           </div>
         )}
 
@@ -1359,6 +1377,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
 
 // ── InvoiceSubPanel — بطاقة فاتورة واحدة ضمن نتيجة متعددة ───────────────────
 function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApprove, onReject, approving }) {
+  const [payError, setPayError] = useState(false)
   const fmt = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
   const isSales      = invoice.type === 'sales'
   const isMultiItem  = (invoice.items?.length || 0) > 1
@@ -1413,9 +1432,11 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
             </div>
             {!isSales && (
               <div>
-                <label className="text-xs text-slate-400 block mb-1">مصدر الدفع</label>
-                <select value={invoice.paySource || ''} onChange={e => onEdit('paySource', e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white">
+                <label className="text-xs text-slate-400 block mb-1">
+                  مصدر الدفع {payError && <span className="text-red-500 font-bold">*مطلوب</span>}
+                </label>
+                <select value={invoice.paySource || ''} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
+                  className={`w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 ${payError ? 'border-red-400 bg-red-50' : 'border-slate-200 bg-white'}`}>
                   <option value="">— اختر —</option>
                   <option value="cash">💵 الصندوق</option>
                   <option value="bank">🏦 البنك</option>
@@ -1498,22 +1519,33 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
 
       {/* أزرار الاعتماد والرفض الفردي */}
       {(onApprove || onReject) && (
-        <div className="flex gap-2 px-3 pb-3 pt-1">
-          {onApprove && (
-            <button onClick={onApprove} disabled={approving}
-              className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-              {approving
-                ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
-                : '✅ اعتماد هذه الفاتورة'
-              }
-            </button>
+        <div className="px-3 pb-3 pt-1 space-y-1.5">
+          {payError && (
+            <div className="text-red-600 text-xs font-semibold bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">
+              ⚠️ يجب اختيار مصدر الدفع قبل اعتماد التحويل
+            </div>
           )}
-          {onReject && (
-            <button onClick={onReject} disabled={approving}
-              className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
-              ❌ رفض
-            </button>
-          )}
+          <div className="flex gap-2">
+            {onApprove && (
+              <button onClick={() => {
+                if (invoice.type === 'transfer' && !invoice.paySource) { setPayError(true); return }
+                setPayError(false)
+                onApprove()
+              }} disabled={approving}
+                className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
+                {approving
+                  ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
+                  : '✅ اعتماد هذه الفاتورة'
+                }
+              </button>
+            )}
+            {onReject && (
+              <button onClick={onReject} disabled={approving}
+                className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
+                ❌ رفض
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
