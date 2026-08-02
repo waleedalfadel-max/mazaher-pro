@@ -28,13 +28,17 @@ const QUICK_PERIODS = [
   { key: 'year',      label: 'السنة الحالية' },
 ]
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function getRange(type) {
   const n = new Date()
-  const to = n.toISOString().split('T')[0]
+  const to = fmtDate(n)
   if (type === 'lastMonth') {
     const lm  = new Date(n.getFullYear(), n.getMonth() - 1, 1)
     const lme = new Date(n.getFullYear(), n.getMonth(), 0)
-    return { from: lm.toISOString().split('T')[0], to: lme.toISOString().split('T')[0] }
+    return { from: fmtDate(lm), to: fmtDate(lme) }
   }
   const from = type === 'year'
     ? `${n.getFullYear()}-01-01`
@@ -212,7 +216,7 @@ export default function Ledger() {
           {canEdit && (
             <div className="flex-1 min-w-[8rem]">
               <div className="mb-1 h-4" />
-              <button onClick={() => setNewRow({ date: new Date().toISOString().split('T')[0], type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'', receivable_in:'', receivable_out:'' })}
+              <button onClick={() => setNewRow({ date: fmtDate(new Date()), type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'', receivable_in:'', receivable_out:'' })}
                 className="w-full px-4 py-1.5 text-sm font-bold rounded-xl transition-all text-center"
                 style={{ background: NAVY, color: '#fff' }}>
                 + إضافة قيد
