@@ -6,7 +6,10 @@ import { getOrCreateJournalNumber } from '../lib/journalNumber'
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
 
-function todayStr() { return new Date().toISOString().split('T')[0] }
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const fmt = v => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })
 
 export default function Suppliers() {

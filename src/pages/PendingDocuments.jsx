@@ -8,6 +8,10 @@ import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
 import { compressImageBase64 } from '../lib/imageCompress'
 import { matchSupplier } from '../lib/supplierMatching'
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function readableName(doc, res) {
   if (res?.description?.trim()) return res.description.trim()
   const base = (doc.file_name || '').split('/').pop()
@@ -724,7 +728,7 @@ export default function PendingDocuments() {
           onAddInvoice={() => {
             const cur  = doc._edit || doc.analysis_result || {}
             const prev = cur.invoices?.length ? cur.invoices : [{ ...cur }]
-            const today = new Date().toISOString().split('T')[0]
+            const today = fmtDate(new Date())
             const blank = {
               type: 'expense', date: prev[0]?.date || today,
               totalAmount: '', vatAmount: 0, transType: '',
@@ -836,7 +840,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
   const parentCats     = categories.filter(c => !c.parent_id)
   const isExpenseItems = res?.type === 'expense' && res.items?.length > 0
   const itemCount       = isExpenseItems ? res.items.length : 0
-  const isFutureDate    = res?.date && res.date > new Date().toISOString().split('T')[0]
+  const isFutureDate    = res?.date && res.date > fmtDate(new Date())
 
   // "نوع المستند = تحويل" مخصص فقط للتحويلات الداخلية الحقيقية — قصر خيارات "التصنيف الأساسي"
   // على الأنواع التحويلية فقط، مع الحفاظ على أي قيمة محفوظة سابقاً حتى لو لم تعد ضمن الفلتر
@@ -1381,7 +1385,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
   const fmt = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
   const isSales      = invoice.type === 'sales'
   const isMultiItem  = (invoice.items?.length || 0) > 1
-  const isFutureDate = invoice.date && invoice.date > new Date().toISOString().split('T')[0]
+  const isFutureDate = invoice.date && invoice.date > fmtDate(new Date())
   const isTransferDoc      = invoice.type === 'transfer'
   const filteredTransTypes = isTransferDoc
     ? transTypes.filter(t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي'))

@@ -7,7 +7,10 @@ const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
 
 const fmt = v => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const todayStr = () => new Date().toISOString().split('T')[0]
+const todayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
 const formatArabicDate = d => {
   const [y, m, day] = (d || '').split('-').map(Number)

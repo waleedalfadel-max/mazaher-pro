@@ -19,7 +19,9 @@ const BANK_CAT_LABEL = {
 
 const fmt = v => (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-function fmtDate(d) { return d.toISOString().split('T')[0] }
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 function addDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + n)

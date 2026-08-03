@@ -6,9 +6,13 @@ import { uploadToStorage } from '../lib/storage'
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const now = new Date()
 const thisMonthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
-const today = now.toISOString().split('T')[0]
+const today = fmtDate(now)
 
 const STATUS_BADGE = {
   approved:  { bg: '#f0fdf4', color: '#16a34a' },
@@ -224,12 +228,12 @@ export default function JournalLedger() {
   function setQuick(type) {
     setActivePeriod(type)
     const n = new Date()
-    let from, to = n.toISOString().split('T')[0]
+    let from, to = fmtDate(n)
     if (type === 'month')     from = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`
     else if (type === 'lastMonth') {
       const lm = new Date(n.getFullYear(), n.getMonth() - 1, 1)
       const lme = new Date(n.getFullYear(), n.getMonth(), 0)
-      from = lm.toISOString().split('T')[0]; to = lme.toISOString().split('T')[0]
+      from = fmtDate(lm); to = fmtDate(lme)
     } else { from = `${n.getFullYear()}-01-01` }
     const f = { from, to }; setFilter(f)
     if (projectId) load(projectId, f)

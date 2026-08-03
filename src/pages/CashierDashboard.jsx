@@ -20,9 +20,13 @@ const GOLD = '#6EB7B0'
 const fmt = v =>
   Number(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 // ── لوحة المحمصة الرئيسية: إدخال مباشر لقنوات المبيعات ──────────────────────
 function RoasteryMainPanel({ projectId, branch }) {
-  const today = new Date().toISOString().split('T')[0]
+  const today = fmtDate(new Date())
   const [date, setDate]     = useState(today)
   const [salla, setSalla]   = useState('')
   const [tabby, setTabby]   = useState('')

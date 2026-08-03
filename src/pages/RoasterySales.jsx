@@ -13,6 +13,10 @@ const VALID_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 const fmt = v =>
   Number(v || 0).toLocaleString('ar-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function normMime(type, name = '') {
   if (!type) {
     const ext = (name.split('.').pop() || '').toLowerCase()
@@ -40,7 +44,7 @@ async function analyzeRoasteryDoc(file) {
   if (!isImage && !isPdf) throw new Error(`نوع الملف غير مدعوم: ${mime}`)
 
   const b64   = await toBase64(file)
-  const today = new Date().toISOString().split('T')[0]
+  const today = fmtDate(new Date())
 
   const contentBlock = isImage
     ? { type: 'image',    source: { type: 'base64', media_type: mime,              data: b64 } }
@@ -142,7 +146,7 @@ export default function RoasterySales() {
     if (!result) return
     setSaving(true); setError('')
     try {
-      const date = result.date || new Date().toISOString().split('T')[0]
+      const date = result.date || fmtDate(new Date())
       const jn   = await getOrCreateJournalNumber(projectId, date)
 
       const mkEntry = (type, description, amount, dir = 'in') => ({

@@ -9,7 +9,10 @@ import { uploadToStorage } from '../lib/storage'
 const TARGET_PROJECT = 'بـ عسل'
 
 const fmt = v => (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const todayStr = () => new Date().toISOString().split('T')[0]
+const todayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export default function PayableSuppliers() {
   const { projectId, projectName } = useAuth()

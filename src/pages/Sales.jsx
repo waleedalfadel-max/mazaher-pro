@@ -34,13 +34,17 @@ const ROASTERY_CHANNELS = [
   { key: 'tahseel', type: '📥 تحصيل جملة',   label: 'تحصيل جملة',   icon: '📥', color: '#0891b2' },
 ]
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function getRange(type) {
   const n  = new Date()
-  const to = n.toISOString().split('T')[0]
+  const to = fmtDate(n)
   if (type === 'lastMonth') {
     const lm  = new Date(n.getFullYear(), n.getMonth() - 1, 1)
     const lme = new Date(n.getFullYear(), n.getMonth(), 0)
-    return { from: lm.toISOString().split('T')[0], to: lme.toISOString().split('T')[0] }
+    return { from: fmtDate(lm), to: fmtDate(lme) }
   }
   const from = type === 'year'
     ? `${n.getFullYear()}-01-01`

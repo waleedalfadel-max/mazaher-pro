@@ -53,6 +53,10 @@ function extractJSON(text) {
   }
 }
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 // Claude only accepts these image MIME types
 const VALID_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
@@ -86,7 +90,7 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
     ? { type: 'image',    source: { type: 'base64', media_type: mime,               data: fileBase64 } }
     : { type: 'document', source: { type: 'base64', media_type: 'application/pdf',  data: fileBase64 } }
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = fmtDate(new Date())
 
   // normalize transTypes — قد تكون strings أو objects {label, category}
   const typesAsStrings = (Array.isArray(transTypes) ? transTypes : [])
