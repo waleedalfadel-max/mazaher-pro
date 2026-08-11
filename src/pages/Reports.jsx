@@ -199,7 +199,6 @@ export default function Reports() {
     const prevToD        = fmtDate(new Date(ty, tm - 2, td))
 
     const [
-      { data: sales },
       { data: ledger },
       { data: ledgerFull },
       { data: documents },
@@ -211,8 +210,6 @@ export default function Reports() {
       { data: payableSuppliersData },
       engineResult,
     ] = await Promise.all([
-      applyBranch(supabase.from('sales').select('cash_sales,network_sales')
-        .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate)),
       applyBranch(supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
         .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
       applyBranch(supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,vat_amount,journal_number,category_main,category_sub')
@@ -235,28 +232,16 @@ export default function Reports() {
         .eq('project_id', projectId).neq('status','cancelled')
         .gte('date', prevFromD).lte('date', prevToD)),
       supabase.from('payable_suppliers').select('id,name').eq('project_id', projectId).order('name'),
-      getFinancialSummary(projectId, fromDate, toDate),
+      getFinancialSummary(projectId, fromDate, toDate, branchFilter),
     ])
     setEngineSummary(engineResult)
     setBranchEntries(allBranchEntries || [])
     setAllBranchSales(allBranchSalesData || [])
     setPurchaseDocs(purchaseDocsData || [])
 
-    const sum    = (list, field) => (list||[]).reduce((s,r) => s+(Number(r[field])||0), 0)
-    const sumOut = (list, types) => (list||[]).filter(r=>types.includes(r.type))
-      .reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
-
-    const cashSales    = sum(sales,'cash_sales')
-    const networkSales = sum(sales,'network_sales')
-    const totalSales   = cashSales + networkSales
-    const opEx         = sumOut(ledger, ['🛒 مصروفات تشغيلية'])
-    const fixEx        = sumOut(ledger, ['💰 مصروفات ثابتة'])
-    const loans        = sumOut(ledger, ['💳 قسط سيارة','💳 قسط شراء أرض','💳 قرض ١','💳 قرض ٢'])
-    const draws        = sumOut(ledger, ['💼 مسحوبات سليمان','💼 مسحوبات فايز'])
-    const grossProfit  = totalSales - opEx - fixEx
-    const netProfit    = grossProfit - loans
-    const netFlow      = netProfit - draws
-    const margin       = totalSales > 0 ? (netProfit / totalSales * 100).toFixed(1) : 0
+    // المبيعات من financialEngine حصرياً — مصدر الحقيقة الواحد (ledger_entries):
+    // يشمل مبيعات التطبيقات (receivable_in) التي كان جدول sales يُسقطها كلياً
+    const totalSales   = engineResult?.totalSales || 0
     const totalIn      = (ledgerFull||[]).reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
     const totalOut     = (ledgerFull||[]).reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
 
@@ -284,7 +269,7 @@ export default function Reports() {
         .filter(r => r.vat_amount > 0),
     ]
 
-    setData({ cashSales, networkSales, totalSales, opEx, fixEx, loans, draws, grossProfit, netProfit, netFlow, margin, totalIn, totalOut, outputVat, netSales, inputVat, netVat, vatEntries })
+    setData({ totalSales, totalIn, totalOut, outputVat, netSales, inputVat, netVat, vatEntries })
     setEntries(ledgerFull || [])
     setDocs(documents || [])
 

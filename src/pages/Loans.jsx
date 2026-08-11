@@ -19,6 +19,7 @@ export default function Loans() {
   async function load(pid) {
     const { data: ledger } = await supabase.from('ledger_entries')
       .select('type,cash_out,bank_out,custody_out').eq('project_id', pid)
+      .neq('status', 'cancelled')
 
     const result = {}
     LOAN_TYPES.forEach(lt => {

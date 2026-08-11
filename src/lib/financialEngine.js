@@ -71,14 +71,17 @@ function sumField(entries, field) {
   return entries.reduce((s, e) => s + (Number(e[field]) || 0), 0)
 }
 
-export async function getFinancialSummary(projectId, fromDate, toDate) {
-  const { data: entries, error } = await supabase
+export async function getFinancialSummary(projectId, fromDate, toDate, branch = null) {
+  let q = supabase
     .from('ledger_entries')
     .select('type, cash_in, bank_in, custody_in, cash_out, bank_out, custody_out, receivable_in, receivable_out, payable_in, payable_out, total_amount, status, date, branch')
     .eq('project_id', projectId)
     .gte('date', fromDate)
     .lte('date', toDate)
     .neq('status', 'cancelled')
+  if (branch && branch !== 'all') q = q.eq('branch', branch)
+
+  const { data: entries, error } = await q
 
   if (error || !entries) return null
 
