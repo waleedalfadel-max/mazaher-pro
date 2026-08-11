@@ -1,3 +1,5 @@
+import { guard } from './_guard.js'
+
 export const config = {
   api: {
     bodyParser: {
@@ -16,6 +18,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'CLAUDE_API_KEY not configured on server' })
   }
 
+  // نفس حارس analyze — هذي النقطة غير مستدعاة من التطبيق حالياً لكنها مكشوفة
+  const body = guard(req, res)
+  if (!body) return
+
   try {
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -24,7 +30,7 @@ export default async function handler(req, res) {
         'anthropic-version':  '2023-06-01',
         'content-type':       'application/json',
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     })
 
     const data = await upstream.json()

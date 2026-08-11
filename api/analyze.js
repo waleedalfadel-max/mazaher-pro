@@ -1,3 +1,5 @@
+import { guard } from './_guard.js'
+
 export const config = {
   api: {
     bodyParser: {
@@ -64,8 +66,12 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'CLAUDE_API_KEY not configured on server' })
   }
 
+  // الحارس: Origin + حد المعدل + بناء جسم آمن من الحقول المسموحة فقط.
+  // يعيد null بعد كتابة الرد إذا أُوقف الطلب.
+  const body = guard(req, res)
+  if (!body) return
+
   try {
-    const body = req.body
     console.log('=== API Request ===')
     console.log('model:', body?.model)
     console.log('system:', body?.system?.slice?.(0, 80))
