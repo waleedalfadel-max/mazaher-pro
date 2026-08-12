@@ -125,6 +125,23 @@ export function AuthProvider({ children }) {
     return u.role
   }
 
+  // ── جلسة Supabase حقيقية خلف PIN — إضافية وغير حاجبة (المرحلة 2-أ) ──
+  // تُستدعى بلا await من login() أدناه: فشلها لا يمنع الدخول أبداً، فقط
+  // تبقى الجلسة بلا auth.uid() (كحالها اليوم بالضبط) حتى ينجح استدعاء لاحق.
+  async function mintPinSession(userId, pin) {
+    try {
+      const res = await fetch('/api/pin-session', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, pin }),
+      })
+      if (!res.ok) return
+      const { tokenHash } = await res.json()
+      if (!tokenHash) return
+      await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'magiclink' })
+    } catch { /* أفضل جهد — لا يمنع الدخول بأي حال */ }
+  }
+
   async function login(pin) {
     const subdomain = getSubdomain()
     const isDev     = subdomain === '__dev__'
@@ -132,7 +149,7 @@ export function AuthProvider({ children }) {
     // ── 1. هل هذا الـ PIN لـ superadmin؟ (بحث بدون فلتر مشروع) ────────────
     const { data: superAdmin } = await supabase
       .from('app_users')
-      .select('name, role, project_id, branch')
+      .select('id, name, role, project_id, branch')
       .eq('pin', pin)
       .eq('role', 'superadmin')
       .maybeSingle()
@@ -146,7 +163,7 @@ export function AuthProvider({ children }) {
       // ── 2. بيئة التطوير: بدون قيود ────────────────────────────────────────
       const { data } = await supabase
         .from('app_users')
-        .select('name, role, project_id, branch')
+        .select('id, name, role, project_id, branch')
         .eq('pin', pin)
         .maybeSingle()
       user = data
@@ -165,7 +182,7 @@ export function AuthProvider({ children }) {
       }
       const { data } = await supabase
         .from('app_users')
-        .select('name, role, project_id, branch')
+        .select('id, name, role, project_id, branch')
         .eq('pin', pin)
         .eq('project_id', proj.id)
         .maybeSingle()
@@ -199,6 +216,9 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('mz_pname',   pName || '')
     sessionStorage.setItem('mz_branch',  user.branch || '')
     sessionStorage.setItem('mz_modules', JSON.stringify(mods))
+
+    // إضافي، غير حاجب — لا await، لا يؤثر على تجربة الدخول أو زمنها
+    mintPinSession(user.id, pin)
 
     return user.role
   }
