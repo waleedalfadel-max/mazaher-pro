@@ -76,7 +76,10 @@ export default function Login() {
   const attemptsRef   = useRef(0)
   const [lockedUntil, setLockedUntil] = useState(null)
   const [remaining,   setRemaining]   = useState(0)
-  const { login } = useAuth()
+  const [mode,        setMode]        = useState('pin')  // 'pin' | 'email' — البريد للمالك، لا يمسّ PIN
+  const [email,       setEmail]       = useState('')
+  const [password,    setPassword]    = useState('')
+  const { login, loginWithEmail } = useAuth()
   const navigate  = useNavigate()
 
   const subdomain = getSubdomain()
@@ -154,6 +157,24 @@ export default function Login() {
     setError('')
   }
 
+  // ── دخول المالك بالبريد — مسار منفصل تماماً عن PIN ──
+  async function attemptEmail(e) {
+    e?.preventDefault?.()
+    if (loading || !email || !password) return
+    setLoading(true)
+    setError('')
+    try {
+      const r = await loginWithEmail(email, password)
+      setLoading(false)
+      if (r) navigate(defaultPath(r))
+    } catch (err) {
+      setLoading(false)
+      setError(err.message || 'تعذّر تسجيل الدخول')
+      setShake(true)
+      setTimeout(() => setShake(false), 500)
+    }
+  }
+
   const DIGITS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
 
   // ── شاشة القفل ──────────────────────────────────────────────────
@@ -213,12 +234,52 @@ export default function Login() {
         {project && (
           <div className="flex items-center gap-3 mb-6">
             <div className="flex-1 h-px" style={{ background: 'rgba(27,58,92,0.1)' }}/>
-            <span className="text-xs font-semibold" style={{ color: '#b0bec5' }}>رمز الدخول</span>
+            <span className="text-xs font-semibold" style={{ color: '#b0bec5' }}>
+              {mode === 'email' ? 'دخول المالك' : 'رمز الدخول'}
+            </span>
             <div className="flex-1 h-px" style={{ background: 'rgba(27,58,92,0.1)' }}/>
           </div>
         )}
 
-        {/* ── بطاقة PIN ── */}
+        {/* ── بطاقة دخول المالك بالبريد ── */}
+        {mode === 'email' ? (
+          <form onSubmit={attemptEmail} className="rounded-2xl p-6 shadow-xl space-y-4" style={{ background: NAVY }}>
+            <p className="text-center text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.7)' }}>
+              دخول المالك بالبريد الإلكتروني
+            </p>
+            <div className={shake ? 'animate-bounce' : ''}>
+              <input
+                type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }}
+                placeholder="البريد الإلكتروني" dir="ltr" autoComplete="email"
+                className="w-full rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}
+              />
+              <input
+                type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }}
+                placeholder="كلمة المرور" dir="ltr" autoComplete="current-password"
+                className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
+                style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}
+              />
+            </div>
+            {error && <p className="text-center text-red-400 text-sm font-medium">{error}</p>}
+            <button
+              type="submit" disabled={loading || !email || !password}
+              className="w-full h-12 rounded-xl text-base font-semibold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center"
+              style={{ background: accent, color: NAVY }}
+            >
+              {loading
+                ? <span className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin inline-block" style={{ borderColor: NAVY, borderTopColor: 'transparent' }}/>
+                : 'دخول'}
+            </button>
+            <button
+              type="button" onClick={() => { setMode('pin'); setError(''); setPassword('') }}
+              className="w-full text-center text-xs font-semibold pt-1" style={{ color: 'rgba(255,255,255,0.5)' }}
+            >
+              ← الرجوع لرمز الدخول (PIN)
+            </button>
+          </form>
+        ) : (
+        /* ── بطاقة PIN ── */
         <div className="rounded-2xl p-6 shadow-xl" style={{ background: NAVY }}>
           {!project && (
             <p className="text-center text-sm font-semibold mb-5" style={{ color: 'rgba(255,255,255,0.7)' }}>
@@ -269,9 +330,21 @@ export default function Login() {
           </div>
 
         </div>
+        )}
+
+        {/* ── رابط دخول المالك بالبريد — يظهر في وضع PIN فقط ── */}
+        {mode === 'pin' && (
+          <button
+            onClick={() => { setMode('email'); setError(''); setPin('') }}
+            className="w-full text-center text-xs font-semibold mt-5 transition-colors"
+            style={{ color: '#8a9ba8' }}
+          >
+            👤 دخول المالك بالبريد الإلكتروني
+          </button>
+        )}
 
         {/* ── تذييل ── */}
-        <p className="text-center text-xs mt-5" style={{ color: '#b0bec5' }}>
+        <p className="text-center text-xs mt-4" style={{ color: '#b0bec5' }}>
           تحسيب © {new Date().getFullYear()}
         </p>
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react'
+import React, { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { getProjectModules } from '../lib/projectSettings'
 
@@ -45,6 +45,85 @@ export function AuthProvider({ children }) {
   const [projectName, setProjectName] = useState(() => sessionStorage.getItem('mz_pname')  || null)
   const [branch,      setBranch]      = useState(() => sessionStorage.getItem('mz_branch') || null)
   const [modules,     setModules]     = useState(() => { try { return JSON.parse(sessionStorage.getItem('mz_modules') || '[]') } catch { return [] } })
+  const [authMethod,  setAuthMethod]  = useState(() => sessionStorage.getItem('mz_auth_method') || null)
+
+  // ── مساعد يخصّ مسار البريد فقط: يضبط نفس حالة الجلسة التي يضبطها PIN ──
+  // (مسار PIN في login() أدناه لم يُمسّ — هذا المساعد لا يُستدعى منه)
+  function applyIdentity(user, pName, mods, method) {
+    setRole(user.role)
+    setUserName(user.name)
+    setProjectId(user.project_id || null)
+    setProjectName(pName)
+    setBranch(user.branch || null)
+    setModules(mods)
+    setAuthMethod(method)
+    sessionStorage.setItem('mz_role',        user.role)
+    sessionStorage.setItem('mz_user',        user.name)
+    sessionStorage.setItem('mz_pid',         user.project_id || '')
+    sessionStorage.setItem('mz_pname',       pName || '')
+    sessionStorage.setItem('mz_branch',      user.branch || '')
+    sessionStorage.setItem('mz_modules',     JSON.stringify(mods))
+    sessionStorage.setItem('mz_auth_method', method)
+  }
+
+  // ── استعادة جلسة المالك (Supabase Auth) عند التحميل — إضافي، دفاعي ──
+  // لا يعمل إلا إذا: لا هوية في sessionStorage + توجد جلسة Supabase + الصف مربوط بـauth_id.
+  // مغلّف بـtry/catch حتى لو لم يوجد عمود auth_id بعد (قبل تشغيل الـSQL اليدوي).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        if (sessionStorage.getItem('mz_role')) return   // هوية محمّلة أصلاً (PIN أو بريد سابق)
+        const { data: sess } = await supabase.auth.getSession()
+        const uid = sess?.session?.user?.id
+        if (!uid || cancelled) return
+        const { data: u } = await supabase
+          .from('app_users')
+          .select('name, role, project_id, branch')
+          .eq('auth_id', uid)
+          .maybeSingle()
+        if (!u || cancelled) return
+        let pName = null
+        if (u.project_id) {
+          const { data: proj } = await supabase.from('projects').select('name').eq('id', u.project_id).maybeSingle()
+          pName = proj?.name || null
+        }
+        const mods = u.project_id ? await getProjectModules(u.project_id) : []
+        if (cancelled) return
+        applyIdentity(u, pName, mods, 'email')
+      } catch { /* عمود auth_id غير موجود بعد أو خطأ شبكي — نتجاهل ونبقى على PIN */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // ── دخول المالك بالبريد + كلمة المرور (بجانب PIN، لا يمسّه) ──
+  async function loginWithEmail(email, password) {
+    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+      email: (email || '').trim(),
+      password: password || '',
+    })
+    if (authErr || !authData?.user) {
+      throw new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة')
+    }
+    const uid = authData.user.id
+    const { data: u, error } = await supabase
+      .from('app_users')
+      .select('name, role, project_id, branch')
+      .eq('auth_id', uid)
+      .maybeSingle()
+    if (error || !u) {
+      await supabase.auth.signOut()
+      throw new Error('هذا الحساب غير مربوط بمستخدم — تواصل مع مزوّد الخدمة')
+    }
+    let pName = null
+    if (u.project_id) {
+      const { data: proj } = await supabase.from('projects').select('name').eq('id', u.project_id).maybeSingle()
+      pName = proj?.name || null
+    }
+    const mods = u.project_id ? await getProjectModules(u.project_id) : []
+    applyIdentity(u, pName, mods, 'email')
+    return u.role
+  }
 
   async function login(pin) {
     const subdomain = getSubdomain()
@@ -138,19 +217,23 @@ export function AuthProvider({ children }) {
     setProjectName(null)
     setBranch(null)
     setModules([])
+    setAuthMethod(null)
     sessionStorage.removeItem('mz_role')
     sessionStorage.removeItem('mz_user')
     sessionStorage.removeItem('mz_pid')
     sessionStorage.removeItem('mz_pname')
     sessionStorage.removeItem('mz_branch')
     sessionStorage.removeItem('mz_modules')
+    sessionStorage.removeItem('mz_auth_method')
+    // ينهي جلسة Supabase إن وُجدت — عملية بلا أثر لمستخدم PIN (لا جلسة لديه)
+    supabase.auth.signOut().catch(() => {})
   }
 
   return (
     <AuthContext.Provider value={{
-      role, userName, projectId, projectName, branch, modules,
+      role, userName, projectId, projectName, branch, modules, authMethod,
       roleLabel:    ROLE_LABELS[role] || role,
-      login, logout, switchProject,
+      login, loginWithEmail, logout, switchProject,
       canEdit:      role === 'accountant' || role === 'superadmin',
       isOwner:      role === 'owner'      || role === 'superadmin',
       isPurchasing: role === 'purchasing',
