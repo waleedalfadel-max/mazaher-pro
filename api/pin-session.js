@@ -18,30 +18,31 @@ export const config = {
 const SYNTHETIC_DOMAIN = 'pin.internal.tahseeb.app'
 const PIN_RE = /^\d{4,8}$/
 
-// حد محاولات مخصص — يطابق قفل الواجهة بـLogin.jsx (3 محاولات / 5 دقائق)
-// بدل محدِّد Claude العام (20/دقيقة) غير المناسب لمساحة PIN الصغيرة
-const RATE_WINDOW_MS = 5 * 60 * 1000
-const RATE_MAX = 3
-const attempts = new Map()
+// ── حدّان مستقلان ──────────────────────────────────────────────────────────
+// أساسي، لكل userId: يطابق قفل الواجهة بـLogin.jsx (3 محاولات/5 دقائق) —
+// المقياس الصحيح، لأن userId يصل بالطلب نفسه (العميل طابق PIN محلياً أولاً)،
+// فلا حاجة لمعرفة صحة PIN لتحديد أي حساب يُستهدَف. يعزل اختبار كل دور عن غيره.
+// ثانوي خفيف، لكل IP: يمنع الرش عبر حسابات (userId) متعددة من نفس المصدر —
+// نمط لا يصدّه الحدّ الأول لأنه يعزل كل حساب بمعزل عن البقية.
+const USER_RATE_WINDOW_MS = 5 * 60 * 1000
+const USER_RATE_MAX = 3
+const userAttempts = new Map()
 
-function checkPinRateLimit(req, res) {
-  const ip = (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown'
+const IP_RATE_WINDOW_MS = 5 * 60 * 1000
+const IP_RATE_MAX = 20
+const ipAttempts = new Map()
+
+function checkBucket(map, key, max, windowMs) {
   const now = Date.now()
-  const rec = attempts.get(ip)
-
-  if (!rec || now - rec.start > RATE_WINDOW_MS) {
-    attempts.set(ip, { start: now, count: 1 })
+  const rec = map.get(key)
+  if (!rec || now - rec.start > windowMs) {
+    map.set(key, { start: now, count: 1 })
   } else {
     rec.count++
-    if (rec.count > RATE_MAX) {
-      console.warn('[pin-session] تجاوز حد المحاولات:', ip)
-      res.status(429).json({ error: 'RATE_LIMITED' })
-      return true
-    }
+    if (rec.count > max) return true
   }
-
-  if (attempts.size > 500) {
-    for (const [k, v] of attempts) if (now - v.start > RATE_WINDOW_MS) attempts.delete(k)
+  if (map.size > 500) {
+    for (const [k, v] of map) if (now - v.start > windowMs) map.delete(k)
   }
   return false
 }
@@ -51,11 +52,20 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
   if (checkOrigin(req, res)) return
-  if (checkPinRateLimit(req, res)) return
 
   const { userId, pin } = req.body || {}
   if (typeof userId !== 'string' || !userId || typeof pin !== 'string' || !PIN_RE.test(pin)) {
     return res.status(400).json({ error: 'INVALID_REQUEST' })
+  }
+
+  const ip = (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown'
+  if (checkBucket(ipAttempts, ip, IP_RATE_MAX, IP_RATE_WINDOW_MS)) {
+    console.warn('[pin-session] تجاوز الحدّ الثانوي (IP):', ip)
+    return res.status(429).json({ error: 'RATE_LIMITED' })
+  }
+  if (checkBucket(userAttempts, userId, USER_RATE_MAX, USER_RATE_WINDOW_MS)) {
+    console.warn('[pin-session] تجاوز الحدّ الأساسي (userId):', userId)
+    return res.status(429).json({ error: 'RATE_LIMITED' })
   }
 
   let admin
