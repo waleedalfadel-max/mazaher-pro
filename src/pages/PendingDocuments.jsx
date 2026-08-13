@@ -513,9 +513,18 @@ export default function PendingDocuments() {
 
     // فواتير متعددة — اعتمد كل فاتورة بقيدها المستقل
     if (invoiceList?.length > 1) {
-      const badIdx = invoiceList.findIndex(inv => inv.type === 'transfer' && !inv.paySource)
-      if (badIdx !== -1) {
-        updateDoc(doc.id, { _error: `⚠️ الفاتورة رقم ${badIdx + 1} من نوع "تحويل" — يجب اختيار مصدر الدفع لها قبل اعتماد الكل` })
+      const badTransferIdx = invoiceList.findIndex(inv => inv.type === 'transfer' && !inv.paySource)
+      if (badTransferIdx !== -1) {
+        updateDoc(doc.id, { _error: `⚠️ الفاتورة رقم ${badTransferIdx + 1} من نوع "تحويل" — يجب اختيار مصدر الدفع لها قبل اعتماد الكل` })
+        return
+      }
+      const badExpenseIdx = invoiceList.findIndex(inv => {
+        if (inv.type === 'sales' || inv.type === 'transfer') return false
+        const isMultiItem = inv.items?.length > 1
+        return (!isMultiItem && !inv.transType) || !inv.paySource
+      })
+      if (badExpenseIdx !== -1) {
+        updateDoc(doc.id, { _error: `⚠️ الفاتورة رقم ${badExpenseIdx + 1} — يجب اختيار التصنيف الأساسي ومصدر الدفع لها قبل اعتماد الكل` })
         return
       }
       updateDoc(doc.id, { _state: 'approving', _validationError: null, _dupCheck: false })
@@ -538,10 +547,8 @@ export default function PendingDocuments() {
     // فاتورة واحدة
     const res = invoiceList?.[0] ?? rawRes
 
-    // ── تحقق الإلزامي لمحمصة كون ──────────────────────────────────────
-    const docProjName = projMap[doc.project_id] || projectName
-    const isMahmasa = docProjName === 'محمصة كون'
-    if (isMahmasa && res?.type !== 'sales' && res?.type !== 'transfer') {
+    // ── تحقق إلزامي: تصنيف أساسي ومصدر دفع لأي مصروف — لكل المشاريع ──
+    if (res?.type !== 'sales' && res?.type !== 'transfer') {
       const isMultiItem = res?.items?.length > 1
       // فاتورة متعددة البنود: لا حقل "تصنيف أساسي" عام لنتحقق منه — التصنيف أصبح لكل بند (مسبوق تلقائياً من الذكاء الاصطناعي)
       const missingType = !isMultiItem && !res?.transType
@@ -591,6 +598,15 @@ export default function PendingDocuments() {
     if (inv.type === 'transfer' && !inv.paySource) {
       updateDoc(doc.id, { _error: '⚠️ يجب اختيار مصدر الدفع قبل اعتماد التحويل' })
       return
+    }
+    if (inv.type !== 'sales' && inv.type !== 'transfer') {
+      const isMultiItem = inv.items?.length > 1
+      const missingType = !isMultiItem && !inv.transType
+      const missingPay  = !inv.paySource
+      if (missingType || missingPay) {
+        updateDoc(doc.id, { _error: '⚠️ يجب اختيار التصنيف الأساسي ومصدر الدفع قبل الاعتماد' })
+        return
+      }
     }
     updateDoc(doc.id, { _state: 'approving', _error: '' })
     try {
