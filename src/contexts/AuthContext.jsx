@@ -142,64 +142,31 @@ export function AuthProvider({ children }) {
     } catch { /* أفضل جهد — لا يمنع الدخول بأي حال */ }
   }
 
+  // ── دخول PIN — عبر دالة login_with_pin (SECURITY DEFINER) بدل الاستعلام
+  // المباشر على app_users/projects. الدالة تُرجع صفاً واحداً كحد أقصى، ولا
+  // تكشف عمود pin إطلاقاً — ضرورية الآن بما أن RLS مفعَّل على الجدولين ولا
+  // توجد جلسة مصادَقة أصلاً وقت محاولة الدخول نفسها.
   async function login(pin) {
     const subdomain = getSubdomain()
     const isDev     = subdomain === '__dev__'
 
-    // ── 1. هل هذا الـ PIN لـ superadmin؟ (بحث بدون فلتر مشروع) ────────────
-    const { data: superAdmin } = await supabase
-      .from('app_users')
-      .select('id, name, role, project_id, branch')
-      .eq('pin', pin)
-      .eq('role', 'superadmin')
-      .maybeSingle()
+    const { data, error } = await supabase.rpc('login_with_pin', {
+      p_subdomain: subdomain || '',
+      p_pin: pin,
+    })
+    if (error) throw new Error(error.message)
 
-    let user = null
-
-    if (superAdmin) {
-      // superadmin يدخل من أي رابط
-      user = superAdmin
-    } else if (isDev) {
-      // ── 2. بيئة التطوير: بدون قيود ────────────────────────────────────────
-      const { data } = await supabase
-        .from('app_users')
-        .select('id, name, role, project_id, branch')
-        .eq('pin', pin)
-        .maybeSingle()
-      user = data
-    } else {
-      // ── 3. إنتاج: فلتر حسب الـ subdomain ──────────────────────────────────
-      if (!subdomain) {
+    const row = data?.[0]
+    if (!row?.id) {
+      // نفس رسالة الخطأ الحالية بالضبط — فقط حين subdomain غير قابل للحل بالإنتاج
+      if (!isDev && row?.subdomain_resolved === false) {
         throw new Error('يرجى الدخول من رابط مشروعك الخاص')
       }
-      const { data: proj } = await supabase
-        .from('projects')
-        .select('id')
-        .eq('subdomain', subdomain)
-        .maybeSingle()
-      if (!proj?.id) {
-        throw new Error('يرجى الدخول من رابط مشروعك الخاص')
-      }
-      const { data } = await supabase
-        .from('app_users')
-        .select('id, name, role, project_id, branch')
-        .eq('pin', pin)
-        .eq('project_id', proj.id)
-        .maybeSingle()
-      user = data
+      return null
     }
 
-    if (!user) return null
-
-    let pName = null
-    if (user.project_id) {
-      const { data: proj } = await supabase
-        .from('projects')
-        .select('name')
-        .eq('id', user.project_id)
-        .maybeSingle()
-      pName = proj?.name || null
-    }
+    const user = { id: row.id, role: row.role, name: row.name, project_id: row.project_id, branch: row.branch }
+    const pName = row.project_name
 
     const mods = user.project_id ? await getProjectModules(user.project_id) : []
 
