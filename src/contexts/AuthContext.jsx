@@ -217,8 +217,16 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('mz_branch',  user.branch || '')
     sessionStorage.setItem('mz_modules', JSON.stringify(mods))
 
-    // إضافي، غير حاجب — لا await، لا يؤثر على تجربة الدخول أو زمنها
-    mintPinSession(user.id, pin)
+    // ننتظر منح الجلسة الحقيقية بمهلة 3 ثوانٍ قبل إعادة النتيجة — بمجرد تفعيل
+    // RLS على جداول تُستعلَم فور الدخول (الدفعة 3)، أول صفحة قد تصل بجلسة
+    // anon القديمة (لا auth.uid()) لو انتقلنا قبل اكتمال المنح، فتظهر فارغة
+    // لثوانٍ. mintPinSession نفسها لا ترمي أبداً (try/catch داخلي) — المهلة
+    // هنا فقط سقف أعلى يمنع التجمّد لو تعطّل الخادم؛ لا تُلغي خاصية
+    // "الفشل لا يمنع الدخول أبداً".
+    await Promise.race([
+      mintPinSession(user.id, pin),
+      new Promise(resolve => setTimeout(resolve, 3000)),
+    ])
 
     return user.role
   }
