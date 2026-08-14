@@ -15,26 +15,6 @@ const PROJECT_INFO = {
     welcome: 'مرحباً بك في نظام المتابعة المالية',
     color: '#6EB7B0',
   },
-  tashormik: {
-    name: 'تشورميك',
-    welcome: 'مرحباً بك في نظام المتابعة المالية',
-    color: '#6EB7B0',
-  },
-  koon: {
-    name: 'محمصة كون',
-    welcome: 'مرحباً بك في نظام المتابعة المالية',
-    color: '#6EB7B0',
-  },
-  trial: {
-    name: 'مطعم الوادي 🍔',
-    welcome: 'مرحباً بك في النظام التجريبي',
-    color: '#6EB7B0',
-  },
-  basal: {
-    name: 'بـ عسل ☕',
-    welcome: 'مرحباً بك في نظام المتابعة المالية',
-    color: '#6EB7B0',
-  },
 }
 
 function getSubdomain() {

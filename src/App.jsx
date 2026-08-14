@@ -17,10 +17,7 @@ import JournalLedger from './pages/JournalLedger'
 import JournalArchive from './pages/JournalArchive'
 import SuperAdmin from './pages/SuperAdmin'
 import Suppliers from './pages/Suppliers'
-import RoasterySales from './pages/RoasterySales'
 import BankReconciliation from './pages/BankReconciliation'
-import PayableSuppliers from './pages/PayableSuppliers'
-import AppReconciliation from './pages/AppReconciliation'
 import QuickSale from './pages/QuickSale'
 
 function TrialFormRedirect() {
@@ -96,18 +93,6 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
-      <Route path="/payable-suppliers" element={
-        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
-          <PayableSuppliers />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/app-reconciliation" element={
-        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
-          <AppReconciliation />
-        </ProtectedRoute>
-      } />
-
       <Route path="/invoice" element={
         <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'cashier', 'owner']}>
           <InvoiceUpload />
@@ -153,12 +138,6 @@ function AppRoutes() {
       <Route path="/suppliers" element={
         <ProtectedRoute allowedRoles={['accountant']}>
           <Suppliers />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/roastery-sales" element={
-        <ProtectedRoute allowedRoles={['accountant']}>
-          <RoasterySales />
         </ProtectedRoute>
       } />
 

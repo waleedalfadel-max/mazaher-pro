@@ -68,11 +68,8 @@ function resolveInvoiceType(items, categories, transTypes, fallbackTransType) {
 
 // مصدر الدفع الافتراضي بناءً على اسم المشروع ودور الرافع
 function getDefaultPaySource(projName, uploadedBy) {
-  if (projName?.includes('تشورميك')) return 'bank'
   if (uploadedBy === 'cashier') return 'cash'
   if (uploadedBy === 'owner')   return 'bank'
-  if (projName?.includes('كون') && uploadedBy === 'purchasing') return 'bank'
-  if (projName?.includes('كون') && uploadedBy === 'accountant') return 'bank'
   if (uploadedBy === 'purchasing') return 'custody'
   return null
 }
@@ -241,16 +238,15 @@ export default function PendingDocuments() {
       }
       const result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes)
 
-      // مصدر الدفع — تشورميك: bank دائماً بغض النظر عما أعاده Claude أو ما هو محفوظ
+      // مصدر الدفع الافتراضي — يُطبَّق فقط إذا لم يُحدَّد أصلاً
       const defaultPaySource = getDefaultPaySource(docProjName, doc.uploaded_by)
-      const isTashormik = docProjName?.includes('تشورميك')
-      if (isTashormik || defaultPaySource) {
+      if (defaultPaySource) {
         if (result?.invoices) {
           result.invoices = result.invoices.map(inv =>
-            inv.type === 'sales' ? inv : { ...inv, paySource: isTashormik ? 'bank' : (inv.paySource || defaultPaySource) }
+            inv.type === 'sales' ? inv : { ...inv, paySource: inv.paySource || defaultPaySource }
           )
         } else if (result && result.type !== 'sales') {
-          result.paySource = isTashormik ? 'bank' : (result.paySource || defaultPaySource)
+          result.paySource = result.paySource || defaultPaySource
         }
       }
 
@@ -309,7 +305,7 @@ export default function PendingDocuments() {
   async function _approveOne(doc, res, forceNew) {
     const pid        = doc.project_id || pidRef.current
     const docProjName = projMap[pid] || projectName || ''
-    const pay        = docProjName?.includes('تشورميك') ? 'bank' : (res.paySource || 'custody')
+    const pay        = res.paySource || 'custody'
     const isIncoming = res.transType?.includes('تحصيل جملة')
     const docCategories = isSuperAdmin ? (categoriesMap[pid] || []) : categories
     const docTransTypes = isSuperAdmin ? (transTypesMap[pid] || FALLBACK_TRANS_TYPES) : transTypes
@@ -683,7 +679,6 @@ export default function PendingDocuments() {
       ) : docs.map(doc => (
         <DocCard key={doc.id} doc={doc}
           projName={isSuperAdmin ? (projMap[doc.project_id] || '') : ''}
-          branchProjectName={projMap[doc.project_id] || projectName || ''}
           onLoadImage={() => loadImage(doc)}
           onAnalyze={() => analyze(doc)}
           onApprove={() => approve(doc)}
@@ -838,16 +833,9 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
 }
 
 // ── DocCard ──────────────────────────────────────────────────────────────────
-function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, payableSuppliers, ROLE_AR, ROLE_COLOR }) {
+function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, payableSuppliers, ROLE_AR, ROLE_COLOR }) {
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
-  const hideBranchPicker = branchProjectName?.includes('بـ عسل')
-
-  useEffect(() => {
-    if (hideBranchPicker && !doc.branch && branches.length > 0) {
-      onBranchChange(branches[0])
-    }
-  }, [hideBranchPicker, doc.branch, branches])
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
   const busy          = ['analyzing','approving','rejecting'].includes(doc._state)
   const isImage  = doc.file_type?.startsWith('image/')
@@ -1156,7 +1144,7 @@ function DocCard({ doc, projName, branchProjectName, onLoadImage, onAnalyze, onA
             </div>
 
             {/* ── منتقي الفرع — يظهر إذا لم يكن للمستند فرع ── */}
-            {!doc.branch && branches.length > 0 && !hideBranchPicker && (
+            {!doc.branch && branches.length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3">
                 <span className="text-amber-600 text-sm shrink-0">🏢 الفرع</span>
                 <select
