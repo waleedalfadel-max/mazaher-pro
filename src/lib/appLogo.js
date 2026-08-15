@@ -1,8 +1,8 @@
 import { supabase } from './supabase'
 
-const BUCKET      = 'documents'
-const PATH        = '__app__/logo.png'
-const FOLDER      = '__app__'
+const BUCKET      = 'public-assets'
+const PATH        = 'logo.png'
+const FOLDER      = ''
 const CACHE_TTL   = 5 * 60 * 1000  // 5 دقائق
 
 function getBaseUrl() {

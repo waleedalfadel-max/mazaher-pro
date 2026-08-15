@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getSignedUrl } from '../lib/storage'
 
 export default function Journals() {
   const { canEdit, projectId } = useAuth()
@@ -78,8 +79,12 @@ export default function Journals() {
                     {r.custody_in  > 0 && <span className="text-green-600">دخل عهدة: {fmt(r.custody_in)}</span>}
                   </div>
                   {r.file_url && (
-                    <a href={r.file_url} target="_blank" rel="noreferrer"
-                      className="text-xs text-blue-600 hover:underline">📎 عرض الفاتورة</a>
+                    <button onClick={async () => {
+                        const win = window.open('', '_blank')
+                        const url = await getSignedUrl(r.file_url)
+                        if (win) { if (url) win.location.href = url; else win.close() }
+                      }}
+                      className="text-xs text-blue-600 hover:underline">📎 عرض الفاتورة</button>
                   )}
                 </div>
                 {canEdit && (

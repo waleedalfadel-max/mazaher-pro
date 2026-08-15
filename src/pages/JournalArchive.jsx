@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { getSignedUrl } from '../lib/storage'
 
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
@@ -85,7 +86,7 @@ async function exportGroupPdf(group, fmt) {
               <td style="padding:6px 10px 2px;text-align:right;font-weight:bold;color:#16a34a;font-family:monospace">${fmt(amount)}</td>
               <td style="padding:6px 10px 2px;text-align:right;color:#d1d5db">—</td>
               <td rowspan="2" style="padding:7px 10px;text-align:center;vertical-align:middle">
-                ${r.file_url ? `<a href="${r.file_url}" style="color:#1d4ed8;font-size:10px;text-decoration:underline">📎 مستند</a>` : '<span style="color:#d1d5db">—</span>'}
+                ${r.file_url ? `<span style="color:#6b7280;font-size:10px">📎 مستند (اُنظر التطبيق)</span>` : '<span style="color:#d1d5db">—</span>'}
               </td>
             </tr>
             <tr style="border-bottom:3px solid #f5f4f0">
@@ -425,14 +426,18 @@ export default function JournalArchive() {
                               </td>
                               <td className="px-3 text-center" rowSpan={2} style={{ verticalAlign: 'middle' }}>
                                 {r.file_url
-                                  ? <a href={r.file_url} target="_blank" rel="noreferrer"
+                                  ? <button onClick={async () => {
+                                        const win = window.open('', '_blank')
+                                        const url = await getSignedUrl(r.file_url)
+                                        if (win) { if (url) win.location.href = url; else win.close() }
+                                      }}
                                       title={r._doc_name || 'فتح المستند'}
                                       className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-sm transition-colors"
                                       style={{ background: '#fef9ec', color: GOLD }}
                                       onMouseEnter={e => e.currentTarget.style.background = '#fef3c7'}
                                       onMouseLeave={e => e.currentTarget.style.background = '#fef9ec'}>
                                       📎
-                                    </a>
+                                    </button>
                                   : <span className="text-slate-200 text-xs">—</span>
                                 }
                               </td>

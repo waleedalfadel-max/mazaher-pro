@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { analyzeDocument } from '../lib/claude'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
-import { fetchAsBase64 } from '../lib/storage'
+import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
 import { compressImageBase64 } from '../lib/imageCompress'
 import { matchSupplier } from '../lib/supplierMatching'
@@ -194,9 +194,13 @@ export default function PendingDocuments() {
   }
 
   async function loadImage(doc) {
-    if (doc._imageData) { updateDoc(doc.id, { _showImage: !doc._showImage }); return }
+    if (doc._showImage) { updateDoc(doc.id, { _showImage: false }); return }
+    if (doc._imageData && !doc._isUrl) { updateDoc(doc.id, { _showImage: true }); return }
     if (doc.file_url) {
-      updateDoc(doc.id, { _imageData: doc.file_url, _isUrl: true, _showImage: true })
+      // رابط موقَّت يُولَّد وقت الطلب في كل مرة — لا يُخزَّن مؤقتاً بسبب انتهاء صلاحيته
+      updateDoc(doc.id, { _loadingImg: true })
+      const signedUrl = await getSignedUrl(doc.file_url)
+      updateDoc(doc.id, { _imageData: signedUrl, _isUrl: true, _showImage: true, _loadingImg: false })
       return
     }
     updateDoc(doc.id, { _loadingImg: true })
@@ -221,9 +225,10 @@ export default function PendingDocuments() {
         docTransTypes = transTypesMap[docPid] || await getTransactionTypes(docPid)
       }
 
-      let fileBase64, fileMime
+      let fileBase64, fileMime, signedFileUrl = null
       if (doc.file_url) {
-        const fetched = await fetchAsBase64(doc.file_url)
+        signedFileUrl = await getSignedUrl(doc.file_url)
+        const fetched = await fetchAsBase64(signedFileUrl)
         fileBase64 = fetched.base64
         fileMime   = fetched.mimeType || doc.file_type
       } else {
@@ -255,8 +260,8 @@ export default function PendingDocuments() {
         _state: 'analyzed', status: 'analyzed',
         analysis_result: result, _edit: result,
         _aiSuggestedType: true,
-        _imageData: doc.file_url || fileBase64,
-        _isUrl: !!doc.file_url,
+        _imageData: signedFileUrl || fileBase64,
+        _isUrl: !!signedFileUrl,
         _showImage: true,
       })
     } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }

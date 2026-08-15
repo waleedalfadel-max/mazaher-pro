@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { uploadToStorage } from '../lib/storage'
+import { uploadToStorage, getSignedUrl } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { analyzeDocument } from '../lib/claude'
 
@@ -142,6 +142,15 @@ export default function InvoiceUpload() {
   }
 
   function reset() { setFiles([]); setAllDone(false) }
+
+  // يفتح نافذة فارغة فوراً (يتجنّب حاجب النوافذ المنبثقة) ثم يوجّهها لرابط موقَّت بعد جلبه
+  async function openDoc(fileUrl) {
+    const win = window.open('', '_blank')
+    const url = await getSignedUrl(fileUrl)
+    if (!win) return
+    if (url) win.location.href = url
+    else win.close()
+  }
 
   const pendingCount = files.filter(f => f.status === 'pending').length
   const doneCount    = files.filter(f => f.status === 'done').length
@@ -316,8 +325,8 @@ export default function InvoiceUpload() {
               const approved = doc.status === 'approved'
               return (
                 <div key={doc.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
-                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-3 flex-1 min-w-0">
+                  <button onClick={() => openDoc(doc.file_url)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-right">
                     <span className="text-xl shrink-0">{doc.file_type?.startsWith('image/') ? '🖼️' : '📄'}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-blue-700 truncate hover:underline">{doc.file_name}</div>
@@ -325,7 +334,7 @@ export default function InvoiceUpload() {
                         {new Date(doc.uploaded_at).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' })}
                       </div>
                     </div>
-                  </a>
+                  </button>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 ${
                     approved ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
                   }`}>

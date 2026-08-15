@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { uploadToStorage } from '../lib/storage'
+import { uploadToStorage, getSignedUrl } from '../lib/storage'
 
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
@@ -123,11 +123,15 @@ function AttachModal({ entry, projectId, role, onClose, onAdded }) {
                     <div className="text-sm font-medium truncate" style={{ color: NAVY }}>{a.file_name}</div>
                     <div className="text-xs text-slate-400">{ROLE_AR[a.uploaded_by] || a.uploaded_by} — {fmtDate(a.uploaded_at)}</div>
                   </div>
-                  <a href={a.file_url} target="_blank" rel="noreferrer"
+                  <button onClick={async () => {
+                      const win = window.open('', '_blank')
+                      const url = await getSignedUrl(a.file_url)
+                      if (win) { if (url) win.location.href = url; else win.close() }
+                    }}
                     className="text-xs font-semibold px-2 py-1 rounded-lg transition-all"
                     style={{ background: '#eff6ff', color: '#1d4ed8' }}>
                     فتح
-                  </a>
+                  </button>
                   {(role === 'owner' || role === 'accountant') && (
                     <button onClick={() => handleDelete(a.id)}
                       className="text-xs px-2 py-1 rounded-lg transition-all"
@@ -390,14 +394,18 @@ export default function JournalLedger() {
                     {/* عمود المستند الأصلي */}
                     <td className="px-4 py-3 text-center">
                       {r.file_url
-                        ? <a href={r.file_url} target="_blank" rel="noreferrer"
+                        ? <button onClick={async () => {
+                              const win = window.open('', '_blank')
+                              const url = await getSignedUrl(r.file_url)
+                              if (win) { if (url) win.location.href = url; else win.close() }
+                            }}
                             title={r._doc_name || 'فتح المستند'}
                             className="inline-flex items-center justify-center w-7 h-7 rounded-lg transition-colors text-base"
                             style={{ background: '#fef9ec', color: GOLD }}
                             onMouseEnter={e => e.currentTarget.style.background = '#fef3c7'}
                             onMouseLeave={e => e.currentTarget.style.background = '#fef9ec'}>
                             📎
-                          </a>
+                          </button>
                         : <span className="text-slate-300 text-xs">—</span>
                       }
                     </td>

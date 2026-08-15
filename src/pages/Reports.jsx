@@ -97,7 +97,6 @@ export default function Reports() {
   const [prevPeriodSales, setPrevPeriodSales] = useState(null)
   const [prevEntries,     setPrevEntries]     = useState([])
   const pdfRef          = useRef()
-  const docsRowRefs     = useRef([])
   const monthPickerRef  = useRef()
 
   const liveRef = useRef({ from: init.from, to: init.to, branch: 'all' })
@@ -294,14 +293,6 @@ export default function Reports() {
       const el = pdfRef.current
       el.style.display = 'block'
       await new Promise(r => setTimeout(r, 150))
-      const containerRect = el.getBoundingClientRect()
-      const containerH    = el.offsetHeight || containerRect.height
-      const linkData = docsRowRefs.current
-        .map((rowEl, i) => {
-          if (!rowEl || !docs[i]?.file_url) return null
-          const rowRect = rowEl.getBoundingClientRect()
-          return { url: docs[i].file_url, topRatio: (rowRect.top - containerRect.top) / containerH, heightRatio: rowRect.height / containerH }
-        }).filter(Boolean)
       const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
       el.style.display = 'none'
       const imgData = canvas.toDataURL('image/png')
@@ -315,15 +306,6 @@ export default function Reports() {
         remaining -= pageH; yOffset += pageH
         if (remaining > 0) pdf.addPage()
       }
-      const totalPages = Math.ceil(imgH / pageH)
-      linkData.forEach(({ url, topRatio, heightRatio }) => {
-        const pdfYTotal = topRatio * imgH
-        const pageNum   = Math.floor(pdfYTotal / pageH)
-        if (pageNum < totalPages) {
-          pdf.setPage(pageNum + 1)
-          pdf.link(0, pdfYTotal - pageNum * pageH, pageW, Math.max(heightRatio * imgH, 5), { url })
-        }
-      })
       pdf.save(`تقرير-${from}-${to}.pdf`)
     } catch(e) { console.error(e) }
     setExporting(false)
@@ -1435,10 +1417,10 @@ export default function Reports() {
                     const res    = d.analysis_result
                     const amount = res?.type==='sales'?((res.cashSales||0)+(res.networkSales||0)):(res?.amount||0)
                     return (
-                      <tr key={i} ref={el => docsRowRefs.current[i] = el}
+                      <tr key={i}
                         style={{ borderBottom:'1px solid #f1f5f9', background:i%2===0?'#fff':'#fafaf8' }}>
                         <td style={{ padding:'5px 6px', color:GOLD, fontWeight:'bold' }}>{d.journal_number||'—'}</td>
-                        <td style={{ padding:'5px 6px', color:d.file_url?'#1d4ed8':'#374151', textDecoration:d.file_url?'underline':'none' }}>
+                        <td style={{ padding:'5px 6px', color:'#374151' }}>
                           {cleanFileName(d.file_name)}
                         </td>
                         <td style={{ padding:'5px 6px', color:'#374151' }}>{ROLE_AR[d.uploaded_by]||d.uploaded_by}</td>

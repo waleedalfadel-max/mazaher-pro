@@ -1,5 +1,24 @@
 import { supabase } from './supabase'
 
+const PUBLIC_MARKER = '/object/public/documents/'
+
+// يستخلص المسار داخل الـbucket من رابط عام مخزَّن سابقاً (getPublicUrl)،
+// بصرف النظر عن حالة الـbucket الفعلية اليوم — الشكل النصي ثابت دائماً
+function extractStoragePath(storedUrl) {
+  const idx = (storedUrl || '').indexOf(PUBLIC_MARKER)
+  if (idx === -1) return null
+  return decodeURIComponent(storedUrl.slice(idx + PUBLIC_MARKER.length))
+}
+
+// يولّد رابطاً موقَّعاً مؤقتاً من رابط file_url المخزَّن (عام أو خاص، لا فرق)
+export async function getSignedUrl(storedUrl, expiresIn = 300) {
+  const path = extractStoragePath(storedUrl)
+  if (!path) return null
+  const { data, error } = await supabase.storage.from('documents').createSignedUrl(path, expiresIn)
+  if (error) return null
+  return data.signedUrl
+}
+
 export async function uploadToStorage(file, projectId) {
   const ext  = file.name.split('.').pop().toLowerCase()
   const path = `${projectId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
