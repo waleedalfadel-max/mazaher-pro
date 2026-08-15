@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
 import staticLogo from '../assets/logo.png'
 import { fetchLogoUrl } from '../lib/appLogo'
 
@@ -8,14 +9,6 @@ const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
 const MAX_ATTEMPTS  = 3
 const LOCK_DURATION = 5 * 60 * 1000
-
-const PROJECT_INFO = {
-  mazaher: {
-    name: 'ديوانية مزاهر',
-    welcome: 'مرحباً بك في نظام المتابعة المالية',
-    color: '#6EB7B0',
-  },
-}
 
 function getSubdomain() {
   const host = window.location.hostname
@@ -63,10 +56,27 @@ export default function Login() {
   const navigate  = useNavigate()
 
   const subdomain = getSubdomain()
-  const project   = PROJECT_INFO[subdomain] || null
+  const [project, setProject] = useState(null)
   const accent    = project?.color || GOLD
 
   useEffect(() => { fetchLogoUrl().then(url => { if (url) setLogo(url) }) }, [])
+
+  // بيانات العلامة التجارية — من دالة RPC ضيّقة (نفس نمط login_with_pin)
+  // بدل خريطة ثابتة بالكود، حتى لا يحتاج أي مشروع جديد تعديل كود لإضافته.
+  // فشل الاستدعاء (شبكة، أو الدالة غير موجودة بعد) يُترَك بصمت — project
+  // يبقى null فيظهر النص العام الافتراضي، لا تعطيل لشاشة الدخول.
+  useEffect(() => {
+    if (!subdomain || subdomain === '__dev__') return
+    let cancelled = false
+    supabase.rpc('get_project_branding', { p_subdomain: subdomain })
+      .then(({ data, error }) => {
+        if (cancelled || error) return
+        const row = data?.[0]
+        if (row) setProject({ name: row.name, welcome: row.welcome, color: row.color })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [subdomain])
 
   // عداد تنازلي
   useEffect(() => {
