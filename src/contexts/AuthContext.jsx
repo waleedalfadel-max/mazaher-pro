@@ -82,7 +82,7 @@ export function AuthProvider({ children }) {
           .select('name, role, project_id, branch')
           .eq('auth_id', uid)
           .maybeSingle()
-        if (!u || cancelled) return
+        if (!u || u.role !== 'owner' || cancelled) return
         let pName = null
         if (u.project_id) {
           const { data: proj } = await supabase.from('projects').select('name').eq('id', u.project_id).maybeSingle()
