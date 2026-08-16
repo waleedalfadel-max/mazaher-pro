@@ -15,7 +15,7 @@ const CHANNEL_COLORS = {
   'كاش':     '#6EB7B0', 'شبكة':   '#1B3A5C', 'تحويل': '#3b82f6',
   'هنقر':    '#ef4444', 'جاهز':   '#f97316', 'كيتا':  '#8b5cf6',
   'مرسول':   '#10b981', 'سلة':    '#06b6d4', 'تابي':  '#ec4899',
-  'تمارا':   '#84cc16', 'تحصيل':  '#6366f1',
+  'تمارا':   '#84cc16', 'تحصيل':  '#6366f1', 'نينجا': '#0ea5e9',
 }
 const EXPENSE_COLORS = ['#ef4444','#f97316','#8b5cf6','#1B3A5C','#06b6d4']
 const BRANCH_COLORS  = ['#6EB7B0','#2D7A5F','#D4922A','#E9D8BB','#1B3A5C']
@@ -30,6 +30,7 @@ function channelOf(type) {
   if (t.includes('جاهز'))   return 'جاهز'
   if (t.includes('كيتا'))   return 'كيتا'
   if (t.includes('مرسول'))  return 'مرسول'
+  if (t.includes('نينجا'))  return 'نينجا'
   if (t.includes('سلة'))    return 'سلة'
   if (t.includes('تابي'))   return 'تابي'
   if (t.includes('تمارا'))  return 'تمارا'
@@ -288,8 +289,9 @@ export default function Dashboard() {
         jahez:   sumRcvIn('جاهز')   - sumRcvOut('جاهز'),
         keeta:   sumRcvIn('كيتا')   - sumRcvOut('كيتا'),
         mrsool:  sumRcvIn('مرسول')  - sumRcvOut('مرسول'),
+        ninja:   sumRcvIn('نينجا')  - sumRcvOut('نينجا'),
       }
-      setReceivables(rcv.hunger > 0 || rcv.jahez > 0 || rcv.keeta > 0 || rcv.mrsool > 0 ? rcv : null)
+      setReceivables(rcv.hunger > 0 || rcv.jahez > 0 || rcv.keeta > 0 || rcv.mrsool > 0 || rcv.ninja > 0 ? rcv : null)
     } catch(e) { console.error(e); setBalances({ cash:0, bank:0, custody:0 }) }
   }
 
@@ -693,6 +695,7 @@ export default function Dashboard() {
               { label: 'جاهز',   val: receivables.jahez,   color: '#ea580c' },
               { label: 'كيتا',   val: receivables.keeta,   color: '#7c3aed' },
               { label: 'مرسول',  val: receivables.mrsool,  color: '#059669' },
+              { label: 'نينجا',  val: receivables.ninja,   color: '#0ea5e9' },
             ].filter(x => (x.val||0) > 0).map(({ label, val, color }) => (
               <div key={label} className="rounded-xl p-3 text-center" style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
                 <div className="text-xs font-semibold mb-1" style={{ color: '#92400e' }}>{label}</div>
@@ -703,7 +706,7 @@ export default function Dashboard() {
             ))}
           </div>
           <div className="mt-2 text-xs text-right" style={{ color: '#a78a50' }}>
-            الإجمالي: {((receivables.hunger||0)+(receivables.jahez||0)+(receivables.keeta||0)+(receivables.mrsool||0)).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س — يُحصَّل عند ورود التحويل البنكي
+            الإجمالي: {((receivables.hunger||0)+(receivables.jahez||0)+(receivables.keeta||0)+(receivables.mrsool||0)+(receivables.ninja||0)).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س — يُحصَّل عند ورود التحويل البنكي
           </div>
         </div>
       )}

@@ -1,11 +1,7 @@
 import { supabase } from './supabase'
 
-export const SALES_TYPES = [
-  'مبيعات كاش', 'مبيعات شبكة', 'مبيعات تحويل', 'مبيعات هنقر ستيشن',
-  'مبيعات جاهز', 'مبيعات كيتا', 'مبيعات مرسول', 'مبيعات سلة',
-  'مبيعات تابي', 'مبيعات تمارا', 'تحصيل جملة',
-  'مبيعات إلكترونية',
-]
+const SALES_KEYWORD = 'مبيعات'
+const SALES_EXTRA_TYPES = ['تحصيل جملة']  // النوع الوحيد المصنَّف مبيعات بلا كلمة "مبيعات" بنصه
 
 const EXCLUDED_TYPES = [
   'تحويل داخلي',
@@ -30,7 +26,8 @@ export const DEBT_TYPES = [
 ]
 
 export function isSales(type) {
-  return SALES_TYPES.some(s => (type || '').includes(s.replace(/^[^؀-ۿ]+/, '').trim()))
+  const t = type || ''
+  return t.includes(SALES_KEYWORD) || SALES_EXTRA_TYPES.some(s => t.includes(s))
 }
 
 export function isExcluded(type) {

@@ -510,14 +510,15 @@ export default function Reports() {
               const b = e.branch || '— غير محدد'
               const t = e.type || ''
               const amt = (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
-              if (!t.includes('هنقر') && !t.includes('جاهز') && !t.includes('كيتا') && !t.includes('مرسول')) return
-              if (!appMap[b]) appMap[b] = { hunger: 0, jahez: 0, keeta: 0, mrsool: 0 }
+              if (!t.includes('هنقر') && !t.includes('جاهز') && !t.includes('كيتا') && !t.includes('مرسول') && !t.includes('نينجا')) return
+              if (!appMap[b]) appMap[b] = { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
               if (t.includes('هنقر')) appMap[b].hunger += amt
               if (t.includes('جاهز')) appMap[b].jahez  += amt
               if (t.includes('كيتا')) appMap[b].keeta  += amt
               if (t.includes('مرسول')) appMap[b].mrsool += amt
+              if (t.includes('نينجا')) appMap[b].ninja += amt
             })
-            const hasAppSales = Object.values(appMap).some(v => v.hunger + v.jahez + v.keeta + v.mrsool > 0)
+            const hasAppSales = Object.values(appMap).some(v => v.hunger + v.jahez + v.keeta + v.mrsool + v.ninja > 0)
             const appBranches = branches.length > 0 ? branches.filter(b => appMap[b]) : Object.keys(appMap)
 
             // القسم 3: النمو — بناءً على آخر تاريخ فيه مبيعات فعلية
@@ -656,14 +657,15 @@ export default function Reports() {
                             <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#f97316' }}>جاهز</th>
                             <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#8b5cf6' }}>كيتا</th>
                             <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#10b981' }}>مرسول</th>
+                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#0ea5e9' }}>نينجا</th>
                             <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>إجمالي التطبيقات</th>
                             <th className="px-4 py-3 text-right text-xs font-bold text-slate-400">% من المبيعات</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(appBranches.length > 0 ? appBranches : Object.keys(appMap)).map((b, i) => {
-                            const v        = appMap[b] || { hunger: 0, jahez: 0, keeta: 0, mrsool: 0 }
-                            const appTotal = v.hunger + v.jahez + v.keeta + v.mrsool
+                            const v        = appMap[b] || { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
+                            const appTotal = v.hunger + v.jahez + v.keeta + v.mrsool + v.ninja
                             const brTotal  = branchSalesMap[b]?.sales || 0
                             const pct      = brTotal > 0 ? (appTotal / brTotal * 100).toFixed(1) : '—'
                             return (
@@ -673,6 +675,7 @@ export default function Reports() {
                                 <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.jahez  > 0 ? '#f97316' : '#d1d5db' }}>{v.jahez  > 0 ? fmt(v.jahez)  : '—'}</td>
                                 <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.keeta  > 0 ? '#8b5cf6' : '#d1d5db' }}>{v.keeta  > 0 ? fmt(v.keeta)  : '—'}</td>
                                 <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.mrsool > 0 ? '#10b981' : '#d1d5db' }}>{v.mrsool > 0 ? fmt(v.mrsool) : '—'}</td>
+                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.ninja > 0 ? '#0ea5e9' : '#d1d5db' }}>{v.ninja > 0 ? fmt(v.ninja) : '—'}</td>
                                 <td className="px-4 py-2 font-mono tabular-nums font-bold text-xs" style={{ color: NAVY }}>{fmt(appTotal)}</td>
                                 <td className="px-4 py-2 font-mono tabular-nums text-xs text-slate-400">{pct !== '—' ? `${pct}%` : '—'}</td>
                               </tr>

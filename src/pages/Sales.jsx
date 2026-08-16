@@ -18,6 +18,7 @@ const CHANNELS = [
   { key: 'hunger_sales',  label: 'هنقر ستيشن',         icon: '🍔', color: '#ea580c' },
   { key: 'jahez_sales',   label: 'جاهز',               icon: '🛵', color: '#7c3aed' },
   { key: 'keeta_sales',   label: 'كيتا',               icon: '🛺', color: '#0891b2' },
+  { key: 'ninja_sales',   label: 'نينجا',              icon: '🛵', color: '#0ea5e9' },
 ]
 
 function fmtDate(d) {
