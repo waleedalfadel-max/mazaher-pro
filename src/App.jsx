@@ -18,6 +18,7 @@ import JournalArchive from './pages/JournalArchive'
 import SuperAdmin from './pages/SuperAdmin'
 import Suppliers from './pages/Suppliers'
 import BankReconciliation from './pages/BankReconciliation'
+import AppReconciliation from './pages/AppReconciliation'
 import QuickSale from './pages/QuickSale'
 
 function TrialFormRedirect() {
@@ -90,6 +91,12 @@ function AppRoutes() {
       <Route path="/bank-reconciliation" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <BankReconciliation />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/app-reconciliation" element={
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
+          <AppReconciliation />
         </ProtectedRoute>
       } />
 
