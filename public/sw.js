@@ -1,4 +1,6 @@
-const LOGO_PATH = '__app__/logo.png'
+// يطابق مسار الشعار بعد نقله إلى bucket public-assets العام
+// (كان سابقاً '__app__/logo.png' داخل bucket documents)
+const LOGO_PATH = 'public-assets/logo.png'
 
 // عند التفعيل: احذف كل الـ cache القديم
 self.addEventListener('activate', event => {
