@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getFinancialSummary, isSales } from '../lib/financialEngine'
 import {
@@ -195,7 +195,7 @@ function getRange(type) {
 // ── المكوّن الرئيسي ──────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { roleLabel, projectId: pid, projectName } = useAuth()
+  const { roleLabel, projectId: pid, projectName, sessionEpoch } = useAuth()
 
   // بيانات رئيسية
   const [stats,        setStats]        = useState(null)
@@ -253,7 +253,7 @@ export default function Dashboard() {
     Promise.all([loadBalances(pid, initRange.to), loadStats(initRange, pid)]).catch(e => {
       console.error(e); setBalances({ cash:0, bank:0, custody:0 }); setLoading(false)
     })
-  }, [pid])
+  }, [pid, sessionEpoch])
 
   useEffect(() => {
     const onVisible = () => {
@@ -269,11 +269,13 @@ export default function Dashboard() {
 
   async function loadBalances(projectId, toDate) {
     try {
-      let q = supabase.from('ledger_entries')
-        .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
-        .eq('project_id', projectId).neq('status','cancelled')
-      if (toDate) q = q.lte('date', toDate)
-      const { data, error } = await q
+      const { data, error } = await fetchAllRows(() => {
+        let q = supabase.from('ledger_entries')
+          .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
+          .eq('project_id', projectId).neq('status','cancelled')
+        if (toDate) q = q.lte('date', toDate)
+        return q
+      })
       if (error) throw error
       const rows = data || []
       setBalances({

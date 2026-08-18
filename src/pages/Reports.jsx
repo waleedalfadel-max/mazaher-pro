@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings, isCorrupted } from '../lib/projectSettings'
 import { getFinancialSummary, isSales, isExcluded, isCOGS, isWithdrawal, isDebt } from '../lib/financialEngine'
@@ -69,7 +69,7 @@ const ALL_TABS = [
 ]
 
 export default function Reports() {
-  const { projectId, role } = useAuth()
+  const { projectId, role, sessionEpoch } = useAuth()
   const isOwner = role === 'owner'
   const init = getPeriodRange('month')
   const [from, setFrom]                 = useState(init.from)
@@ -128,7 +128,7 @@ export default function Reports() {
       })
       load(init.from, init.to)
     }
-  }, [projectId])
+  }, [projectId, sessionEpoch])
 
   // إعادة الجلب تلقائياً عند العودة للتبويب
   useEffect(() => {
@@ -182,27 +182,27 @@ export default function Reports() {
       { data: prevEntriesData },
       engineResult,
     ] = await Promise.all([
-      applyBranch(supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
-        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
-      applyBranch(supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,vat_amount,journal_number,category_main,category_sub')
-        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate).order('date')),
-      supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
+      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
+        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate))),
+      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,vat_amount,journal_number,category_main,category_sub')
+        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate).order('date'))),
+      fetchAllRows(() => supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
         .eq('project_id', projectId).eq('status','approved')
-        .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59').order('uploaded_at'),
-      applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id')
-        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled')),
-      supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
-        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate),
+        .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59').order('uploaded_at')),
+      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id')
+        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled'))),
+      fetchAllRows(() => supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
+        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
       supabase.rpc('get_purchase_entries', {
         p_project_id: projectId,
         p_from:       fromDate,
         p_to:         toDate,
       }),
-      supabase.from('sales').select('branch,cash_sales,network_sales,hunger_sales,jahez_sales,keeta_sales')
-        .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate),
-      applyBranch(supabase.from('ledger_entries').select('type,date,cash_in,bank_in,receivable_in')
+      fetchAllRows(() => supabase.from('sales').select('branch,cash_sales,network_sales,hunger_sales,jahez_sales,keeta_sales')
+        .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate)),
+      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('type,date,cash_in,bank_in,receivable_in')
         .eq('project_id', projectId).neq('status','cancelled')
-        .gte('date', prevFromD).lte('date', prevToD)),
+        .gte('date', prevFromD).lte('date', prevToD))),
       getFinancialSummary(projectId, fromDate, toDate, branchFilter),
     ])
     setEngineSummary(engineResult)

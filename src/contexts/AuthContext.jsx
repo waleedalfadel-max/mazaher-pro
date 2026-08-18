@@ -46,6 +46,20 @@ export function AuthProvider({ children }) {
   const [branch,      setBranch]      = useState(() => sessionStorage.getItem('mz_branch') || null)
   const [modules,     setModules]     = useState(() => { try { return JSON.parse(sessionStorage.getItem('mz_modules') || '[]') } catch { return [] } })
   const [authMethod,  setAuthMethod]  = useState(() => sessionStorage.getItem('mz_auth_method') || null)
+  // يتزايد كلما وصلت جلسة Supabase حقيقية. login() ينتظر منح الجلسة بمهلة 3 ثوانٍ
+  // فقط، فلو تأخّر المنح تنتقل الصفحة والعميل لا يزال anon — وRLS يُرجع صفر صفوف،
+  // فتظهر الأرقام أصفاراً. الصفحات تُدرج هذا العدّاد ضمن تبعياتها لتعيد الجلب
+  // تلقائياً بمجرد وصول الجلسة، بدل بقاء شاشة فارغة حتى يُحدّث المستخدم يدوياً.
+  const [sessionEpoch, setSessionEpoch] = useState(0)
+
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+        setSessionEpoch(n => n + 1)
+      }
+    })
+    return () => sub?.subscription?.unsubscribe?.()
+  }, [])
 
   // ── مساعد يخصّ مسار البريد فقط: يضبط نفس حالة الجلسة التي يضبطها PIN ──
   // (مسار PIN في login() أدناه لم يُمسّ — هذا المساعد لا يُستدعى منه)
@@ -226,7 +240,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      role, userName, projectId, projectName, branch, modules, authMethod,
+      role, userName, projectId, projectName, branch, modules, authMethod, sessionEpoch,
       roleLabel:    ROLE_LABELS[role] || role,
       login, loginWithEmail, logout, switchProject,
       canEdit:      role === 'accountant' || role === 'superadmin',

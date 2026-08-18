@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 
 const LOAN_TYPES = [
@@ -17,9 +17,9 @@ export default function Loans() {
   useEffect(() => { if (projectId) load(projectId) }, [projectId])
 
   async function load(pid) {
-    const { data: ledger } = await supabase.from('ledger_entries')
+    const { data: ledger } = await fetchAllRows(() => supabase.from('ledger_entries')
       .select('type,cash_out,bank_out,custody_out').eq('project_id', pid)
-      .neq('status', 'cancelled')
+      .neq('status', 'cancelled'))
 
     const result = {}
     LOAN_TYPES.forEach(lt => {

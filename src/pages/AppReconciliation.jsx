@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { analyzeAppStatement } from '../lib/claude'
 import { APPS, computeSystemTotal, hasSalesMismatch } from '../lib/appReconciliation'
@@ -84,12 +84,12 @@ export default function AppReconciliation() {
       const fileBase64 = await toBase64(file)
       const statement  = await analyzeAppStatement(fileBase64, file.type, file.name)
 
-      const { data: entries, error: entriesErr } = await supabase
+      const { data: entries, error: entriesErr } = await fetchAllRows(() => supabase
         .from('ledger_entries')
         .select('type,receivable_in')
         .eq('project_id', projectId)
         .gte('date', from).lte('date', to)
-        .neq('status', 'cancelled')
+        .neq('status', 'cancelled'))
       if (entriesErr) throw new Error(entriesErr.message)
 
       const systemTotal = computeSystemTotal(entries || [], app.keyword)
