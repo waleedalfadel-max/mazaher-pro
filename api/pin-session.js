@@ -32,19 +32,29 @@ const IP_RATE_WINDOW_MS = 5 * 60 * 1000
 const IP_RATE_MAX = 20
 const ipAttempts = new Map()
 
-function checkBucket(map, key, max, windowMs) {
+// يُحتسَب على المحاولات الفاشلة فقط (عدم تطابق PIN) — التخمين هو ما نحمي منه.
+// احتساب الدخول الناجح أيضاً كان يخنق الاستخدام العادي: كل تسجيل دخول سليم
+// يستدعي هذي النقطة مرة، فثلاث دخلات خلال خمس دقائق (أمر طبيعي تماماً، خصوصاً
+// بحساب عرض يتناوب عليه فريق) كانت تُرجع 429، فيبقى العميل بلا جلسة حقيقية
+// وتظهر كل الأرقام أصفاراً بلا أي رسالة تفسّر السبب.
+function isRateLimited(map, key, max, windowMs) {
+  const rec = map.get(key)
+  if (!rec) return false
+  if (Date.now() - rec.start > windowMs) { map.delete(key); return false }
+  return rec.count >= max
+}
+
+function recordFailure(map, key, windowMs) {
   const now = Date.now()
   const rec = map.get(key)
   if (!rec || now - rec.start > windowMs) {
     map.set(key, { start: now, count: 1 })
   } else {
     rec.count++
-    if (rec.count > max) return true
   }
   if (map.size > 500) {
     for (const [k, v] of map) if (now - v.start > windowMs) map.delete(k)
   }
-  return false
 }
 
 export default async function handler(req, res) {
@@ -59,11 +69,11 @@ export default async function handler(req, res) {
   }
 
   const ip = (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown'
-  if (checkBucket(ipAttempts, ip, IP_RATE_MAX, IP_RATE_WINDOW_MS)) {
+  if (isRateLimited(ipAttempts, ip, IP_RATE_MAX, IP_RATE_WINDOW_MS)) {
     console.warn('[pin-session] تجاوز الحدّ الثانوي (IP):', ip)
     return res.status(429).json({ error: 'RATE_LIMITED' })
   }
-  if (checkBucket(userAttempts, userId, USER_RATE_MAX, USER_RATE_WINDOW_MS)) {
+  if (isRateLimited(userAttempts, userId, USER_RATE_MAX, USER_RATE_WINDOW_MS)) {
     console.warn('[pin-session] تجاوز الحدّ الأساسي (userId):', userId)
     return res.status(429).json({ error: 'RATE_LIMITED' })
   }
@@ -86,6 +96,8 @@ export default async function handler(req, res) {
 
     if (rowErr || !row || row.pin !== pin) {
       console.warn('[pin-session] رفض — عدم تطابق PIN')
+      recordFailure(userAttempts, userId, USER_RATE_WINDOW_MS)
+      recordFailure(ipAttempts, ip, IP_RATE_WINDOW_MS)
       return res.status(403).json({ error: 'PIN_MISMATCH' })
     }
 
