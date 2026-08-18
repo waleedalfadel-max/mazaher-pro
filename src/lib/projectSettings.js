@@ -47,15 +47,15 @@ export async function getProjectSettings(projectId) {
   return data
 }
 
-// الموديولات مخزَّنة بموضعين تاريخياً: عمود modules المستقل، و settings->'modules'.
-// المصفوفة الفارغة قيمة صادقة بجافاسكربت، فسلسلة || القديمة كانت تتوقف عند عمود
-// فارغ [] ولا تصل أبداً لـsettings.modules — نتحقق من الطول صراحةً بدل الاعتماد عليها.
+// تُستدعى أثناء تسجيل الدخول — قبل منح جلسة Supabase الحقيقية — فالعميل لا يزال
+// anon، وRLS على project_settings يحجب كل الصفوف عنه. لذلك نمرّ عبر دالة
+// SECURITY DEFINER (نفس نمط login_with_pin و get_project_branding) بدل القراءة
+// المباشرة من الجدول. الدالة نفسها تتكفّل بالموضعين التاريخيين للتخزين:
+// عمود modules المستقل، ثم settings->'modules' عند كون الأول فارغاً.
+// فشل الاستدعاء يُعيد [] — نفس السلوك الحالي بالضبط، فلا انحدار.
 export async function getProjectModules(projectId) {
   if (!projectId) return []
-  const data = await getProjectSettings(projectId)
-  const top = data?.modules
-  if (Array.isArray(top) && top.length > 0) return top
-  const nested = data?.settings?.modules
-  if (Array.isArray(nested) && nested.length > 0) return nested
-  return []
+  const { data, error } = await supabase.rpc('get_project_modules', { p_project_id: projectId })
+  if (error || !Array.isArray(data)) return []
+  return data
 }
