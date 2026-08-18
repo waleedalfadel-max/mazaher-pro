@@ -140,20 +140,43 @@ export function AuthProvider({ children }) {
   }
 
   // ── جلسة Supabase حقيقية خلف PIN — إضافية وغير حاجبة (المرحلة 2-أ) ──
-  // تُستدعى بلا await من login() أدناه: فشلها لا يمنع الدخول أبداً، فقط
-  // تبقى الجلسة بلا auth.uid() (كحالها اليوم بالضبط) حتى ينجح استدعاء لاحق.
-  async function mintPinSession(userId, pin) {
+  // login() ينتظرها بمهلة 3 ثوانٍ فقط ثم يمضي؛ لو تأخّرت تكمل هنا بالخلفية،
+  // وعند نجاحها يُطلق SIGNED_IN فيتزايد sessionEpoch وتُعيد الصفحات الجلب وحدها.
+  //
+  // بلا جلسة حقيقية يبقى العميل على مفتاح anon، وRLS يحجب كل شيء فتظهر الأرقام
+  // أصفاراً بلا أي تفسير. لذلك لا نكتفي بمحاولة واحدة: نعيد المحاولة عدة مرات
+  // بتباعد متزايد (يغطي انقطاعاً عابراً أو 429 مؤقتاً)، ونُسجّل السبب صراحةً
+  // بالكونسول عند الفشل النهائي بدل الصمت التام.
+  async function mintPinSession(userId, pin, attempt = 0) {
+    const DELAYS_MS = [0, 1500, 4000, 10000]
     try {
+      if (DELAYS_MS[attempt]) await new Promise(r => setTimeout(r, DELAYS_MS[attempt]))
+
       const res = await fetch('/api/pin-session', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ userId, pin }),
       })
-      if (!res.ok) return
+
+      if (!res.ok) {
+        let reason = String(res.status)
+        try { reason += ' ' + (await res.text()).slice(0, 120) } catch {}
+        // 403 = عدم تطابق PIN: إعادة المحاولة بلا فائدة وتستهلك حدّ المحاولات
+        if (res.status !== 403 && attempt + 1 < DELAYS_MS.length) {
+          return mintPinSession(userId, pin, attempt + 1)
+        }
+        console.warn('[mintPinSession] تعذّر منح الجلسة —', reason,
+          '— ستبقى البيانات محجوبة بـRLS حتى ينجح المنح')
+        return
+      }
+
       const { tokenHash } = await res.json()
       if (!tokenHash) return
       await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'magiclink' })
-    } catch { /* أفضل جهد — لا يمنع الدخول بأي حال */ }
+    } catch (e) {
+      if (attempt + 1 < DELAYS_MS.length) return mintPinSession(userId, pin, attempt + 1)
+      console.warn('[mintPinSession] فشل نهائي:', e?.message)
+    }
   }
 
   // ── دخول PIN — عبر دالة login_with_pin (SECURITY DEFINER) بدل الاستعلام
