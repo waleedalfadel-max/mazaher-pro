@@ -47,8 +47,15 @@ export async function getProjectSettings(projectId) {
   return data
 }
 
+// الموديولات مخزَّنة بموضعين تاريخياً: عمود modules المستقل، و settings->'modules'.
+// المصفوفة الفارغة قيمة صادقة بجافاسكربت، فسلسلة || القديمة كانت تتوقف عند عمود
+// فارغ [] ولا تصل أبداً لـsettings.modules — نتحقق من الطول صراحةً بدل الاعتماد عليها.
 export async function getProjectModules(projectId) {
   if (!projectId) return []
   const data = await getProjectSettings(projectId)
-  return data?.modules || data?.settings?.modules || []
+  const top = data?.modules
+  if (Array.isArray(top) && top.length > 0) return top
+  const nested = data?.settings?.modules
+  if (Array.isArray(nested) && nested.length > 0) return nested
+  return []
 }
