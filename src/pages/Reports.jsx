@@ -212,13 +212,16 @@ export default function Reports() {
 
     // المبيعات من financialEngine حصرياً — مصدر الحقيقة الواحد (ledger_entries):
     // يشمل مبيعات التطبيقات (receivable_in) التي كان جدول sales يُسقطها كلياً
-    const totalSales   = engineResult?.totalSales || 0
+    // المحرّك يُعيد المبيعات صافية الآن، والإجمالي الشامل منفصلاً — فلا تُشتقّ
+    // الضريبة هنا مرة أخرى (قسمة الصافي على 1.15 كانت ستُنقصه مرتين)
+    const grossSales   = engineResult?.grossSales || 0
+    const netSales     = engineResult?.totalSales || 0
+    const totalSales   = grossSales                                                         // شامل الضريبة — لعرض تبويب الضريبة
     const totalIn      = (ledgerFull||[]).reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
     const totalOut     = (ledgerFull||[]).reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
 
     // حسابات ضريبة القيمة المضافة
-    const outputVat    = totalSales / 1.15 * 0.15                                          // ضريبة المخرجات من المبيعات
-    const netSales     = totalSales - outputVat                                             // المبيعات الصافية بدون ضريبة
+    const outputVat    = engineResult?.outputVat || 0                                       // ضريبة المخرجات من المبيعات
 
     // ضريبة المدخلات: من حقل vat_amount (فواتير عادية) + قيود نوعها "ضريبة القيمة المضافة"
     const inputVatFromField   = (ledger||[])

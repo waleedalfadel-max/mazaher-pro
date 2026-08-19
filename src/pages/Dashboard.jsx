@@ -304,7 +304,7 @@ export default function Dashboard() {
       if (!p) return
       const summary = await getFinancialSummary(p, r.from, r.to)
       if (summary) {
-        setStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit, grossProfit: summary.grossProfit, cogs: summary.cogs || 0, operatingExpenses: summary.operatingExpenses || 0 })
+        setStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit, grossProfit: summary.grossProfit, cogs: summary.cogs || 0, operatingExpenses: summary.operatingExpenses || 0, grossSales: summary.grossSales || 0, outputVat: summary.outputVat || 0 })
         setChartEntries(summary.entries || [])
       }
     } catch(e) { console.error(e) }
@@ -683,6 +683,26 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* مبيعات شاملة الضريبة — بطاقة مرجعية منفصلة عمداً بلون وشكل مختلفَين،
+          حتى لا تُقرأ كبديل عن "المبيعات" الصافية التي يُبنى عليها الربح */}
+      {!loading && stats && (
+        <div className="rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap"
+          style={{ background: '#faf5ff', border: '1.5px dashed #d8b4fe' }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg shrink-0">🧾</span>
+            <div className="min-w-0">
+              <div className="text-xs font-bold" style={{ color: '#7e22ce' }}>مبيعات شاملة الضريبة</div>
+              <div className="text-xs mt-0.5" style={{ color: '#a78bda' }}>
+                المقبوض فعلياً — منه {fmt(stats.outputVat)} ضريبة مخرجات مستحقة للهيئة
+              </div>
+            </div>
+          </div>
+          <div className="font-bold font-mono tabular-nums shrink-0" style={{ fontSize: 18, color: '#7e22ce' }}>
+            {fmt(stats.grossSales)}
+          </div>
+        </div>
+      )}
 
       {/* بطاقة الذمم المستحقة — تظهر فقط عند وجود ذمم */}
       {receivables && (
