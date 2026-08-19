@@ -3,7 +3,7 @@ import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings, isCorrupted } from '../lib/projectSettings'
 import { getFinancialSummary, isSales, isExcluded, isCOGS, isWithdrawal, isDebt,
-         salesAmountNet, expenseAmountNet } from '../lib/financialEngine'
+         salesAmountNet, expenseAmountNet, VAT_RATE } from '../lib/financialEngine'
 
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
@@ -544,9 +544,10 @@ export default function Reports() {
             salesEntries.forEach(e => {
               const d = e.date; if (!d) return
               if (!dailyMap[d]) dailyMap[d] = { date: d, cash: 0, bank: 0, apps: 0 }
-              dailyMap[d].cash += Number(e.cash_in)       || 0
-              dailyMap[d].bank += Number(e.bank_in)       || 0
-              dailyMap[d].apps += Number(e.receivable_in) || 0
+              // صافية بنفس معالجة بقية الشاشات — وإلا خالف مجموع الجدول بطاقة المبيعات
+              dailyMap[d].cash += (Number(e.cash_in)       || 0) / (1 + VAT_RATE)
+              dailyMap[d].bank += (Number(e.bank_in)       || 0) / (1 + VAT_RATE)
+              dailyMap[d].apps += (Number(e.receivable_in) || 0) / (1 + VAT_RATE)
             })
             const dailyRows    = Object.values(dailyMap).sort((a, b) => b.date.localeCompare(a.date))
             const maxDaySales  = Math.max(...dailyRows.map(r => r.cash + r.bank + r.apps), 1)
