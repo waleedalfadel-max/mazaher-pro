@@ -997,15 +997,27 @@ export default function Reports() {
             // بناء هيكل هرمي: category_main → { total, subs, rows }
             const mainMap = {}
 
+            // التجميع بالاسم بعد تجريد الإيموجي — المساران أدناه يبنيان المفتاح من
+            // مصدرين مختلفين: قيد له بنود يأخذ category_main النظيف ("مصروفات ثابتة")،
+            // وقيد بلا بنود يأخذ e.type الحامل للإيموجي ("💰 مصروفات ثابتة"). بلا تجريد
+            // يصيران مفتاحين مختلفين، فيظهر التصنيف الواحد بصفّين منفصلين.
+            // نحتفظ بأغنى تسمية (التي تحمل الإيموجي) للعرض فقط.
+            const hasEmoji = s => /[^؀-ۿ\s]/.test(s || '')
             const addItem = (rawMain, rawSub, amount, label) => {
               if (!rawMain || rawMain.includes('مبيعات') || amount <= 0) return
-              if (!mainMap[rawMain]) mainMap[rawMain] = { total: 0, subs: {}, rows: [] }
-              mainMap[rawMain].total += amount
-              mainMap[rawMain].rows.push({ label: label || rawSub || rawMain, amount })
-              const subKey = rawSub || '__uncat__'
-              if (!mainMap[rawMain].subs[subKey]) mainMap[rawMain].subs[subKey] = { total: 0, rows: [] }
-              mainMap[rawMain].subs[subKey].total += amount
-              mainMap[rawMain].subs[subKey].rows.push({ label: label || rawMain, amount })
+              const mainKey = strip(rawMain) || rawMain
+              if (!mainMap[mainKey]) mainMap[mainKey] = { total: 0, subs: {}, rows: [], label: rawMain }
+              if (hasEmoji(rawMain) && !hasEmoji(mainMap[mainKey].label)) mainMap[mainKey].label = rawMain
+              mainMap[mainKey].total += amount
+              mainMap[mainKey].rows.push({ label: label || rawSub || rawMain, amount })
+
+              const subKey = rawSub ? (strip(rawSub) || rawSub) : '__uncat__'
+              if (!mainMap[mainKey].subs[subKey]) mainMap[mainKey].subs[subKey] = { total: 0, rows: [], label: rawSub || '' }
+              if (rawSub && hasEmoji(rawSub) && !hasEmoji(mainMap[mainKey].subs[subKey].label)) {
+                mainMap[mainKey].subs[subKey].label = rawSub
+              }
+              mainMap[mainKey].subs[subKey].total += amount
+              mainMap[mainKey].subs[subKey].rows.push({ label: label || rawMain, amount })
             }
 
             // المصروفات الحقيقية فقط (بدون مسحوبات / أقساط / قروض)
@@ -1040,12 +1052,14 @@ export default function Reports() {
 
             const mainRows = Object.entries(mainMap)
               .map(([cat, v]) => ({
-                cat,
+                cat,                       // مفتاح مجرَّد من الإيموجي — للتجميع والمطابقة
+                label: v.label || cat,     // التسمية المعروضة (تحتفظ بالإيموجي إن وُجد)
                 total: v.total,
                 rows: v.rows,
                 subs: Object.entries(v.subs)
                   .map(([s, sv]) => ({
                     cat:     s === '__uncat__' ? 'غير مصنف' : s,
+                    label:   s === '__uncat__' ? 'غير مصنف' : (sv.label || s),
                     total:   sv.total,
                     rows:    sv.rows,
                     isUncat: s === '__uncat__',
@@ -1088,7 +1102,7 @@ export default function Reports() {
                   cogsRows.forEach(mainCat => {
                     mainCat.subs.forEach(sub => {
                       const key = sub.isUncat ? '__uncat__' : sub.cat
-                      if (!cogsBySubMap[key]) cogsBySubMap[key] = { cat: sub.cat, total: 0, rows: [], isUncat: sub.isUncat }
+                      if (!cogsBySubMap[key]) cogsBySubMap[key] = { cat: sub.cat, label: sub.label, total: 0, rows: [], isUncat: sub.isUncat }
                       cogsBySubMap[key].total += sub.total
                       cogsBySubMap[key].rows.push(...sub.rows)
                     })
@@ -1131,7 +1145,7 @@ export default function Reports() {
                                     <span className="text-xs transition-transform duration-150"
                                       style={{ color: clr.color, transform: subOpen ? 'rotate(90deg)' : 'none', display: 'inline-block', opacity: 0.7 }}>▶</span>
                                     <span className={`flex-1 text-sm font-medium text-right ${sub.isUncat ? 'text-slate-400 italic' : 'text-slate-700'}`}>
-                                      {sub.isUncat ? '📋 غير مصنف' : `📌 ${sub.cat}`}
+                                      {sub.isUncat ? '📋 غير مصنف' : `📌 ${sub.label}`}
                                     </span>
                                     <span className="font-mono tabular-nums text-sm font-semibold" style={{ color: clr.color }}>{fmt(sub.total)}</span>
                                     {_sales > 0 && <span className="text-xs shrink-0" style={{ color: clr.color, opacity: 0.55 }}>({(sub.total / _sales * 100).toFixed(1)}% من المبيعات)</span>}
@@ -1176,7 +1190,7 @@ export default function Reports() {
                             style={{ background: clr.bg, cursor: 'pointer' }}>
                             <span className="text-sm font-bold transition-transform duration-200"
                               style={{ color: clr.color, transform: open ? 'rotate(90deg)' : 'none', display: 'inline-block', minWidth: '1rem' }}>▶</span>
-                            <span className="flex-1 font-bold text-sm text-right" style={{ color: clr.color }}>{r.cat}</span>
+                            <span className="flex-1 font-bold text-sm text-right" style={{ color: clr.color }}>{r.label}</span>
                             <div className="text-left">
                               <div className="font-bold font-mono tabular-nums text-sm" style={{ color: clr.color }}>{fmt(r.total)}</div>
                               <div className="text-xs opacity-60" style={{ color: clr.color }}>{pct}% من المبيعات</div>
@@ -1203,7 +1217,7 @@ export default function Reports() {
                                       <span className="text-xs transition-transform duration-150"
                                         style={{ color: clr.color, transform: subOpen ? 'rotate(90deg)' : 'none', display: 'inline-block', opacity: 0.7 }}>▶</span>
                                       <span className={`flex-1 text-sm font-medium text-right ${sub.isUncat ? 'text-slate-400 italic' : 'text-slate-700'}`}>
-                                        {sub.isUncat ? '📋 غير مصنف' : `📌 ${sub.cat}`}
+                                        {sub.isUncat ? '📋 غير مصنف' : `📌 ${sub.label}`}
                                       </span>
                                       <span className="font-mono tabular-nums text-sm font-semibold" style={{ color: clr.color }}>{fmt(sub.total)}</span>
                                       {_baseSales > 0 && <span className="text-xs shrink-0" style={{ color: clr.color, opacity: 0.55 }}>({sPct}% من المبيعات)</span>}
