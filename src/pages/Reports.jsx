@@ -2,7 +2,8 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings, isCorrupted } from '../lib/projectSettings'
-import { getFinancialSummary, isSales, isExcluded, isCOGS, isWithdrawal, isDebt } from '../lib/financialEngine'
+import { getFinancialSummary, isSales, isExcluded, isCOGS, isWithdrawal, isDebt,
+         salesAmountNet, expenseAmountNet } from '../lib/financialEngine'
 
 const NAVY = '#1B3A5C'
 const GOLD = '#6EB7B0'
@@ -268,7 +269,7 @@ export default function Reports() {
     })
     const prevSalesTotal = (prevEntriesData || [])
       .filter(e => isSales(e.type))
-      .reduce((s, e) => s + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0), 0)
+      .reduce((s, e) => s + salesAmountNet(e), 0)
     setPrevPeriodSales({ total: prevSalesTotal, days: periodDaysLoad, prevFrom: prevFromD, prevTo: prevToD })
     setPrevEntries(prevEntriesData || [])
 
@@ -494,7 +495,7 @@ export default function Reports() {
             salesEntries.forEach(e => {
               const b = e.branch || '— غير محدد'
               if (!branchSalesMap[b]) branchSalesMap[b] = { sales: 0, byDate: {} }
-              const amt = (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+              const amt = salesAmountNet(e)
               branchSalesMap[b].sales += amt
               if (e.date) branchSalesMap[b].byDate[e.date] = (branchSalesMap[b].byDate[e.date] || 0) + amt
             })
@@ -512,7 +513,7 @@ export default function Reports() {
             salesEntries.forEach(e => {
               const b = e.branch || '— غير محدد'
               const t = e.type || ''
-              const amt = (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+              const amt = salesAmountNet(e)
               if (!t.includes('هنقر') && !t.includes('جاهز') && !t.includes('كيتا') && !t.includes('مرسول') && !t.includes('نينجا')) return
               if (!appMap[b]) appMap[b] = { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
               if (t.includes('هنقر')) appMap[b].hunger += amt
@@ -532,10 +533,10 @@ export default function Reports() {
             const [ty2, tm2, td2] = actualLastDate.split('-').map(Number)
             const actualPrevFromD = fmtDate(new Date(fy2, fm2 - 2, fd2))
             const actualPrevToD   = fmtDate(new Date(ty2, tm2 - 2, td2))
-            const curSales  = salesEntries.reduce((s, e) => s + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0), 0)
+            const curSales  = salesEntries.reduce((s, e) => s + salesAmountNet(e), 0)
             const prevSales = prevEntries
               .filter(e => isSales(e.type) && e.date >= actualPrevFromD && e.date <= actualPrevToD)
-              .reduce((s, e) => s + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0), 0)
+              .reduce((s, e) => s + salesAmountNet(e), 0)
             const growth    = prevSales > 0 ? ((curSales - prevSales) / prevSales * 100) : null
 
             // القسم 4: المبيعات اليومية
@@ -1008,8 +1009,9 @@ export default function Reports() {
 
             // المصروفات الحقيقية فقط (بدون مسحوبات / أقساط / قروض)
             ;(entries || []).forEach(e => {
-              const out = (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
-              if (!out) return
+              // صافي بعد طرح ضريبة المدخلات — ليتطابق التفصيل مع بطاقة المصروفات
+              const out = expenseAmountNet(e)
+              if (out <= 0) return
               if (isExcluded(e.type) || isSales(e.type)) return
               if (isWithdrawal(e.type) || isDebt(e.type)) return
 
@@ -1335,10 +1337,10 @@ export default function Reports() {
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
               <tbody>
                 {(engineSummary ? [
-                  ['مبيعات كاش',              fmt(engineSummary.cashSales),                   false, true,  '#374151'],
-                  ['مبيعات شبكة / إلكترونية', fmt(engineSummary.networkSales),                false, true,  '#374151'],
-                  ['إجمالي المبيعات',           fmt(engineSummary.totalSales),                 true,  false, NAVY],
-                  ['إجمالي المصروفات',          `(${fmt(engineSummary.totalExpenses)})`,       false, true,  '#dc2626'],
+                  ['المبيعات شاملة الضريبة',   fmt(engineSummary.grossSales),                 false, true,  '#7e22ce'],
+                  ['ناقصاً ضريبة المخرجات',    `(${fmt(engineSummary.outputVat)})`,           false, true,  '#b45309'],
+                  ['إجمالي المبيعات (صافي)',   fmt(engineSummary.totalSales),                 true,  false, NAVY],
+                  ['إجمالي المصروفات (صافي)',  `(${fmt(engineSummary.totalExpenses)})`,       false, true,  '#dc2626'],
                   ['صافي الربح',               fmt(engineSummary.netProfit),                  true,  false, engineSummary.netProfit>=0?'#16a34a':'#dc2626'],
                 ] : [
                   ['إجمالي المبيعات', fmt(data.totalSales), true, false, NAVY],

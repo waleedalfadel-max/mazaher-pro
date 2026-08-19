@@ -71,6 +71,27 @@ function sumField(entries, field) {
   return entries.reduce((s, e) => s + (Number(e[field]) || 0), 0)
 }
 
+// ── مبالغ القيد الواحد بنفس المعالجة الضريبية المطبَّقة بالإجماليات ──────────
+// أي شاشة تجمع من القيود الخام مباشرة (رسوم، تفصيل تصنيفات، أداء فروع) يجب أن
+// تمرّ من هنا، وإلا ظهرت أرقام إجمالية بجانب بطاقات صافية — تناقض مربك للمستخدم.
+
+export function salesAmountGross(e) {
+  return (Number(e.cash_in) || 0) + (Number(e.bank_in) || 0) + (Number(e.receivable_in) || 0)
+}
+
+export function salesAmountNet(e) {
+  return salesAmountGross(e) / (1 + VAT_RATE)
+}
+
+export function expenseAmountGross(e) {
+  return (Number(e.cash_out) || 0) + (Number(e.bank_out) || 0)
+       + (Number(e.custody_out) || 0) + (Number(e.receivable_out) || 0)
+}
+
+export function expenseAmountNet(e) {
+  return expenseAmountGross(e) - (Number(e.vat_amount) || 0)
+}
+
 export async function getFinancialSummary(projectId, fromDate, toDate, branch = null) {
   const { data: entries, error } = await fetchAllRows(() => {
     let q = supabase

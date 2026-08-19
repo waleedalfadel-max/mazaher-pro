@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase, fetchAllRows } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getFinancialSummary, isSales } from '../lib/financialEngine'
+import { getFinancialSummary, isSales, salesAmountNet, expenseAmountNet } from '../lib/financialEngine'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -400,12 +400,12 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       if (!isSales(e.type)) return
       const day = parseInt(e.date.split('-')[2])
-      cur[day] = (cur[day]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+      cur[day] = (cur[day]||0) + salesAmountNet(e)
     })
     cmpEntries.forEach(e => {
       if (!isSales(e.type)) return
       const day = parseInt(e.date.split('-')[2])
-      cmp[day] = (cmp[day]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+      cmp[day] = (cmp[day]||0) + salesAmountNet(e)
     })
     const days = new Set([...Object.keys(cur), ...Object.keys(cmp)].map(Number))
     return [...days].sort((a,b)=>a-b).map(day => ({
@@ -420,7 +420,7 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       if (!isSales(e.type)) return
       const c = channelOf(e.type)
-      ch[c] = (ch[c]||0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+      ch[c] = (ch[c]||0) + salesAmountNet(e)
     })
     return Object.entries(ch).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([name,value])=>({name,value}))
   }, [chartEntries])
@@ -429,7 +429,7 @@ export default function Dashboard() {
     const ex = {}
     chartEntries.forEach(e => {
       if (isSales(e.type)) return
-      const out = (Number(e.cash_out)||0) + (Number(e.bank_out)||0) + (Number(e.custody_out)||0)
+      const out = expenseAmountNet(e)
       if (!out) return
       const label = (e.type||'— غير محدد').replace(/^[ -؀︀-﻿]+/, '').trim() || e.type || '— غير محدد'
       ex[label] = (ex[label]||0) + out
@@ -454,8 +454,8 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       const w = weeks.find(w => e.date >= w.from && e.date <= w.to)
       if (!w) return
-      if (isSales(e.type)) w['مبيعات']  += (Number(e.cash_in)||0)  + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
-      else                  w['مصروفات'] += (Number(e.cash_out)||0) + (Number(e.bank_out)||0) + (Number(e.custody_out)||0)
+      if (isSales(e.type)) w['مبيعات']  += salesAmountNet(e)
+      else                  w['مصروفات'] += expenseAmountNet(e)
     })
 
     // دمج بيانات المقارنة إذا كانت موجودة
@@ -471,7 +471,7 @@ export default function Dashboard() {
       cmpEntries.forEach(e => {
         if (!isSales(e.type)) return
         const w = cWeeks.find(w => e.date >= w.from && e.date <= w.to)
-        if (w) w.sales += (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+        if (w) w.sales += salesAmountNet(e)
       })
       weeks.forEach((w, i) => { w['مقارنة'] = cWeeks[i]?.sales || 0 })
     }
@@ -484,7 +484,7 @@ export default function Dashboard() {
     const bMap = {}
     chartEntries.forEach(e => {
       if (!isSales(e.type) || !e.branch) return
-      bMap[e.branch] = (bMap[e.branch] || 0) + (Number(e.cash_in)||0) + (Number(e.bank_in)||0) + (Number(e.receivable_in)||0)
+      bMap[e.branch] = (bMap[e.branch] || 0) + salesAmountNet(e)
     })
     return Object.entries(bMap).filter(([,v]) => v > 0).map(([name, مبيعات]) => ({ name, مبيعات }))
   }, [chartEntries])
