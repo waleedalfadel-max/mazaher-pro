@@ -2,6 +2,18 @@ import { supabase } from './supabase'
 
 export async function getOrCreateJournalNumber(projectId, date) {
   // كل اعتماد يأخذ رقماً تسلسلياً جديداً — يمنع تعارض الـ unique constraint
+  //
+  // يمرّ عبر دالة SECURITY DEFINER لأن الكاشير يستدعي هذا أثناء إقفال اليوم،
+  // وسنمنعه من SELECT المباشر على ledger_entries عند فرض الأدوار بـRLS.
+  // الدالة تتحقق بنفسها أن المستدعي ينتمي للمشروع قبل القراءة.
+  const { data, error } = await supabase.rpc('next_journal_number', {
+    p_project_id: projectId,
+    p_date: date,
+  })
+  if (!error && data) return data
+
+  // سقوط احتياطي للقراءة المباشرة — يبقى عاملاً قبل إنشاء الدالة، ويصبح
+  // بلا أثر بعد فرض الأدوار (حينها ينجح المسار الأول دائماً)
   const year = new Date(date).getFullYear()
   const { data: last } = await supabase
     .from('ledger_entries')
