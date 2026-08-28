@@ -80,39 +80,29 @@ function BalanceCard({ label, icon, value, color }) {
   )
 }
 
-function StatCard({ label, icon, value, cmpValue, cmpLabel, sub }) {
+function KpiCard({ label, value, accent, bg, negative, cmpValue, cmpLabel }) {
+  const isNeg  = negative ?? value < 0
+  const color  = isNeg ? '#dc2626' : accent
+  const border = isNeg ? '#fecaca' : (accent + '40')
+
+  // فرق الفترة المقارَنة — يظهر فقط عند تفعيل المقارنة واختيار فترة
   const hasCmp = cmpValue !== null && cmpValue !== undefined
   const delta  = hasCmp ? value - cmpValue : 0
   const pct    = hasCmp && cmpValue !== 0 ? ((delta / Math.abs(cmpValue)) * 100).toFixed(1) : null
   const up     = delta >= 0
-  return (
-    <div className="rounded-2xl p-5 shadow-sm text-center" style={{ background: '#fff', border: '2px solid #e8e5dc' }}>
-      <div className="flex flex-col items-center gap-1 mb-3">
-        <span className="text-2xl">{icon}</span>
-        <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</span>
-      </div>
-      <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: NAVY }}>{fmt(value)}</div>
-      {sub && <div className="text-xs font-semibold mt-1" style={{ color: '#0369a1' }}>{sub}</div>}
-      {hasCmp && (
-        <div className="mt-2 space-y-0.5">
-          <div className="text-xs font-bold" style={{ color: up ? '#16a34a' : '#dc2626' }}>
-            {up ? '▲' : '▼'} {pct !== null ? `${Math.abs(pct)}%` : '—'}{cmpLabel ? ` من ${cmpLabel}` : ''}
-          </div>
-          <div className="text-xs text-slate-400">({fmt(cmpValue)} ر.س)</div>
-        </div>
-      )}
-    </div>
-  )
-}
 
-function KpiCard({ label, value, accent, bg, negative }) {
-  const isNeg  = negative ?? value < 0
-  const color  = isNeg ? '#dc2626' : accent
-  const border = isNeg ? '#fecaca' : (accent + '40')
   return (
     <div className="rounded-xl text-center shadow-sm" style={{ background: isNeg ? '#fef2f2' : bg, border: `1.5px solid ${border}`, padding: '10px 8px' }}>
       <div className="mb-1" style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>{label}</div>
       <div className="font-bold font-mono tabular-nums" style={{ fontSize: 16, color, lineHeight: 1.2 }}>{fmt(value)}</div>
+      {hasCmp && (
+        <div className="mt-1 leading-tight">
+          <div style={{ fontSize: 10, fontWeight: 700, color: up ? '#16a34a' : '#dc2626' }}>
+            {up ? '▲' : '▼'} {pct !== null ? `${Math.abs(pct)}%` : '—'}
+          </div>
+          <div style={{ fontSize: 9, color: '#94a3b8' }} title={cmpLabel || ''}>{fmt(cmpValue)}</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -495,7 +485,7 @@ export default function Dashboard() {
   const hasCompare  = !!cmpMode && !!cmpStats
   const thisYear    = new Date().getFullYear()
 
-  const COMPARE_ENABLED = false // مؤقتاً — لإعادة التفعيل: غيّر إلى true
+  const COMPARE_ENABLED = true
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
@@ -660,12 +650,15 @@ export default function Dashboard() {
         ) : (
           <>
             <KpiCard label="المبيعات"
-              value={stats.totalSales} accent="#0284c7" bg="#f0f9ff" />
+              value={stats.totalSales} accent="#0284c7" bg="#f0f9ff"
+              cmpValue={hasCompare ? cmpStats.totalSales : undefined} cmpLabel={cmpLabel} />
             <KpiCard label="المصروفات"
-              value={stats.totalExpenses} accent="#dc2626" bg="#fef2f2" />
+              value={stats.totalExpenses} accent="#dc2626" bg="#fef2f2"
+              cmpValue={hasCompare ? cmpStats.totalExpenses : undefined} cmpLabel={cmpLabel} />
             <KpiCard label="الربح"
               value={stats.profit} accent={stats.profit >= 0 ? '#15803d' : '#dc2626'}
-              bg={stats.profit >= 0 ? '#f0fdf4' : '#fef2f2'} negative={stats.profit < 0} />
+              bg={stats.profit >= 0 ? '#f0fdf4' : '#fef2f2'} negative={stats.profit < 0}
+              cmpValue={hasCompare ? cmpStats.profit : undefined} cmpLabel={cmpLabel} />
           </>
         )}
 
