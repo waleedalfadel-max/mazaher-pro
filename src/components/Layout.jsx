@@ -7,7 +7,8 @@ const NAVY  = '#1B3A5C'
 const TEAL  = '#6EB7B0'
 
 export default function Layout({ children }) {
-  const { role, roleLabel, userName, projectId, projectName, isSuperAdmin, modules, logout } = useAuth()
+  const { role, roleLabel, userName, projectId, projectName, isSuperAdmin, modules, logout,
+          canImpersonate, isImpersonating, startImpersonation, stopImpersonation } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
   const [desktopOpen, setDesktopOpen] = useState(true)
@@ -82,6 +83,35 @@ export default function Layout({ children }) {
           )}
           <div className="text-white font-semibold text-sm">{userName}</div>
           <div className="text-xs mt-0.5" style={{ color: 'rgba(110,183,176,0.8)' }}>{roleLabel}</div>
+        </div>
+      )}
+
+      {/* مبدّل الأدوار — للمالك وحده. تبديل بصري: يغيّر ما يُعرَض لا ما يُسمح به */}
+      {canImpersonate && !collapsed && (
+        <div className="px-3 pb-2 pt-1">
+          <div className="text-[10px] mb-1.5" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            معاينة بدور آخر
+          </div>
+          <div className="flex gap-1">
+            {[
+              { r: 'owner',      label: 'المالك',   icon: '👑' },
+              { r: 'accountant', label: 'المحاسب',  icon: '📊' },
+              { r: 'cashier',    label: 'الكاشير',  icon: '💰' },
+              { r: 'purchasing', label: 'المشتريات', icon: '🛒' },
+            ].map(o => (
+              <button
+                key={o.r}
+                title={o.label}
+                onClick={() => o.r === 'owner' ? stopImpersonation() : startImpersonation(o.r)}
+                className="flex-1 py-1.5 rounded-lg text-sm transition-all"
+                style={role === o.r
+                  ? { background: TEAL, color: '#fff' }
+                  : { background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.6)' }}
+              >
+                {o.icon}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -209,6 +239,22 @@ export default function Layout({ children }) {
             </button>
           </div>
         </header>
+
+        {/* شريط تحذير دائم أثناء التلبّس — لا يُغلَق، ولا يختفي بتغيير الصفحة */}
+        {isImpersonating && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2 text-sm font-bold shrink-0"
+            style={{ background: '#FEF3C7', color: '#92400E', borderBottom: '1px solid #FCD34D' }}>
+            <span>
+              ⚠️ معاينة بدور <span className="underline">{roleLabel}</span> — أنت المالك فعلياً،
+              والكتابة بهذا الوضع مرفوضة خادمياً
+            </span>
+            <button onClick={stopImpersonation}
+              className="px-3 py-1 rounded-lg text-xs font-bold shrink-0 transition-all"
+              style={{ background: '#92400E', color: '#fff' }}>
+              ارجع لدورك
+            </button>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto">
           <div className="p-3 sm:p-6 max-w-7xl mx-auto">

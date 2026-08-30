@@ -51,6 +51,15 @@ export function AuthProvider({ children }) {
   // فتظهر الأرقام أصفاراً. الصفحات تُدرج هذا العدّاد ضمن تبعياتها لتعيد الجلب
   // تلقائياً بمجرد وصول الجلسة، بدل بقاء شاشة فارغة حتى يُحدّث المستخدم يدوياً.
   const [sessionEpoch, setSessionEpoch] = useState(0)
+  // ── التلبّس بالأدوار (المالك فقط) ──
+  // مفتاح منفصل عن mz_role عمداً: mz_role يُقرأ بحارس استعادة جلسة المالك أدناه
+  // وبفحص u.role !== 'owner'. الكتابة فوقه تكسر الاستعادة وتُبقي المالك متلبّساً
+  // بعد إعادة التحميل. الحالة بالجلسة فقط ⇒ إغلاق التبويب يُنهي التلبّس.
+  //
+  // ⚠️ حدّ التصميم: هذا التبديل بصري بحت، يُصدَّق من الواجهة وحدها. أمانه مصدره
+  // أن RLS خلفه لا تعترف به إطلاقاً — auth_role() تقرأ الدور الحقيقي من القاعدة،
+  // فأي محاولة كتابة أثناء التلبّس تُرفض خادمياً حتى لو زُوِّر المفتاح يدوياً.
+  const [actingRole, setActingRole] = useState(() => sessionStorage.getItem('mz_acting_role') || null)
 
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
@@ -78,6 +87,9 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('mz_branch',      user.branch || '')
     sessionStorage.setItem('mz_modules',     JSON.stringify(mods))
     sessionStorage.setItem('mz_auth_method', method)
+    // دخول جديد يبدأ دائماً بالدور الحقيقي — لا يرث تلبّساً عالقاً
+    setActingRole(null)
+    sessionStorage.removeItem('mz_acting_role')
   }
 
   // ── استعادة جلسة المالك (Supabase Auth) عند التحميل — إضافي، دفاعي ──
@@ -220,6 +232,9 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('mz_pname',   pName || '')
     sessionStorage.setItem('mz_branch',  user.branch || '')
     sessionStorage.setItem('mz_modules', JSON.stringify(mods))
+    // دخول جديد يبدأ دائماً بالدور الحقيقي — لا يرث تلبّساً عالقاً
+    setActingRole(null)
+    sessionStorage.removeItem('mz_acting_role')
 
     // ننتظر منح الجلسة الحقيقية بمهلة 3 ثوانٍ قبل إعادة النتيجة — بمجرد تفعيل
     // RLS على جداول تُستعلَم فور الدخول (الدفعة 3)، أول صفحة قد تصل بجلسة
@@ -242,7 +257,27 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('mz_pname', name || '')
   }
 
+  // الدور الفعّال الذي يراه التطبيق كله. التلبّس مسموح للمالك وحده، ويُتحقَّق
+  // من ذلك هنا عند كل قراءة — لا عند البدء فقط — حتى لا يكفي تزوير المفتاح
+  // بأدوات المطوّر لحساب غير مالك.
+  const canImpersonate  = role === 'owner'
+  const effectiveRole   = (canImpersonate && actingRole) ? actingRole : role
+  const isImpersonating = canImpersonate && !!actingRole
+
+  function startImpersonation(target) {
+    if (role !== 'owner') return
+    if (!['accountant', 'cashier', 'purchasing'].includes(target)) return
+    setActingRole(target)
+    sessionStorage.setItem('mz_acting_role', target)
+  }
+
+  function stopImpersonation() {
+    setActingRole(null)
+    sessionStorage.removeItem('mz_acting_role')
+  }
+
   function logout() {
+    stopImpersonation()
     setRole(null)
     setUserName(null)
     setProjectId(null)
@@ -263,14 +298,18 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      role, userName, projectId, projectName, branch, modules, authMethod, sessionEpoch,
-      roleLabel:    ROLE_LABELS[role] || role,
+      // role = الدور الفعّال (المتلبَّس إن وُجد). كل التطبيق يشتقّ سلوكه منه،
+      // فلا تحتاج أي صفحة تعديلاً. realRole = الحقيقي، للبوابات والتحذير.
+      role: effectiveRole, realRole: role,
+      userName, projectId, projectName, branch, modules, authMethod, sessionEpoch,
+      roleLabel:    ROLE_LABELS[effectiveRole] || effectiveRole,
       login, loginWithEmail, logout, switchProject,
-      canEdit:      role === 'accountant' || role === 'superadmin',
-      isOwner:      role === 'owner'      || role === 'superadmin',
-      isPurchasing: role === 'purchasing',
-      isCashier:    role === 'cashier',
-      isSuperAdmin: role === 'superadmin',
+      isImpersonating, canImpersonate, startImpersonation, stopImpersonation,
+      canEdit:      effectiveRole === 'accountant' || effectiveRole === 'superadmin',
+      isOwner:      effectiveRole === 'owner'      || effectiveRole === 'superadmin',
+      isPurchasing: effectiveRole === 'purchasing',
+      isCashier:    effectiveRole === 'cashier',
+      isSuperAdmin: effectiveRole === 'superadmin',
     }}>
       {children}
     </AuthContext.Provider>
