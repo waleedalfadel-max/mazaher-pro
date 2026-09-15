@@ -1,13 +1,14 @@
 // نداء /api/analyze بجلسة Supabase الحقيقية.
 // منفصل عن claude.js ولا يستورد supabase ولا import.meta — ليُختبَر بلا متصفح.
 
-export const AUTH_ERROR_CODES = new Set(['AUTH_REQUIRED', 'INVALID_SESSION', 'NOT_A_MEMBER'])
+export const AUTH_ERROR_CODES = new Set(['AUTH_REQUIRED', 'INVALID_SESSION', 'NOT_A_MEMBER', 'AUTH_UNAVAILABLE'])
 
 const MESSAGES = {
   NO_SESSION:      'تعذّر التحليل: لم تصل جلسة الدخول الموثّقة بعد. انتظر لحظات ثم أعد المحاولة، وإن تكرر فسجّل الخروج وادخل من جديد.',
   AUTH_REQUIRED:   'تعذّر التحليل: جلسة الدخول منتهية أو غير مقبولة. سجّل الخروج ثم ادخل من جديد.',
   INVALID_SESSION: 'تعذّر التحليل: جلسة الدخول منتهية أو غير مقبولة. سجّل الخروج ثم ادخل من جديد.',
   NOT_A_MEMBER:    'تعذّر التحليل: حسابك غير مرتبط بمستخدم في هذه المنشأة. تواصل مع مزوّد الخدمة.',
+  AUTH_UNAVAILABLE: 'لم نتمكن من التحقق من دخولك الآن. حاول مرة أخرى بعد قليل.',
 }
 
 export class AnalysisAuthError extends Error {
@@ -52,10 +53,11 @@ export function createAnalyzeFetch({
       headers: { ...(init.headers || {}), authorization: `Bearer ${token}` },
     })
 
-    if (res.status === 401 || res.status === 403) {
+    if (!res.ok) {
       let code = ''
       try { code = (await res.clone().json())?.error || '' } catch { /* جسم غير JSON */ }
-      // 403 لسبب آخر (FORBIDDEN_ORIGIN) يُعاد كما هو لمعالجة الأخطاء المعتادة بالمستدعي
+      // تعذّر التحقق قد يُرجع 500؛ أخطاء الدخول المعروفة فقط تحمل isAuthError.
+      // باقي الأخطاء تُعاد كما هي دون استهلاك جسم الرد الأصلي.
       if (AUTH_ERROR_CODES.has(code)) throw new AnalysisAuthError(code)
     }
 

@@ -72,6 +72,31 @@ test('403 NOT_A_MEMBER يصبح خطأ مصادقة برسالة واضحة', as
   await assert.rejects(() => analyzeFetch({}), e => e.isAuthError && e.code === 'NOT_A_MEMBER' && /غير مرتبط/.test(e.message))
 })
 
+test('500 AUTH_UNAVAILABLE يُظهر فشل التحقق المؤقت لشاشات الرفع', async () => {
+  const analyzeFetch = createAnalyzeFetch({
+    getSession: async () => sessionWith('tok'),
+    fetchImpl: async () => fakeResponse(500, { error: 'AUTH_UNAVAILABLE' }),
+    sleep: noSleep,
+  })
+  await assert.rejects(
+    () => analyzeFetch({}),
+    e => e instanceof AnalysisAuthError && e.isAuthError && e.code === 'AUTH_UNAVAILABLE'
+      && /بعد قليل/.test(e.message) && !/سجّل الخروج/.test(e.message),
+  )
+})
+
+test('500 لسبب آخر يُعاد دون استهلاك جسم الرد أو اعتباره فشل دخول', async () => {
+  const response = fakeResponse(500, { error: 'UPSTREAM_FAILED' })
+  const analyzeFetch = createAnalyzeFetch({
+    getSession: async () => sessionWith('tok'),
+    fetchImpl: async () => response,
+    sleep: noSleep,
+  })
+  const res = await analyzeFetch({})
+  assert.equal(res, response)
+  assert.deepEqual(await res.json(), { error: 'UPSTREAM_FAILED' })
+})
+
 test('403 لسبب غير المصادقة (FORBIDDEN_ORIGIN) يُعاد كما هو للمعالجة المعتادة', async () => {
   const analyzeFetch = createAnalyzeFetch({
     getSession: async () => sessionWith('tok'),
