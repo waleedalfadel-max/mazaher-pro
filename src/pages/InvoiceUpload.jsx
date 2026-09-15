@@ -128,7 +128,14 @@ export default function InvoiceUpload() {
           if (result && docData?.id) {
             await supabase.from('documents').update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id)
           }
-        } catch { /* فشل التحليل — يبقى uploaded للمراجعة اليدوية */ }
+        } catch (e) {
+          // فشل الجلسة يُعرَض صراحةً بدل «تم ✓» — المستند محفوظ ويبقى uploaded للمراجعة اليدوية
+          if (e?.isAuthError) {
+            updateFile(i, { status: 'error', error: `حُفظ المستند دون تحليل — ${e.message}` })
+            continue
+          }
+          /* فشل التحليل لسبب آخر — يبقى uploaded للمراجعة اليدوية */
+        }
 
         updateFile(i, { status: 'done' })
       } catch (e) {

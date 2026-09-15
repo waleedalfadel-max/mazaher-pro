@@ -115,7 +115,16 @@ export default function CashierDashboard() {
         if (result && docData?.id) {
           await supabase.from('documents').update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id)
         }
-      } catch { /* فشل التحليل — يبقى uploaded للمراجعة اليدوية */ }
+      } catch (e) {
+        // فشل الجلسة يُعرَض صراحةً — المستند محفوظ ويبقى uploaded للمراجعة اليدوية
+        if (e?.isAuthError) {
+          setError(`حُفظ المستند دون تحليل — ${e.message}`)
+          setFile(null); setPreview(null); setPurchaseCategory('')
+          loadMyDocs()
+          return
+        }
+        /* فشل التحليل لسبب آخر — يبقى uploaded للمراجعة اليدوية */
+      }
 
       setDone(true); setFile(null); setPreview(null); setPurchaseCategory('')
       loadMyDocs()

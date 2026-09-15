@@ -4,6 +4,9 @@
  * الغرض: منع استخدام النقطة كوكيل Claude مفتوح. تبني جسماً جديداً من الحقول
  * المسموحة فقط ولا تمرّر req.body إطلاقاً — أي حقل غير متوقع (tools, stream,
  * أو أي إضافة مستقبلية) يسقط تلقائياً بلا حاجة لتحديث قائمة منع.
+ *
+ * هذا الحارس لا يُثبت هوية المتصل — Origin قابل للتزوير خارج المتصفح.
+ * الهوية والعضوية تُفحصان بـ_auth.js، ويرتّبهما _claudeProxy.js قبل المزوّد.
  */
 
 const DEFAULT_MODEL = (process.env.CLAUDE_MODEL || 'claude-opus-4-5').trim()
@@ -64,24 +67,30 @@ export function checkOrigin(req, res) {
 }
 
 // ── تحديد معدل خفيف داخل الذاكرة ──────────────────────────────────────────
+// المفتاح: معرّف المستخدم الموثّق حين يتوفر (يمرّره _claudeProxy.js)، وإلا الـIP.
+//
 // ⚠️ حدّه الحقيقي: دوال Vercel عديمة الحالة وتتعدد نسخها — العدّاد لا يُشارَك
-// بين النسخ ويُصفَّر عند البرود. يوقف الاندفاع من مصدر واحد فقط، ولا يُعتمد
-// عليه كحماية. التحديد الحقيقي يحتاج مخزناً مشتركاً (مؤجَّل عمداً).
+// بين النسخ ويُصفَّر عند البرود. يوقف الاندفاع من مستخدم واحد على نسخة واحدة
+// فقط، ولا يُعدّ حصة استخدام. **حصة الاستخدام المشتركة لكل منشأة غير منفذة**:
+// تحتاج مخزناً مشتركاً (جدول بالقاعدة أو مخزن مفاتيح) — خارج نطاق هذي الدفعة.
 const RATE_WINDOW_MS = 60_000
 const RATE_MAX       = 20
 const hits = new Map()
 
-export function checkRateLimit(req, res) {
-  const ip = (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown'
+function clientIp(req) {
+  return (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown'
+}
+
+export function checkRateLimit(req, res, key = `ip:${clientIp(req)}`) {
   const now = Date.now()
-  const rec = hits.get(ip)
+  const rec = hits.get(key)
 
   if (!rec || now - rec.start > RATE_WINDOW_MS) {
-    hits.set(ip, { start: now, count: 1 })
+    hits.set(key, { start: now, count: 1 })
   } else {
     rec.count++
     if (rec.count > RATE_MAX) {
-      console.warn('[guard] تجاوز حد المعدل:', ip, rec.count)
+      console.warn('[guard] تجاوز حد المعدل:', key, rec.count)
       res.status(429).json({ error: 'RATE_LIMITED' })
       return true
     }
@@ -153,7 +162,7 @@ export function buildSafeBody(raw) {
     messages: [{ role: 'user', content }],
   }
 
-  // ── system — اختياري (نداء RoasterySales لا يرسله) ──
+  // ── system — اختياري ──
   if (raw.system != null) {
     if (typeof raw.system !== 'string')        throw bad('SYSTEM_SHAPE')
     if (raw.system.length > MAX_SYSTEM_LEN)    throw bad('SYSTEM_TOO_LONG')
@@ -165,12 +174,9 @@ export function buildSafeBody(raw) {
 }
 
 /**
- * غلاف كامل: Origin ثم المعدل ثم بناء الجسم الآمن.
- * يعيد الجسم الآمن، أو null إذا أُوقف الطلب (وقد كُتب الرد).
+ * يبني الجسم الآمن من req.body، أو يكتب 400 ويعيد null.
  */
-export function guard(req, res) {
-  if (checkOrigin(req, res))    return null
-  if (checkRateLimit(req, res)) return null
+export function parseSafeBody(req, res) {
   try {
     return buildSafeBody(req.body)
   } catch (e) {
@@ -181,4 +187,14 @@ export function guard(req, res) {
     }
     throw e
   }
+}
+
+/**
+ * غلاف قديم: Origin ثم المعدل (بالـIP) ثم بناء الجسم الآمن — بلا تحقق هوية.
+ * لا تستخدمه نقطة تستدعي مزوّداً مدفوعاً؛ استخدم createClaudeProxyHandler.
+ */
+export function guard(req, res) {
+  if (checkOrigin(req, res))    return null
+  if (checkRateLimit(req, res)) return null
+  return parseSafeBody(req, res)
 }

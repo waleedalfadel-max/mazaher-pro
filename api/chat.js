@@ -1,4 +1,4 @@
-import { guard } from './_guard.js'
+import { createClaudeProxyHandler } from './_claudeProxy.js'
 
 export const config = {
   api: {
@@ -8,34 +8,5 @@ export const config = {
   },
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
-
-  const apiKey = (process.env.CLAUDE_API_KEY || '').replace(/^﻿/, '').trim()
-  if (!apiKey) {
-    return res.status(500).json({ error: 'CLAUDE_API_KEY not configured on server' })
-  }
-
-  // نفس حارس analyze — هذي النقطة غير مستدعاة من التطبيق حالياً لكنها مكشوفة
-  const body = guard(req, res)
-  if (!body) return
-
-  try {
-    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key':          apiKey,
-        'anthropic-version':  '2023-06-01',
-        'content-type':       'application/json',
-      },
-      body: JSON.stringify(body),
-    })
-
-    const data = await upstream.json()
-    res.status(upstream.status).json(data)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-}
+// غير مستدعاة من التطبيق حالياً لكنها مكشوفة — تحمل نفس اشتراط الهوية والعضوية
+export default createClaudeProxyHandler({ name: 'chat' })
