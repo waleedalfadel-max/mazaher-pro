@@ -5,6 +5,7 @@ import { uploadToStorage, getSignedUrl } from '../lib/storage'
 import { getProjectSettings } from '../lib/projectSettings'
 import { compressImage } from '../lib/imageCompress'
 import { analyzeDocument } from '../lib/claude'
+import { savedDocumentWarning } from '../lib/analysisFeedback'
 
 const toBase64 = file => new Promise((res, rej) => {
   const r = new FileReader()
@@ -26,6 +27,7 @@ export default function CashierDashboard() {
   const [uploadPhase, setUploadPhase]         = useState('') // 'uploading' | 'analyzing'
   const [done, setDone]                       = useState(false)
   const [error, setError]                     = useState('')
+  const [analysisWarning, setAnalysisWarning] = useState('')
   const [dragOver, setDragOver]               = useState(false)
   const [purchaseCategory, setPurchaseCategory] = useState('')
   const [purchaseTypes, setPurchaseTypes]     = useState([])
@@ -79,14 +81,14 @@ export default function CashierDashboard() {
     const allowed = ['image/jpeg','image/jpg','image/png','image/webp','image/heic','application/pdf']
     if (!allowed.includes(f.type)) { setError('صيغة غير مدعومة'); return }
     if (f.size > 10 * 1024 * 1024) { setError('الحد الأقصى 10MB'); return }
-    setFile(f); setDone(false); setError('')
+    setFile(f); setDone(false); setError(''); setAnalysisWarning('')
     setPreview(f.type.startsWith('image/') ? URL.createObjectURL(f) : null)
   }
 
   async function upload() {
     if (!file) return
     if (role === 'purchasing' && !purchaseCategory) { setError('اختر نوع المادة أولاً'); return }
-    setUploading(true); setUploadPhase('uploading'); setError('')
+    setUploading(true); setUploadPhase('uploading'); setError(''); setAnalysisWarning('')
     try {
       const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file
       const fileBase64 = await toBase64(uploadFile)
@@ -112,18 +114,17 @@ export default function CashierDashboard() {
           .select('id,name,parent_id,type,sort_order')
           .eq('project_id', projectId).order('sort_order')
         const result = await analyzeDocument(fileBase64, uploadFile.type, file.name, role, cats || [], projectName || '')
+        if (!result?.invoices?.length) throw new Error('EMPTY_ANALYSIS')
         if (result && docData?.id) {
-          await supabase.from('documents').update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id)
+          const { data: saved, error: saveError } = await supabase.from('documents')
+            .update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id).select('id').single()
+          if (saveError || !saved?.id) throw new Error('ANALYSIS_SAVE_UNCONFIRMED')
         }
       } catch (e) {
-        // فشل الجلسة يُعرَض صراحةً — المستند محفوظ ويبقى uploaded للمراجعة اليدوية
-        if (e?.isAuthError) {
-          setError(`حُفظ المستند دون تحليل — ${e.message}`)
-          setFile(null); setPreview(null); setPurchaseCategory('')
-          loadMyDocs()
-          return
-        }
-        /* فشل التحليل لسبب آخر — يبقى uploaded للمراجعة اليدوية */
+        setAnalysisWarning(savedDocumentWarning(e))
+        setFile(null); setPreview(null); setPurchaseCategory('')
+        loadMyDocs()
+        return
       }
 
       setDone(true); setFile(null); setPreview(null); setPurchaseCategory('')
@@ -132,7 +133,7 @@ export default function CashierDashboard() {
     finally { setUploading(false); setUploadPhase('') }
   }
 
-  function reset() { setFile(null); setPreview(null); setDone(false); setError(''); setPurchaseCategory('') }
+  function reset() { setFile(null); setPreview(null); setDone(false); setError(''); setAnalysisWarning(''); setPurchaseCategory('') }
 
   return (
     <div className="max-w-xl mx-auto space-y-5">
@@ -188,7 +189,16 @@ export default function CashierDashboard() {
         </div>
       )}
 
-      {done ? (
+      {analysisWarning ? (
+        <div role="status" className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center space-y-3">
+          <div className="text-lg font-bold text-amber-900">محفوظ للمراجعة</div>
+          <p className="text-sm text-amber-900">{analysisWarning}</p>
+          <button onClick={reset}
+            className="mt-2 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+            رفع مستند آخر
+          </button>
+        </div>
+      ) : done ? (
         <div className="bg-green-50 border border-green-200 rounded-2xl p-10 text-center space-y-3">
           <div className="text-5xl">✅</div>
           <div className="text-lg font-bold text-green-800">تم استلام الملخص</div>
