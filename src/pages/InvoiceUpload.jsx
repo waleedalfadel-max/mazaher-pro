@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage, getSignedUrl } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { analyzeDocument } from '../lib/claude'
+import { savedDocumentWarning } from '../lib/analysisFeedback'
 
 const MAX_SIZE_MB = 10
 const ROLE_AR = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك' }
@@ -21,7 +22,8 @@ const STATUS_LABEL = {
   pending:   'في الانتظار',
   uploading: 'جارٍ الرفع...',
   analyzing: 'جارٍ التحليل...',
-  done:      'تم ✓',
+  done:      'تم التحليل',
+  review:    'محفوظ للمراجعة',
   error:     'خطأ',
 }
 
@@ -117,6 +119,7 @@ export default function InvoiceUpload() {
           const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '')
 
           const invoiceCount = result?.invoices?.length || 0
+          if (!invoiceCount) throw new Error('EMPTY_ANALYSIS')
           if (invoiceCount > 1) {
             if (role === 'purchasing' || role === 'cashier') {
               if (docData?.id) await supabase.from('documents').delete().eq('id', docData.id)
@@ -126,9 +129,14 @@ export default function InvoiceUpload() {
             updateFile(i, { multiInvoiceWarning: true, invoiceCount })
           }
           if (result && docData?.id) {
-            await supabase.from('documents').update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id)
+            const { data: saved, error: saveError } = await supabase.from('documents')
+              .update({ analysis_result: result, status: 'analyzed' }).eq('id', docData.id).select('id').single()
+            if (saveError || !saved?.id) throw new Error('ANALYSIS_SAVE_UNCONFIRMED')
           }
-        } catch { /* فشل التحليل — يبقى uploaded للمراجعة اليدوية */ }
+        } catch (e) {
+          updateFile(i, { status: 'review', error: savedDocumentWarning(e) })
+          continue
+        }
 
         updateFile(i, { status: 'done' })
       } catch (e) {
@@ -154,7 +162,9 @@ export default function InvoiceUpload() {
 
   const pendingCount = files.filter(f => f.status === 'pending').length
   const doneCount    = files.filter(f => f.status === 'done').length
+  const reviewCount  = files.filter(f => f.status === 'review').length
   const errorCount   = files.filter(f => f.status === 'error').length
+  const savedCount   = doneCount + reviewCount
 
   return (
     <div className="max-w-xl mx-auto space-y-5">
@@ -238,6 +248,7 @@ export default function InvoiceUpload() {
           ) : (
             <div key={i} className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${
               entry.status === 'done'      ? 'border-green-200 bg-green-50' :
+              entry.status === 'review'    ? 'border-amber-200 bg-amber-50' :
               entry.status === 'error'     ? 'border-red-200 bg-red-50' :
               entry.status === 'analyzing' || entry.status === 'uploading'
                                            ? 'border-blue-200 bg-blue-50' :
@@ -249,7 +260,7 @@ export default function InvoiceUpload() {
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-slate-800 truncate text-sm">{entry.file.name}</div>
                 <div className="text-xs text-slate-400">{(entry.file.size / 1024).toFixed(0)} KB</div>
-                {entry.error && <div className="text-xs text-red-600 mt-0.5">{entry.error}</div>}
+                {entry.error && <div className={`text-xs mt-0.5 ${entry.status === 'review' ? 'text-amber-800' : 'text-red-600'}`}>{entry.error}</div>}
                 {entry.multiInvoiceWarning && (
                   <div className="text-xs text-amber-600 mt-0.5 font-semibold">
                     ⚠️ اكتُشف {entry.invoiceCount} فواتير — راجع التحليل
@@ -262,6 +273,7 @@ export default function InvoiceUpload() {
                 )}
                 <span className={`text-xs font-semibold ${
                   entry.status === 'done'      ? 'text-green-700' :
+                  entry.status === 'review'    ? 'text-amber-800' :
                   entry.status === 'error'     ? 'text-red-600'   :
                   entry.status === 'analyzing' || entry.status === 'uploading'
                                                ? 'text-blue-600'  : 'text-slate-500'
@@ -276,17 +288,18 @@ export default function InvoiceUpload() {
         </div>
       )}
 
-      {/* رسالة النجاح النهائية */}
+      {/* ملخص الحفظ والتحليل */}
       {allDone && !uploading && !files.every(f => f.multiInvoice) && (
-        <div className={`rounded-2xl p-6 text-center space-y-2 ${errorCount && !doneCount ? 'bg-red-50 border border-red-200' : errorCount ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
-          <div className="text-4xl">{errorCount && !doneCount ? '❌' : errorCount ? '⚠️' : '✅'}</div>
+        <div className={`rounded-2xl p-6 text-center space-y-2 ${errorCount && !savedCount ? 'bg-red-50 border border-red-200' : errorCount || reviewCount ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
+          <div className="text-4xl">{errorCount && !savedCount ? '❌' : errorCount || reviewCount ? '⚠️' : '✅'}</div>
           <div className="font-bold text-lg text-slate-800">
-            {doneCount > 0
-              ? `تم رفع ${doneCount} ${doneCount === 1 ? 'فاتورة' : 'فاتورة'} بنجاح`
-              : 'فشل رفع الملفات'}
+            {savedCount > 0 ? `حُفظ ${savedCount} مستند للمراجعة` : 'تعذّر حفظ المستندات'}
           </div>
-          {errorCount > 0 && doneCount > 0 && (
-            <p className="text-sm text-amber-700">فشل رفع {errorCount} ملف — تحقق من الأخطاء أعلاه</p>
+          {reviewCount > 0 && (
+            <p className="text-sm text-amber-800">تعذّر إكمال تحليل {reviewCount} مستند تلقائيًا. المستندات محفوظة ولا تحتاج إلى إعادة الرفع.</p>
+          )}
+          {errorCount > 0 && savedCount > 0 && (
+            <p className="text-sm text-amber-700">لم يُحفظ {errorCount} مستند — تحقق من الأخطاء أعلاه</p>
           )}
           <button onClick={reset}
             className="mt-1 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors">

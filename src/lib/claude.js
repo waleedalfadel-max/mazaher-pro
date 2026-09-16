@@ -1,4 +1,10 @@
+import { supabase } from './supabase'
+import { createAnalyzeFetch } from './analyzeRequest'
+
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
+
+// كل نداءات التحليل تحمل الجلسة الحقيقية — الخادم يرفض أي طلب بلا مستخدم موثّق
+const analyzeFetch = createAnalyzeFetch({ getSession: () => supabase.auth.getSession() })
 
 const CLASSIFICATION_RULES = `قبل أي شيء آخر، اتبع هذه القواعد بدقة مطلقة:
 
@@ -278,7 +284,7 @@ ${categorySection}
 - المفتاح الخارجي دائماً هو "invoices" وهو مصفوفة حتى لو عنصر واحد — لا تُعد JSON مجرد object بدون invoices
 - JSON فقط بدون أي نص قبله أو بعده`
 
-  const res = await fetch('/api/analyze', {
+  const res = await analyzeFetch({
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -379,7 +385,7 @@ export async function analyzeBankStatementPage(pageBase64, fileName, pageLabel =
 أعد فقط: {"lines":[...]}
 JSON فقط بدون أي نص أو markdown قبله أو بعده.`
 
-  const res = await fetch('/api/analyze', {
+  const res = await analyzeFetch({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -447,7 +453,7 @@ export async function analyzeAppStatement(fileBase64, mimeType, fileName) {
 أعد فقط: {"reportedSales":0.00,"commission":0.00,"tax":0.00,"otherDeductions":[],"netTransferred":0.00}
 JSON فقط بدون أي نص أو markdown قبله أو بعده.`
 
-  const res = await fetch('/api/analyze', {
+  const res = await analyzeFetch({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
