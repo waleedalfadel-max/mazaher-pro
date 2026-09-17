@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useStore } from '../store.jsx'
-import { DOC_KINDS, REVIEW_STATUS, saleTotals } from '../lib/ledger.js'
+import { DOC_KINDS, REVIEW_STATUS, purchaseTotals, saleTotals } from '../lib/ledger.js'
 import { Badge, Button, Card, Empty, Money, PageTitle, NAVY } from '../components/ui.jsx'
 
 const FILTERS = [['pending', 'بانتظار المراجعة'], ['approved', 'معتمدة'], ['rejected', 'مرفوضة']]
@@ -10,7 +10,7 @@ const ICON = { sale: '🧾', payment: '💸', purchase: '🛒' }
 function docAmount(d) {
   if (d.kind === 'sale') return saleTotals(d.fields).total
   if (d.kind === 'payment') return d.fields.amount || 0
-  return (d.fields.net || 0) + (d.fields.vat || 0)
+  return purchaseTotals(d.fields).total
 }
 
 export default function Documents() {

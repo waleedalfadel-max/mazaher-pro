@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useStore } from '../store.jsx'
-import { customerSummary, hasMovements, invoiceView, PAY_STATUS, OPENING } from '../lib/ledger.js'
+import { availableCredit, customerSummary, hasMovements, invoiceView, openItems, PAY_STATUS, OPENING } from '../lib/ledger.js'
 import { displayWhatsapp } from '../lib/whatsapp.js'
 import { Badge, Button, Card, Empty, Money, Notice, NAVY } from '../components/ui.jsx'
 import CustomerForm from '../components/CustomerForm.jsx'
+import CreditApplyDialog from '../components/CreditApplyDialog.jsx'
 import InvoiceActions from '../components/InvoiceActions.jsx'
 import Statement from '../components/Statement.jsx'
 
@@ -17,11 +18,14 @@ export default function CustomerDetail() {
   const [tab, setTab] = useState('invoices')
   const [editing, setEditing] = useState(false)
   const [message, setMessage] = useState(null)
+  const [applyingCredit, setApplyingCredit] = useState(false)
 
   const customer = state.customers.find(c => c.id === id)
   const summary = useMemo(() => customer && customerSummary(state, customer.id), [state, customer])
   const invoices = useMemo(() => state.invoices.filter(i => i.customerId === id).map(i => invoiceView(state, i))
     .sort((a, b) => b.date.localeCompare(a.date) || b.approvedSeq - a.approvedSeq), [state, id])
+  const credits = useMemo(() => (state.creditApplications || []).filter(x => x.customerId === id)
+    .sort((a, b) => b.appliedSeq - a.appliedSeq), [state, id])
   const payments = useMemo(() => state.payments.filter(p => p.customerId === id)
     .sort((a, b) => b.date.localeCompare(a.date) || b.approvedSeq - a.approvedSeq), [state, id])
   const pendingDocs = state.documents.filter(d => d.status === 'pending' && d.fields?.customerId === id)
@@ -31,6 +35,8 @@ export default function CustomerDetail() {
   }
 
   const canDelete = !hasMovements(state, customer.id)
+  const credit = availableCredit(state, customer.id)
+  const hasOpen = openItems(state, customer.id).length > 0
   const accountName = accId => state.accounts.find(a => a.id === accId)?.name || '—'
   const targetLabel = t => t === OPENING ? 'رصيد افتتاحي' : `فاتورة ${state.invoices.find(i => i.id === t)?.number || ''}`
 
@@ -87,6 +93,12 @@ export default function CustomerDetail() {
               يشمل رصيداً افتتاحياً تجريبياً <Money value={summary.opening} /> بتاريخ <span className="num">{customer.openingDate}</span> — ليس مبيعات
             </div>
           )}
+          {credit > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 mt-3 rounded-xl p-2.5" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+              <div className="text-xs font-bold text-emerald-800">رصيد متاح من دفعات زائدة: <Money value={credit} strong /></div>
+              {hasOpen && <Button className="!py-1.5 !text-xs" onClick={() => setApplyingCredit(true)}>استخدام الرصيد المتاح</Button>}
+            </div>
+          )}
           {!canDelete && <div className="text-[11px] mt-1" style={{ color: '#8FAAAA' }}>لا يمكن حذف عميل لديه حركات — يمكن أرشفته</div>}
         </Card>
 
@@ -134,6 +146,22 @@ export default function CustomerDetail() {
       {tab === 'payments' && (
         <div className="space-y-2">
           {payments.length === 0 && <Card><Empty>لا دفعات معتمدة</Empty></Card>}
+          {credits.map(x => (
+            <Card key={x.id} className="p-3" style={{ borderColor: '#BBF7D0' }}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-bold" style={{ color: NAVY }}>تسوية من الرصيد المتاح</div>
+                  <div className="text-xs" style={{ color: '#8FAAAA' }}><span className="num">{x.date}</span> — ليست تحصيلاً جديداً</div>
+                </div>
+                <Money value={x.amount} strong />
+              </div>
+              <div className="mt-2 space-y-1 text-xs" style={{ color: '#5A7A8A' }}>
+                {x.allocations.map(a => (
+                  <div key={a.target} className="flex justify-between"><span>{targetLabel(a.target)}</span><Money value={a.amount} /></div>
+                ))}
+              </div>
+            </Card>
+          ))}
           {payments.map(p => (
             <Card key={p.id} className="p-3">
               <div className="flex items-start justify-between gap-2">
@@ -161,6 +189,8 @@ export default function CustomerDetail() {
 
       {tab === 'statement' && <Statement customer={customer} />}
 
+      <CreditApplyDialog open={applyingCredit} customer={customer} onClose={() => setApplyingCredit(false)}
+        onDone={text => setMessage({ tone: 'success', text })} />
       <CustomerForm open={editing} customer={customer} onClose={() => setEditing(false)}
         onSaved={() => setMessage({ tone: 'success', text: 'حُفظت بيانات العميل' })} />
     </div>

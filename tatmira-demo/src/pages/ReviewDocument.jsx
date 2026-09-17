@@ -2,11 +2,11 @@ import React, { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useStore } from '../store.jsx'
 import {
-  DOC_KINDS, REVIEW_STATUS, duplicateInvoiceNumber, newId, openItems, saleTotals, suggestAllocations,
+  DOC_KINDS, REVIEW_STATUS, duplicateInvoiceNumber, newId, openItems, purchaseTotals, saleTotals, suggestAllocations,
 } from '../lib/ledger.js'
-import { vatFor } from '../lib/money.js'
+import { toQuantity, vatFor } from '../lib/money.js'
 import {
-  Badge, Button, Card, Field, Money, MoneyInput, Notice, Select, TextInput, NAVY,
+  Badge, Button, Card, Field, Money, MoneyInput, Notice, QuantityInput, Select, TextInput, NAVY,
 } from '../components/ui.jsx'
 import FilePreview from '../components/FilePreview.jsx'
 
@@ -68,7 +68,7 @@ export default function ReviewDocument() {
         <Card className="p-4 lg:order-1">
           {doc.kind === 'sale' && <SaleForm state={state} doc={doc} f={f} editable={editable} update={update} />}
           {doc.kind === 'payment' && <PaymentForm state={state} doc={doc} f={f} editable={editable} update={update} />}
-          {doc.kind === 'purchase' && <PurchaseForm state={state} f={f} editable={editable} update={update} />}
+          {doc.kind === 'purchase' && <PurchaseForm state={state} doc={doc} f={f} editable={editable} update={update} />}
 
           {result && <Notice tone={result.tone} className="mt-3">{result.text}</Notice>}
 
@@ -161,11 +161,10 @@ function SaleForm({ state, doc, f, editable, update }) {
               </div>
               <div className="grid grid-cols-3 gap-2 mt-2 items-end">
                 <Field label="الكمية">
-                  <TextInput inputMode="decimal" dir="ltr" className="text-left" value={l.qty}
-                    onChange={e => setLine(i, { qty: e.target.value.replace(/[^\d.]/g, '') })} disabled={!editable} />
+                  <QuantityInput value={l.qty} onChange={v => setLine(i, { qty: v })} disabled={!editable} aria-label="الكمية" />
                 </Field>
                 <Field label="سعر الوحدة"><MoneyInput value={l.price} onChange={v => setLine(i, { price: v })} disabled={!editable} /></Field>
-                <div className="text-xs pb-3 text-left" style={{ color: '#5A7A8A' }}><Money value={Math.round((Number(l.qty) || 0) * (l.price || 0))} /></div>
+                <div className="text-xs pb-3 text-left" style={{ color: '#5A7A8A' }}><Money value={Math.round((toQuantity(l.qty) || 0) * (l.price || 0))} /></div>
               </div>
             </div>
           ))}
@@ -275,40 +274,92 @@ function PaymentForm({ state, doc, f, editable, update }) {
   )
 }
 
-function PurchaseForm({ state, f, editable, update }) {
-  const groups = [['direct', 'مواد مباشرة'], ['operating', 'مصروفات تشغيلية']]
+const KIND_LABEL = { direct: 'مواد مباشرة', operating: 'مصروفات تشغيلية' }
+
+function PurchaseForm({ state, doc, f, editable, update }) {
+  const lines = f.lines || []
+  const totals = purchaseTotals(f)
+  const approved = doc.status === 'approved' ? state.purchases.find(p => p.docId === doc.id) : null
+  const setLines = next => update({ lines: next })
+  const setLine = (i, p) => setLines(lines.map((l, j) => j === i ? { ...l, ...p } : l))
+  const kindOf = id => state.categories.find(c => c.id === id)?.kind
+
+  const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => s + (l.net || 0), 0)
+
   return (
     <div className="space-y-3">
-      <Notice tone="info">المشتريات في هذا النموذج مدفوعة مباشرة: الاعتماد يخصم الإجمالي من حساب الدفع.</Notice>
+      <Notice tone="info">المشتريات في هذا النموذج مدفوعة مباشرة: الاعتماد يخصم الإجمالي من حساب الدفع. لكل بند تصنيفه.</Notice>
       <Field label="المورد"><TextInput value={f.supplier} onChange={e => update({ supplier: e.target.value })} disabled={!editable} /></Field>
       <div className="grid grid-cols-2 gap-2">
         <Field label="رقم الفاتورة"><TextInput value={f.number} onChange={e => update({ number: e.target.value })} disabled={!editable} dir="ltr" className="text-left" /></Field>
         <Field label="التاريخ"><TextInput type="date" value={f.date} onChange={e => update({ date: e.target.value })} disabled={!editable} /></Field>
       </div>
-      <Field label="التصنيف">
-        <Select value={f.categoryId} onChange={e => update({ categoryId: e.target.value })} disabled={!editable}>
-          <option value="">— اختر التصنيف —</option>
-          {groups.map(([kind, label]) => (
-            <optgroup key={kind} label={label}>
-              {state.categories.filter(c => c.kind === kind && (!c.archived || c.id === f.categoryId)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </optgroup>
-          ))}
-        </Select>
-      </Field>
-      <Field label="الوصف"><TextInput value={f.description} onChange={e => update({ description: e.target.value })} disabled={!editable} /></Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="المبلغ قبل الضريبة"><MoneyInput value={f.net} onChange={v => update({ net: v })} disabled={!editable} /></Field>
-        <Field label="الضريبة">
-          <MoneyInput value={f.vat} onChange={v => update({ vat: v })} disabled={!editable} />
-        </Field>
-      </div>
-      {editable && (
-        <div className="flex gap-1.5">
-          <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => update({ vat: vatFor(f.net) })}>ضريبة 15%</Button>
-          <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => update({ vat: 0 })}>بلا ضريبة</Button>
+
+      {!approved && (
+        <div>
+          <div className="text-xs font-bold mb-1" style={{ color: '#5A7A8A' }}>البنود</div>
+          <div className="space-y-2">
+            {lines.map((l, i) => (
+              <div key={l.id || i} className="rounded-xl border border-border p-2 bg-surface space-y-2">
+                <div className="flex gap-2">
+                  <TextInput value={l.desc} onChange={e => setLine(i, { desc: e.target.value })} disabled={!editable} placeholder="الوصف" />
+                  {editable && lines.length > 1 && (
+                    <button onClick={() => setLines(lines.filter((_, j) => j !== i))} className="px-3 rounded-xl text-red-600 bg-white border border-border" aria-label="حذف البند">×</button>
+                  )}
+                </div>
+                <Select value={l.categoryId} onChange={e => setLine(i, { categoryId: e.target.value })} disabled={!editable} aria-label="تصنيف البند">
+                  <option value="">— اختر التصنيف —</option>
+                  {Object.entries(KIND_LABEL).map(([kind, label]) => (
+                    <optgroup key={kind} label={label}>
+                      {state.categories.filter(c => c.kind === kind && (!c.archived || c.id === l.categoryId)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
+                  ))}
+                </Select>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="قبل الضريبة"><MoneyInput value={l.net} onChange={v => setLine(i, { net: v })} disabled={!editable} /></Field>
+                  <Field label="الضريبة"><MoneyInput value={l.vat} onChange={v => setLine(i, { vat: v })} disabled={!editable} /></Field>
+                </div>
+                {editable && (
+                  <div className="flex gap-1.5">
+                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: vatFor(l.net || 0) })}>ضريبة 15%</Button>
+                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: 0 })}>بلا ضريبة</Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {editable && (
+            <Button variant="secondary" className="mt-2 !py-1.5 !text-xs"
+              onClick={() => setLines([...lines, { id: newId('pline'), desc: '', categoryId: '', net: 0, vat: 0 }])}>+ بند</Button>
+          )}
         </div>
       )}
-      <Row label="الإجمالي" value={(f.net || 0) + (f.vat || 0)} strong />
+
+      {approved && (
+        <div className="rounded-xl border border-border p-3 text-sm space-y-2">
+          <div className="font-extrabold" style={{ color: NAVY }}>البنود المعتمدة</div>
+          <div className="text-[11px]" style={{ color: '#8FAAAA' }}>التصنيف ونوعه مثبّتان كما كانا وقت الاعتماد</div>
+          {approved.lines.map((l, i) => (
+            <div key={i} className="flex items-start justify-between gap-2">
+              <div>
+                <div>{l.desc}</div>
+                <div className="text-[11px]" style={{ color: '#5A7A8A' }}>{l.categoryName} — {KIND_LABEL[l.categoryKind]}</div>
+              </div>
+              <div className="text-left"><Money value={l.net} /><div className="text-[11px]" style={{ color: '#8FAAAA' }}>ضريبة <Money value={l.vat} /></div></div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border p-3 space-y-1">
+        {!approved && <>
+          <Row label="مواد مباشرة" value={byKind('direct')} />
+          <Row label="مصروفات تشغيلية" value={byKind('operating')} />
+        </>}
+        <Row label="قبل الضريبة" value={approved ? approved.net : totals.net} />
+        <Row label="الضريبة" value={approved ? approved.vat : totals.vat} />
+        <Row label="الإجمالي" value={approved ? approved.total : totals.total} strong />
+      </div>
       <Field label="حساب الدفع"><AccountSelect state={state} value={f.accountId} onChange={v => update({ accountId: v })} disabled={!editable} /></Field>
     </div>
   )

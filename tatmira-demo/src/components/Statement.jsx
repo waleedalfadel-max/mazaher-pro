@@ -81,6 +81,7 @@ export default function Statement({ customer }) {
                     <td className="px-2 py-2">
                       {r.label}{r.ref ? <span className="num"> {r.ref}</span> : ''}
                       {r.kind === 'opening' && <div className="text-[11px]" style={{ color: '#92400E' }}>مستحق سابق — ليس مبيعات جديدة</div>}
+                      {r.kind === 'credit' && <div className="text-[11px] text-emerald-700">{fmt(r.info)} ر.س من دفعات سابقة — لا يغيّر الرصيد</div>}
                     </td>
                     <td className="px-2 py-2 text-center num">{r.debit ? fmt(r.debit) : ''}</td>
                     <td className="px-2 py-2 text-center num">{r.credit ? fmt(r.credit) : ''}</td>
@@ -146,7 +147,7 @@ const StatementSheet = forwardRef(function StatementSheet({ lab, st, periodLabel
           {st.rows.map(r => (
             <tr key={r.key}>
               <td style={cell}><span dir="ltr">{r.date}</span></td>
-              <td style={cell}>{r.label}{r.ref ? ` ${r.ref}` : ''}{r.kind === 'opening' ? ' (ليس مبيعات)' : ''}</td>
+              <td style={cell}>{r.label}{r.ref ? ` ${r.ref}` : ''}{r.kind === 'opening' ? ' (ليس مبيعات)' : ''}{r.kind === 'credit' ? ` (${fmt(r.info)} ر.س من دفعات سابقة — لا يغيّر الرصيد)` : ''}</td>
               <td style={{ ...cell, textAlign: 'center' }}>{r.debit ? fmt(r.debit) : ''}</td>
               <td style={{ ...cell, textAlign: 'center' }}>{r.credit ? fmt(r.credit) : ''}</td>
               <td style={{ ...cell, textAlign: 'center', fontWeight: 700 }}>{fmt(r.balance)}</td>

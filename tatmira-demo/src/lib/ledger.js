@@ -8,12 +8,16 @@
  * - الزائد عن التوزيع يبقى رصيداً دائناً للعميل، ولا يجعل أي فاتورة سالبة.
  * - الاعتماد لا يتكرر: المستند المعتمد لا يُعتمد مرة ثانية.
  * - الرصيد الافتتاحي مستحق سابق وليس مبيعات.
+ * - «استخدام الرصيد المتاح» ينقل الزائد من دفعات سابقة إلى فواتير مفتوحة: لا إيراد ولا تحصيل جديد،
+ *   ولا يتغير رصيد العميل الإجمالي — يتغير فقط ما هو مسدد من كل فاتورة.
+ * - تصنيف كل بند مشتريات (اسمه ونوعه) يُثبَّت وقت الاعتماد، فتعديل الإعدادات لاحقاً لا يغيّر التقارير السابقة.
  *
  * المبالغ بالهللة. كل إجراء يعيد { state, error?, code? } ولا يعدّل الحالة الأصلية.
  */
 import { normalizeWhatsapp } from './whatsapp.js'
+import { toQuantity } from './money.js'
 
-export const STATE_VERSION = 1
+export const STATE_VERSION = 2
 
 export const DOC_KINDS = {
   sale:     'فاتورة بيع',
@@ -80,6 +84,7 @@ export function createInitialState({ today = todayISO() } = {}) {
     invoices: [],
     payments: [],
     purchases: [],
+    creditApplications: [],
     counters: { sample: 0 },
   }
 }
@@ -106,15 +111,26 @@ export function sampleFields(kind, state, today) {
     return { customerId: '', date: today, amount: 60000, accountId: 'acc-bank', reference: '', allocations: [] }
   }
   return {
-    supplier: 'مورد تجريبي', number: `P-DEMO-${String(n).padStart(4, '0')}`, date: today,
-    categoryId: 'cat-dates', description: 'تمور خام', net: 20000, vat: 3000, accountId: 'acc-bank',
+    supplier: 'مورد تجريبي', number: `P-DEMO-${String(n).padStart(4, '0')}`, date: today, accountId: 'acc-bank',
+    lines: [
+      { id: newId('pline'), desc: 'تمور خام',        categoryId: 'cat-dates', net: 20000, vat: 3000 },
+      { id: newId('pline'), desc: 'أكياس تغليف',     categoryId: 'cat-pack',  net: 5000,  vat: 750 },
+      { id: newId('pline'), desc: 'توصيل الطلبية',   categoryId: 'cat-deliver', net: 3000, vat: 0 },
+    ],
   }
 }
 
 // ── حسابات مساعدة ──────────────────────────────────────────────────────────
 
 export function linesNet(lines = []) {
-  return lines.reduce((s, l) => s + Math.round((Number(l.qty) || 0) * (Number(l.price) || 0)), 0)
+  return lines.reduce((s, l) => s + Math.round((toQuantity(l.qty) || 0) * (Number(l.price) || 0)), 0)
+}
+
+export function purchaseTotals(fields) {
+  const lines = fields.lines || []
+  const net = lines.reduce((s, l) => s + Math.round(Number(l.net) || 0), 0)
+  const vat = lines.reduce((s, l) => s + Math.max(0, Math.round(Number(l.vat) || 0)), 0)
+  return { net, vat, total: net + vat }
 }
 
 export function saleTotals(fields) {
@@ -134,16 +150,24 @@ export function findCustomer(state, id) {
 export function invoicePaid(state, invoiceId) {
   let paid = 0
   for (const p of state.payments) for (const a of p.allocations) if (a.target === invoiceId) paid += a.amount
+  for (const x of state.creditApplications || []) for (const a of x.allocations) if (a.target === invoiceId) paid += a.amount
   return paid
 }
 
 export function openingPaid(state, customerId) {
   let paid = 0
-  for (const p of state.payments) {
+  for (const p of [...state.payments, ...(state.creditApplications || [])]) {
     if (p.customerId !== customerId) continue
     for (const a of p.allocations) if (a.target === OPENING) paid += a.amount
   }
   return paid
+}
+
+/** الرصيد الزائد من دفعات معتمدة ولم يُستخدم بعد لتسوية فواتير */
+export function availableCredit(state, customerId) {
+  const unallocated = state.payments.filter(p => p.customerId === customerId).reduce((s, p) => s + (p.unallocated || 0), 0)
+  const applied = (state.creditApplications || []).filter(x => x.customerId === customerId).reduce((s, x) => s + x.amount, 0)
+  return Math.max(0, unallocated - applied)
 }
 
 export function payStatus(total, paid) {
@@ -197,7 +221,10 @@ export function customerSummary(state, customerId, { to } = {}) {
   const invoiced = state.invoices.filter(i => i.customerId === customerId && within(i.date)).reduce((s, i) => s + i.total, 0)
   const paid = state.payments.filter(p => p.customerId === customerId && within(p.date)).reduce((s, p) => s + p.amount, 0)
   const balance = opening + invoiced - paid
-  return { opening, invoiced, paid, balance, due: Math.max(0, balance), credit: Math.max(0, -balance) }
+  return {
+    opening, invoiced, paid, balance, due: Math.max(0, balance), credit: Math.max(0, -balance),
+    availableCredit: to ? undefined : availableCredit(state, customerId),
+  }
 }
 
 export function hasMovements(state, customerId) {
@@ -222,6 +249,10 @@ export function statement(state, customerId, { from = '', to = '' } = {}) {
   }
   for (const p of state.payments.filter(p => p.customerId === customerId)) {
     moves.push({ key: p.id, date: p.date, seq: p.approvedSeq, kind: 'payment', label: 'سداد', ref: p.reference || '', debit: 0, credit: p.amount })
+  }
+  // تسوية من الرصيد المتاح: سطر توضيحي بلا مدين ولا دائن — الرصيد لا يتغير
+  for (const x of (state.creditApplications || []).filter(x => x.customerId === customerId)) {
+    moves.push({ key: x.id, date: x.date, seq: x.appliedSeq, kind: 'credit', label: 'تسوية من الرصيد المتاح', ref: '', debit: 0, credit: 0, info: x.amount })
   }
   moves.sort((a, b) => a.date.localeCompare(b.date) || a.seq - b.seq)
 
@@ -256,14 +287,15 @@ export function ownerDashboard(state, { from = '', to = '' } = {}) {
   const inv = state.invoices.filter(i => inRange(i.date))
   const pays = state.payments.filter(p => inRange(p.date))
   const purch = state.purchases.filter(p => inRange(p.date))
-  const catKind = id => state.categories.find(c => c.id === id)?.kind
+  // النوع المثبّت وقت الاعتماد — لا يُقرأ من الإعدادات الحالية
+  const purchLines = purch.flatMap(p => p.lines)
 
   const salesNet = inv.reduce((s, i) => s + i.net, 0)
   const salesVat = inv.reduce((s, i) => s + i.vat, 0)
   const collected = pays.reduce((s, p) => s + p.amount, 0)
-  const direct = purch.filter(p => catKind(p.categoryId) === 'direct').reduce((s, p) => s + p.net, 0)
-  const operating = purch.filter(p => catKind(p.categoryId) === 'operating').reduce((s, p) => s + p.net, 0)
-  const inputVat = purch.reduce((s, p) => s + p.vat, 0)
+  const direct = purchLines.filter(l => l.categoryKind === 'direct').reduce((s, l) => s + l.net, 0)
+  const operating = purchLines.filter(l => l.categoryKind === 'operating').reduce((s, l) => s + l.net, 0)
+  const inputVat = purchLines.reduce((s, l) => s + l.vat, 0)
 
   let due = 0, credit = 0
   for (const c of state.customers) {
@@ -413,9 +445,55 @@ export function reduce(state, action) {
     case 'DOC_APPROVE':
       return approveDocument(state, action)
 
+    case 'CREDIT_APPLY':
+      return applyCredit(state, action)
+
     default:
       return fail(state, 'UNKNOWN_ACTION', 'إجراء غير معروف')
   }
+}
+
+/** يتحقق من توزيع مبلغ على بنود العميل المفتوحة. يعيد { allocations, allocated } أو { fail } */
+function validateAllocations(state, customerId, rawAllocations, verb) {
+  const allocations = (rawAllocations || []).filter(a => Math.round(Number(a.amount) || 0) > 0)
+    .map(a => ({ target: a.target, amount: Math.round(Number(a.amount)) }))
+  const open = new Map(openItems(state, customerId).map(i => [i.target, i]))
+  const seen = new Set()
+  for (const a of allocations) {
+    if (seen.has(a.target)) return { fail: ['DUPLICATE_ALLOCATION', 'الفاتورة مكررة في التوزيع'] }
+    seen.add(a.target)
+    if (a.target !== OPENING) {
+      const inv = state.invoices.find(i => i.id === a.target)
+      if (!inv) return { fail: ['ALLOCATION_NOT_FOUND', 'فاتورة التوزيع غير موجودة'] }
+      if (inv.customerId !== customerId) return { fail: ['ALLOCATION_OTHER_CUSTOMER', `لا يمكن ${verb} على فاتورة عميل آخر`] }
+    }
+    const item = open.get(a.target)
+    if (!item) return { fail: ['ALLOCATION_CLOSED', 'البند المختار مسدد بالكامل'] }
+    if (a.amount > item.remaining) return { fail: ['ALLOCATION_EXCEEDS', `المبلغ الموزع على ${item.label} أكبر من المتبقي`] }
+  }
+  return { allocations, allocated: allocations.reduce((s, a) => s + a.amount, 0) }
+}
+
+/**
+ * تسوية فواتير العميل من رصيده الزائد. لا تنشئ دفعة ولا تمس المبيعات أو الحسابات.
+ * منع التكرار: نفس المعرّف لا يُطبَّق مرتين، والمبلغ لا يتجاوز الرصيد المتاح لحظة التنفيذ.
+ */
+function applyCredit(state, action) {
+  const apps = state.creditApplications || []
+  if (action.id && apps.some(x => x.id === action.id)) return { state, code: 'ALREADY_APPLIED' }
+  const c = findCustomer(state, action.customerId)
+  if (!c) return fail(state, 'CUSTOMER_REQUIRED', 'اختر العميل')
+  const v = validateAllocations(state, c.id, action.allocations, 'استخدام الرصيد')
+  if (v.fail) return fail(state, ...v.fail)
+  if (v.allocated <= 0) return fail(state, 'AMOUNT_REQUIRED', 'حدد مبلغاً لتسويته')
+  const available = availableCredit(state, c.id)
+  if (v.allocated > available) return fail(state, 'CREDIT_EXCEEDS', 'المبلغ أكبر من الرصيد المتاح للعميل')
+  const seq = nextSeq(state)
+  const application = {
+    id: action.id || newId('credit'), customerId: c.id, date: action.date || action.today || todayISO(),
+    amount: v.allocated, allocations: v.allocations, appliedAt: action.at || new Date().toISOString(), appliedSeq: seq,
+  }
+  return ok(withCounters({ ...state, creditApplications: [...apps, application] }, { approved: seq }))
 }
 
 function approveDocument(state, action) {
@@ -439,7 +517,7 @@ function approveDocument(state, action) {
     if (!f.date) return fail(state, 'DATE_REQUIRED', 'اختر تاريخ الفاتورة')
     const lines = (f.lines || []).filter(l => String(l.desc || '').trim() || l.qty || l.price)
     if (!lines.length) return fail(state, 'LINES_REQUIRED', 'أضف بنداً واحداً على الأقل')
-    if (lines.some(l => !(Number(l.qty) > 0) || !(Number(l.price) >= 0) || !String(l.desc || '').trim())) {
+    if (lines.some(l => !(toQuantity(l.qty) > 0) || !(Number(l.price) >= 0) || !String(l.desc || '').trim())) {
       return fail(state, 'BAD_LINE', 'راجع البنود: الوصف والكمية والسعر')
     }
     const { net, vat, total } = saleTotals({ ...f, lines })
@@ -450,7 +528,7 @@ function approveDocument(state, action) {
     }
     const invoice = {
       id: `inv-${doc.id}`, docId: doc.id, customerId: c.id, number: String(f.number).trim(), date: f.date,
-      lines: lines.map(l => ({ desc: String(l.desc).trim(), qty: Number(l.qty), price: Math.round(Number(l.price)) })),
+      lines: lines.map(l => ({ desc: String(l.desc).trim(), qty: toQuantity(l.qty), price: Math.round(Number(l.price)) })),
       net, vat, total, approvedAt: at, approvedSeq: seq,
     }
     next = { ...state, invoices: [...state.invoices, invoice] }
@@ -463,23 +541,9 @@ function approveDocument(state, action) {
     const account = state.accounts.find(a => a.id === f.accountId)
     if (!account || account.archived) return fail(state, 'ACCOUNT_REQUIRED', 'اختر الحساب المستلم')
 
-    const allocations = (f.allocations || []).filter(a => Math.round(Number(a.amount) || 0) > 0)
-      .map(a => ({ target: a.target, amount: Math.round(Number(a.amount)) }))
-    const open = new Map(openItems(state, c.id).map(i => [i.target, i]))
-    const seen = new Set()
-    for (const a of allocations) {
-      if (seen.has(a.target)) return fail(state, 'DUPLICATE_ALLOCATION', 'الفاتورة مكررة في التوزيع')
-      seen.add(a.target)
-      if (a.target !== OPENING) {
-        const inv = state.invoices.find(i => i.id === a.target)
-        if (!inv) return fail(state, 'ALLOCATION_NOT_FOUND', 'فاتورة التوزيع غير موجودة')
-        if (inv.customerId !== c.id) return fail(state, 'ALLOCATION_OTHER_CUSTOMER', 'لا يمكن توزيع الدفعة على فاتورة عميل آخر')
-      }
-      const item = open.get(a.target)
-      if (!item) return fail(state, 'ALLOCATION_CLOSED', 'البند المختار مسدد بالكامل')
-      if (a.amount > item.remaining) return fail(state, 'ALLOCATION_EXCEEDS', `المبلغ الموزع على ${item.label} أكبر من المتبقي`)
-    }
-    const allocated = allocations.reduce((s, a) => s + a.amount, 0)
+    const v = validateAllocations(state, c.id, f.allocations, 'توزيع الدفعة')
+    if (v.fail) return fail(state, ...v.fail)
+    const { allocations, allocated } = v
     if (allocated > amount) return fail(state, 'ALLOCATION_OVER_AMOUNT', 'مجموع التوزيع أكبر من مبلغ السداد')
 
     const payment = {
@@ -491,17 +555,24 @@ function approveDocument(state, action) {
   } else {
     if (!String(f.supplier || '').trim()) return fail(state, 'SUPPLIER_REQUIRED', 'اكتب اسم المورد')
     if (!f.date) return fail(state, 'DATE_REQUIRED', 'اختر تاريخ الفاتورة')
-    const category = state.categories.find(c => c.id === f.categoryId)
-    if (!category || category.archived) return fail(state, 'CATEGORY_REQUIRED', 'اختر التصنيف')
     const account = state.accounts.find(a => a.id === f.accountId)
     if (!account || account.archived) return fail(state, 'ACCOUNT_REQUIRED', 'اختر حساب الدفع')
-    const net = Math.round(Number(f.net) || 0)
-    const vat = Math.max(0, Math.round(Number(f.vat) || 0))
-    if (net <= 0) return fail(state, 'BAD_TOTAL', 'المبلغ قبل الضريبة يجب أن يكون أكبر من صفر')
+    const rawLines = (f.lines || []).filter(l => String(l.desc || '').trim() || l.net || l.vat || l.categoryId)
+    if (!rawLines.length) return fail(state, 'LINES_REQUIRED', 'أضف بنداً واحداً على الأقل')
+    const lines = []
+    for (const [i, l] of rawLines.entries()) {
+      const category = state.categories.find(c => c.id === l.categoryId)
+      if (!category || category.archived) return fail(state, 'CATEGORY_REQUIRED', `اختر تصنيف البند ${i + 1}`)
+      const net = Math.round(Number(l.net) || 0)
+      const vat = Math.max(0, Math.round(Number(l.vat) || 0))
+      if (net <= 0) return fail(state, 'BAD_TOTAL', `مبلغ البند ${i + 1} قبل الضريبة يجب أن يكون أكبر من صفر`)
+      // لقطة ثابتة من التصنيف وقت الاعتماد
+      lines.push({ desc: String(l.desc || '').trim() || category.name, categoryId: category.id, categoryName: category.name, categoryKind: category.kind, net, vat })
+    }
+    const { net, vat, total } = purchaseTotals({ lines })
     const purchase = {
       id: `pur-${doc.id}`, docId: doc.id, supplier: String(f.supplier).trim(), number: String(f.number || '').trim(),
-      date: f.date, categoryId: category.id, description: String(f.description || '').trim(),
-      net, vat, total: net + vat, accountId: account.id, approvedAt: at, approvedSeq: seq,
+      date: f.date, lines, net, vat, total, accountId: account.id, approvedAt: at, approvedSeq: seq,
     }
     next = { ...state, purchases: [...state.purchases, purchase] }
   }
@@ -513,7 +584,29 @@ function approveDocument(state, action) {
   return ok(withCounters(next, { approved: seq }))
 }
 
+/**
+ * ترقية بيانات الجهاز من الإصدار 1: فاتورة المشتريات كانت بتصنيف واحد، ولم تكن تحفظ نوعه.
+ * نحوّلها لبند واحد ونثبّت نوع التصنيف كما هو في الإعدادات لحظة الترقية.
+ */
 export function migrate(saved, today) {
-  if (!saved || saved.version !== STATE_VERSION || !Array.isArray(saved.customers)) return createInitialState({ today })
-  return saved
+  if (!saved || !Array.isArray(saved.customers)) return createInitialState({ today })
+  if (saved.version === STATE_VERSION) return saved
+  if (saved.version !== 1) return createInitialState({ today })
+  const cat = id => saved.categories.find(c => c.id === id)
+  const toLine = x => ({
+    desc: x.description || cat(x.categoryId)?.name || '', categoryId: x.categoryId,
+    categoryName: cat(x.categoryId)?.name || '', categoryKind: cat(x.categoryId)?.kind || 'operating',
+    net: x.net || 0, vat: x.vat || 0,
+  })
+  return {
+    ...saved,
+    version: STATE_VERSION,
+    creditApplications: [],
+    purchases: saved.purchases.map(p => p.lines ? p : { ...p, lines: [toLine(p)] }),
+    documents: saved.documents.map(d => {
+      if (d.kind !== 'purchase' || d.fields.lines) return d
+      const { categoryId, description, net, vat, ...rest } = d.fields
+      return { ...d, fields: { ...rest, lines: [{ id: newId('pline'), desc: description || '', categoryId: categoryId || '', net: net || 0, vat: vat || 0 }] } }
+    }),
+  }
 }

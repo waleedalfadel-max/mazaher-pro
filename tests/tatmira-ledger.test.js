@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import {
   createInitialState, reduce, ownerDashboard, customerSummary, invoiceView, statement,
   suggestAllocations, hasMovements, duplicateInvoiceNumber, accountBalances, OPENING,
+  availableCredit, migrate,
 } from '../tatmira-demo/src/lib/ledger.js'
-import { toHalalas } from '../tatmira-demo/src/lib/money.js'
+import { toHalalas, toQuantity } from '../tatmira-demo/src/lib/money.js'
 import { normalizeWhatsapp, invoiceMessage, whatsappUrl } from '../tatmira-demo/src/lib/whatsapp.js'
 
 const TODAY = '2026-09-17'
@@ -247,10 +248,10 @@ test('العملاء: إضافة وتعديل واتساب وأرشفة، ولا
 test('المشتريات مدفوعة مباشرة: تخفض الحساب وتُفصل مواد مباشرة عن تشغيلية، والربحية تقديرية', () => {
   let s = withInvoice(createInitialState({ today: TODAY }))
   s = must(s, { type: 'DOC_ADD', id: 'm', kind: 'purchase', file: file('m') })
-  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'm', fields: { categoryId: 'cat-dates', net: 30000, vat: 4500, accountId: 'acc-cash' } })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'm', fields: { accountId: 'acc-cash', lines: [{ categoryId: 'cat-dates', net: 30000, vat: 4500 }] } })
   s = must(s, { type: 'DOC_APPROVE', id: 'm' })
   s = must(s, { type: 'DOC_ADD', id: 'o', kind: 'purchase', file: file('o') })
-  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'o', fields: { categoryId: 'cat-power', net: 10000, vat: 0, accountId: 'acc-bank' } })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'o', fields: { accountId: 'acc-bank', lines: [{ categoryId: 'cat-power', net: 10000, vat: 0 }] } })
   s = must(s, { type: 'DOC_APPROVE', id: 'o' })
   const d = ownerDashboard(s)
   assert.equal(d.direct, 30000)
@@ -258,6 +259,136 @@ test('المشتريات مدفوعة مباشرة: تخفض الحساب وتُ
   assert.equal(d.inputVat, 4500)
   assert.equal(d.estimatedProfit, 100000 - 30000 - 10000)
   assert.equal(d.accounts.find(a => a.id === 'acc-cash').balance, -34500)
+})
+
+// ── ملاحظات المراجعة ──────────────────────────────────────────────────────
+
+test('فاتورة مشتريات واحدة تجمع مواد مباشرة ومصروفات تشغيلية بتصنيف لكل بند', () => {
+  let s = createInitialState({ today: TODAY })
+  s = must(s, { type: 'DOC_ADD', id: 'mix', kind: 'purchase', file: file('mix') })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'mix', fields: { accountId: 'acc-bank', lines: [
+    { desc: 'تمور', categoryId: 'cat-dates', net: 40000, vat: 6000 },
+    { desc: 'تغليف', categoryId: 'cat-pack', net: 10000, vat: 1500 },
+    { desc: 'توصيل', categoryId: 'cat-deliver', net: 5000, vat: 0 },
+  ] } })
+  s = must(s, { type: 'DOC_APPROVE', id: 'mix' })
+  const p = s.purchases[0]
+  assert.equal(p.lines.length, 3)
+  assert.equal(p.total, 62500)
+  const d = ownerDashboard(s)
+  assert.equal(d.direct, 50000)
+  assert.equal(d.operating, 5000)
+  assert.equal(d.inputVat, 7500)
+  assert.equal(d.accounts.find(a => a.id === 'acc-bank').balance, -62500, 'الحساب يُخصم بإجمالي الفاتورة مرة واحدة')
+
+  const bad = run(must(createInitialState({ today: TODAY }), { type: 'DOC_ADD', id: 'b', kind: 'purchase', file: file('b') }),
+    { type: 'DOC_APPROVE', id: 'b', })
+  assert.equal(bad.error, undefined, 'البيانات التجريبية الافتراضية صالحة للاعتماد')
+  let t = must(createInitialState({ today: TODAY }), { type: 'DOC_ADD', id: 'c', kind: 'purchase', file: file('c') })
+  t = must(t, { type: 'DOC_UPDATE_FIELDS', id: 'c', fields: { lines: [{ desc: 'بلا تصنيف', categoryId: '', net: 1000, vat: 0 }] } })
+  assert.equal(run(t, { type: 'DOC_APPROVE', id: 'c' }).code, 'CATEGORY_REQUIRED')
+})
+
+test('نوع التصنيف يُثبَّت وقت الاعتماد: تعديل الإعدادات أو أرشفتها لا يغيّر التقارير السابقة', () => {
+  let s = createInitialState({ today: TODAY })
+  s = must(s, { type: 'DOC_ADD', id: 'k', kind: 'purchase', file: file('k') })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'k', fields: { accountId: 'acc-bank', lines: [{ desc: 'تمور', categoryId: 'cat-dates', net: 20000, vat: 0 }] } })
+  s = must(s, { type: 'DOC_APPROVE', id: 'k' })
+  const before = ownerDashboard(s)
+  assert.equal(before.direct, 20000)
+
+  s = must(s, { type: 'CATEGORY_SAVE', id: 'cat-dates', name: 'تمور (معدّل)', kind: 'operating' })
+  s = must(s, { type: 'CATEGORY_ARCHIVE', id: 'cat-dates', archived: true })
+  const after = ownerDashboard(s)
+  assert.equal(after.direct, 20000, 'بقيت مواد مباشرة')
+  assert.equal(after.operating, 0)
+  assert.equal(s.purchases[0].lines[0].categoryName, 'تمور')
+  assert.equal(s.purchases[0].lines[0].categoryKind, 'direct')
+})
+
+test('ترقية بيانات الجهاز القديمة: مشتريات بتصنيف واحد تتحول لبند مثبّت النوع', () => {
+  const v1 = createInitialState({ today: TODAY })
+  v1.version = 1
+  delete v1.creditApplications
+  v1.purchases = [{ id: 'pur-old', docId: 'old', supplier: 'مورد', number: '', date: TODAY, categoryId: 'cat-power', description: 'كهرباء', net: 10000, vat: 1500, total: 11500, accountId: 'acc-bank', approvedSeq: 1 }]
+  v1.documents = [{ id: 'pend', kind: 'purchase', status: 'pending', file: file('pend'), fields: { supplier: 'x', date: TODAY, categoryId: 'cat-dates', description: 'تمر', net: 500, vat: 75, accountId: 'acc-bank' } }]
+  const s = migrate(v1, TODAY)
+  assert.equal(s.version, 2)
+  assert.deepEqual(s.creditApplications, [])
+  assert.equal(s.purchases[0].lines[0].categoryKind, 'operating')
+  assert.equal(ownerDashboard(s).operating, 10000)
+  assert.equal(s.documents[0].fields.lines[0].categoryId, 'cat-dates')
+  assert.equal(s.documents[0].fields.categoryId, undefined)
+})
+
+test('استخدام الرصيد المتاح يسوّي فاتورة لاحقة دون إيراد أو تحصيل جديد، ولا يتكرر', () => {
+  let s = withInvoice(createInitialState({ today: TODAY }), { id: 'i1', number: 'C-1', date: '2026-09-01' })
+  s = withPayment(s, { id: 'pp', amount: toHalalas(1300), date: '2026-09-02' }).state // زائد 150
+  assert.equal(availableCredit(s, CUST), 15000)
+  s = withInvoice(s, { id: 'i2', number: 'C-2', date: '2026-09-10' })
+  const inv2 = () => invoiceView(s, s.invoices.find(i => i.number === 'C-2'))
+  assert.equal(inv2().remaining, 115000)
+
+  const before = ownerDashboard(s)
+  const bankBefore = accountBalances(s).find(a => a.id === 'acc-bank').balance
+  const balanceBefore = customerSummary(s, CUST).balance
+  const allocations = suggestAllocations(s, CUST, availableCredit(s, CUST))
+  assert.deepEqual(allocations, [{ target: 'inv-i2', amount: 15000 }])
+
+  s = must(s, { type: 'CREDIT_APPLY', id: 'ca1', customerId: CUST, allocations })
+  assert.equal(inv2().remaining, 100000)
+  assert.equal(inv2().payStatus, 'partial')
+  assert.equal(availableCredit(s, CUST), 0)
+  const after = ownerDashboard(s)
+  assert.equal(after.salesNet, before.salesNet, 'لا إيراد جديد')
+  assert.equal(after.salesVat, before.salesVat)
+  assert.equal(after.collected, before.collected, 'لا تحصيل جديد')
+  assert.equal(after.paymentsCount, before.paymentsCount)
+  assert.equal(accountBalances(s).find(a => a.id === 'acc-bank').balance, bankBefore, 'لا حركة على البنك')
+  assert.equal(customerSummary(s, CUST).balance, balanceBefore, 'رصيد العميل الإجمالي لا يتغير')
+
+  // منع التكرار: نفس العملية مرة ثانية، أو عملية جديدة بعد نفاد الرصيد
+  const again = run(s, { type: 'CREDIT_APPLY', id: 'ca1', customerId: CUST, allocations })
+  assert.equal(again.code, 'ALREADY_APPLIED')
+  assert.equal(again.state.creditApplications.length, 1)
+  assert.equal(run(s, { type: 'CREDIT_APPLY', id: 'ca2', customerId: CUST, allocations }).code, 'CREDIT_EXCEEDS')
+
+  // كشف الحساب: سطر توضيحي بلا أثر على الرصيد
+  const st = statement(s, CUST)
+  const row = st.rows.find(r => r.kind === 'credit')
+  assert.equal(row.debit + row.credit, 0)
+  assert.equal(row.info, 15000)
+  assert.equal(st.closing, customerSummary(s, CUST).balance)
+})
+
+test('استخدام الرصيد: لا يتجاوز المتبقي ولا يُطبَّق على عميل آخر ولا بلا رصيد', () => {
+  let s = withInvoice(createInitialState({ today: TODAY }), { id: 'x', number: 'X-1' })
+  s = withPayment(s, { id: 'xp', amount: toHalalas(1200) }).state // زائد 50
+  s = withInvoice(s, { id: 'o', customerId: OTHER, number: 'O-9' })
+  assert.equal(run(s, { type: 'CREDIT_APPLY', id: 'n1', customerId: CUST, allocations: [{ target: 'inv-o', amount: 5000 }] }).code, 'ALLOCATION_OTHER_CUSTOMER')
+  assert.equal(run(s, { type: 'CREDIT_APPLY', id: 'n2', customerId: OTHER, allocations: [{ target: 'inv-o', amount: 5000 }] }).code, 'CREDIT_EXCEEDS', 'العميل الآخر لا رصيد له')
+  assert.equal(run(s, { type: 'CREDIT_APPLY', id: 'n3', customerId: CUST, allocations: [] }).code, 'AMOUNT_REQUIRED')
+  s = withInvoice(s, { id: 'y', number: 'X-2' })
+  assert.equal(run(s, { type: 'CREDIT_APPLY', id: 'n4', customerId: CUST, allocations: [{ target: 'inv-y', amount: 6000 }] }).code, 'CREDIT_EXCEEDS')
+})
+
+test('الكمية تقبل الأرقام العربية والإنجليزية والفاصلة العشرية العربية', () => {
+  assert.equal(toQuantity('١٢'), 12)
+  assert.equal(toQuantity('12'), 12)
+  assert.equal(toQuantity('٢٫٥'), 2.5)
+  assert.equal(toQuantity('۳'), 3)
+  assert.ok(Number.isNaN(toQuantity('١٢أ')))
+  assert.equal(toHalalas('١٬١٥٠٫٥٠'), 115050)
+
+  let s = createInitialState({ today: TODAY })
+  s = must(s, { type: 'DOC_ADD', id: 'q', kind: 'sale', file: file('q') })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'q', fields: {
+    customerId: CUST, number: 'Q-1', vatMode: 'none',
+    lines: [{ desc: 'معمول', qty: '٢٠', price: toHalalas(50) }, { desc: 'كعك', qty: '2.5', price: toHalalas(40) }],
+  } })
+  s = must(s, { type: 'DOC_APPROVE', id: 'q' })
+  assert.equal(s.invoices[0].net, 100000 + 10000)
+  assert.deepEqual(s.invoices[0].lines.map(l => l.qty), [20, 2.5])
 })
 
 test('واتساب: لا أرقام عشوائية، ورسالة تشمل الرقم والتاريخ والإجمالي', () => {

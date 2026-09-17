@@ -1,14 +1,30 @@
 // المبالغ تُخزَّن بالهللة (أعداد صحيحة) لتفادي أخطاء الكسور العشرية.
 
+// يحوّل الأرقام العربية (٠-٩) والفارسية (۰-۹) إلى إنجليزية، والفاصلة العشرية العربية «٫» إلى نقطة
+export function normalizeDigits(value) {
+  return String(value ?? '')
+    .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660))
+    .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6F0))
+    .replace(/٫/g, '.')
+}
+
+function parseDecimal(value) {
+  const cleaned = normalizeDigits(value).replace(/[,\s٬]/g, '')
+  if (cleaned === '' || cleaned === '.') return 0
+  if (!/^\d*\.?\d*$/.test(cleaned)) return NaN
+  return Number(cleaned)
+}
+
 export function toHalalas(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value * 100) : 0
-  const cleaned = String(value ?? '')
-    .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-    .replace(/٫/g, '.')
-    .replace(/[,\s٬]/g, '')
-  if (cleaned === '' || cleaned === '.') return 0
-  const n = Number(cleaned)
+  const n = parseDecimal(value)
   return Number.isFinite(n) ? Math.round(n * 100) : NaN
+}
+
+/** كمية بند: تقبل أرقاماً عربية أو إنجليزية وكسراً عشرياً. تعيد NaN للنص غير الصالح. */
+export function toQuantity(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+  return parseDecimal(value)
 }
 
 export function fromHalalas(h) {

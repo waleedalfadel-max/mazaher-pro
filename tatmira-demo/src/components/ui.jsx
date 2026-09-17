@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { fmt, inputValue, toHalalas } from '../lib/money.js'
+import { fmt, inputValue, toHalalas, toQuantity } from '../lib/money.js'
 
 export const NAVY = '#1B3A5C'
 export const TEAL = '#6EB7B0'
@@ -87,6 +87,25 @@ export function MoneyInput({ value, onChange, disabled, ...rest }) {
         if (!Number.isNaN(h)) onChange(h)
       }}
       onBlur={() => { focused.current = false; if (!bad) setText(inputValue(toHalalas(text))) }}
+      className={`${inputClass} text-left num ${bad ? 'border-red-400' : ''}`} {...rest} />
+  )
+}
+
+/** حقل كمية: يقبل ١٢ أو 12 أو ٢٫٥ ويعيد رقماً. النص كما كُتب يبقى ظاهراً أثناء الكتابة. */
+export function QuantityInput({ value, onChange, disabled, ...rest }) {
+  const [text, setText] = useState(value === undefined || value === null ? '' : String(value))
+  const focused = useRef(false)
+  useEffect(() => { if (!focused.current) setText(value === undefined || value === null ? '' : String(value)) }, [value])
+  const bad = text !== '' && Number.isNaN(toQuantity(text))
+  return (
+    <input inputMode="decimal" dir="ltr" disabled={disabled} value={text}
+      onFocus={() => { focused.current = true }}
+      onChange={e => {
+        setText(e.target.value)
+        const q = toQuantity(e.target.value)
+        if (!Number.isNaN(q)) onChange(q)
+      }}
+      onBlur={() => { focused.current = false; const q = toQuantity(text); if (!Number.isNaN(q)) setText(String(q)) }}
       className={`${inputClass} text-left num ${bad ? 'border-red-400' : ''}`} {...rest} />
   )
 }
