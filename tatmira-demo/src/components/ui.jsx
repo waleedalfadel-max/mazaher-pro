@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { fmt, inputValue, toHalalas, toQuantity } from '../lib/money.js'
+import {
+  fmt, inputValue, isValidMoneyField, isValidQuantityField, moneyFieldValue, quantityFieldValue, toHalalas, toQuantity,
+} from '../lib/money.js'
 
 export const NAVY = '#1B3A5C'
 export const TEAL = '#6EB7B0'
@@ -73,40 +75,59 @@ export function Select({ children, ...props }) {
 }
 
 /** حقل مبلغ: يعرض ريالات ويعيد هللات. يُحدَّث عند الخروج من الحقل. */
+function InvalidHint({ show }) {
+  if (!show) return null
+  return <span role="alert" className="block text-[11px] mt-0.5 font-bold text-red-600">رقم غير صالح</span>
+}
+
+/**
+ * حقل مبلغ: يعرض ريالات ويعيد هللات. النص غير الصالح يُمرَّر كما هو (نص) بدل الاحتفاظ بالقيمة
+ * السابقة، فيظهر الخطأ ويُمنع الاعتماد حتى يُصحَّح.
+ */
 export function MoneyInput({ value, onChange, disabled, ...rest }) {
-  const [text, setText] = useState(inputValue(value))
+  const shown = v => (typeof v === 'string' ? v : inputValue(v))
+  const [text, setText] = useState(shown(value))
   const focused = useRef(false)
-  useEffect(() => { if (!focused.current) setText(inputValue(value)) }, [value])
-  const bad = Number.isNaN(toHalalas(text))
+  useEffect(() => { if (!focused.current) setText(shown(value)) }, [value])
+  const bad = !isValidMoneyField(moneyFieldValue(text))
   return (
-    <input inputMode="decimal" dir="ltr" disabled={disabled} value={text}
-      onFocus={() => { focused.current = true }}
-      onChange={e => {
-        setText(e.target.value)
-        const h = toHalalas(e.target.value)
-        if (!Number.isNaN(h)) onChange(h)
-      }}
-      onBlur={() => { focused.current = false; if (!bad) setText(inputValue(toHalalas(text))) }}
-      className={`${inputClass} text-left num ${bad ? 'border-red-400' : ''}`} {...rest} />
+    <span className="block">
+      <input inputMode="decimal" dir="ltr" disabled={disabled} value={text} aria-invalid={bad || undefined}
+        onFocus={() => { focused.current = true }}
+        onChange={e => { setText(e.target.value); onChange(moneyFieldValue(e.target.value)) }}
+        onBlur={() => { focused.current = false; if (!bad) setText(inputValue(toHalalas(text))) }}
+        className={`${inputClass} text-left num ${bad ? '!border-red-500 ring-2 ring-red-200' : ''}`} {...rest} />
+      <InvalidHint show={bad} />
+    </span>
   )
 }
 
-/** حقل كمية: يقبل ١٢ أو 12 أو ٢٫٥ ويعيد رقماً. النص كما كُتب يبقى ظاهراً أثناء الكتابة. */
+/** حقل كمية: يقبل ١٢ أو 12 أو ٢٫٥. النص غير الصالح يُمرَّر كما هو ويُمنع الاعتماد حتى يُصحَّح. */
 export function QuantityInput({ value, onChange, disabled, ...rest }) {
-  const [text, setText] = useState(value === undefined || value === null ? '' : String(value))
+  const shown = v => (v === undefined || v === null ? '' : String(v))
+  const [text, setText] = useState(shown(value))
   const focused = useRef(false)
-  useEffect(() => { if (!focused.current) setText(value === undefined || value === null ? '' : String(value)) }, [value])
-  const bad = text !== '' && Number.isNaN(toQuantity(text))
+  useEffect(() => { if (!focused.current) setText(shown(value)) }, [value])
+  const bad = !isValidQuantityField(quantityFieldValue(text))
   return (
-    <input inputMode="decimal" dir="ltr" disabled={disabled} value={text}
-      onFocus={() => { focused.current = true }}
-      onChange={e => {
-        setText(e.target.value)
-        const q = toQuantity(e.target.value)
-        if (!Number.isNaN(q)) onChange(q)
-      }}
-      onBlur={() => { focused.current = false; const q = toQuantity(text); if (!Number.isNaN(q)) setText(String(q)) }}
-      className={`${inputClass} text-left num ${bad ? 'border-red-400' : ''}`} {...rest} />
+    <span className="block">
+      <input inputMode="decimal" dir="ltr" disabled={disabled} value={text} aria-invalid={bad || undefined}
+        onFocus={() => { focused.current = true }}
+        onChange={e => { setText(e.target.value); onChange(quantityFieldValue(e.target.value)) }}
+        onBlur={() => { focused.current = false; if (!bad && text !== '') setText(String(toQuantity(text))) }}
+        className={`${inputClass} text-left num ${bad ? '!border-red-500 ring-2 ring-red-200' : ''}`} {...rest} />
+      <InvalidHint show={bad} />
+    </span>
+  )
+}
+
+/** رسالة موحدة قبل زر الاعتماد أو التأكيد */
+export function InvalidInputsNotice({ fields }) {
+  if (!fields?.length) return null
+  return (
+    <div role="alert" className="px-3 py-2.5 rounded-xl text-sm font-bold" style={{ background: '#FEF2F2', color: '#B42318', border: '1px solid #FECACA' }}>
+      قيمة غير صالحة في: {fields.join('، ')} — صحّحها أولاً. لن يُستخدم أي رقم سابق بدلاً منها.
+    </div>
   )
 }
 

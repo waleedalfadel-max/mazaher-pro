@@ -2,11 +2,11 @@ import React, { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useStore } from '../store.jsx'
 import {
-  DOC_KINDS, REVIEW_STATUS, duplicateInvoiceNumber, newId, openItems, purchaseTotals, saleTotals, suggestAllocations,
+  DOC_KINDS, REVIEW_STATUS, duplicateInvoiceNumber, invalidInputs, newId, openItems, purchaseTotals, saleTotals, suggestAllocations,
 } from '../lib/ledger.js'
-import { toQuantity, vatFor } from '../lib/money.js'
+import { moneyOrZero, toQuantity, vatFor } from '../lib/money.js'
 import {
-  Badge, Button, Card, Field, Money, MoneyInput, Notice, QuantityInput, Select, TextInput, NAVY,
+  Badge, Button, Card, Field, InvalidInputsNotice, Money, MoneyInput, Notice, QuantityInput, Select, TextInput, NAVY,
 } from '../components/ui.jsx'
 import FilePreview from '../components/FilePreview.jsx'
 
@@ -24,6 +24,7 @@ export default function ReviewDocument() {
 
   const editable = doc.status === 'pending'
   const f = doc.fields
+  const invalid = editable ? invalidInputs(doc.kind, f) : []
   const update = fields => {
     const r = dispatch({ type: 'DOC_UPDATE_FIELDS', id: doc.id, fields })
     if (r.error) setResult({ tone: 'error', text: r.error })
@@ -79,10 +80,12 @@ export default function ReviewDocument() {
             </label>
           )}
 
+          {editable && invalid.length > 0 && <div className="mt-3"><InvalidInputsNotice fields={invalid} /></div>}
+
           {editable && (
             <div className="grid grid-cols-3 gap-2 mt-4">
               <Button variant="danger" onClick={reject}>رفض</Button>
-              <Button className="col-span-2 !py-3" onClick={approve} disabled={needsDupConfirm && !dupConfirmed}>اعتماد</Button>
+              <Button className="col-span-2 !py-3" onClick={approve} disabled={invalid.length > 0 || (needsDupConfirm && !dupConfirmed)}>اعتماد</Button>
             </div>
           )}
 
@@ -164,7 +167,7 @@ function SaleForm({ state, doc, f, editable, update }) {
                   <QuantityInput value={l.qty} onChange={v => setLine(i, { qty: v })} disabled={!editable} aria-label="الكمية" />
                 </Field>
                 <Field label="سعر الوحدة"><MoneyInput value={l.price} onChange={v => setLine(i, { price: v })} disabled={!editable} /></Field>
-                <div className="text-xs pb-3 text-left" style={{ color: '#5A7A8A' }}><Money value={Math.round((toQuantity(l.qty) || 0) * (l.price || 0))} /></div>
+                <div className="text-xs pb-3 text-left" style={{ color: '#5A7A8A' }}><Money value={Math.round((toQuantity(l.qty ?? '') || 0) * moneyOrZero(l.price))} /></div>
               </div>
             </div>
           ))}
@@ -203,14 +206,15 @@ function PaymentForm({ state, doc, f, editable, update }) {
   const items = f.customerId ? openItems(state, f.customerId) : []
   const allocations = f.allocations || []
   const allocOf = target => allocations.find(a => a.target === target)?.amount || 0
-  const allocated = allocations.reduce((s, a) => s + (a.amount || 0), 0)
-  const unallocated = (f.amount || 0) - allocated
+  const allocated = allocations.reduce((s, a) => s + moneyOrZero(a.amount), 0)
+  const unallocated = moneyOrZero(f.amount) - allocated
   const approved = doc.status === 'approved' ? state.payments.find(p => p.docId === doc.id) : null
 
   const suggest = (customerId, amount) => suggestAllocations(state, customerId, amount)
   function setAlloc(target, amount) {
     const rest = allocations.filter(a => a.target !== target)
-    update({ allocAuto: false, allocations: amount > 0 ? [...rest, { target, amount }] : rest })
+    const keep = typeof amount === 'string' || amount > 0 // النص غير الصالح يبقى ظاهراً حتى يُصحَّح
+    update({ allocAuto: false, allocations: keep ? [...rest, { target, amount }] : rest })
   }
 
   return (
@@ -218,12 +222,12 @@ function PaymentForm({ state, doc, f, editable, update }) {
       <Notice tone="info">صورة الإيصال لا تثبت وصول المبلغ. اعتمد بعد التأكد من دخوله للحساب.</Notice>
       <Field label="العميل">
         <CustomerSelect state={state} value={f.customerId} disabled={!editable}
-          onChange={v => update({ customerId: v, allocAuto: true, allocations: v ? suggest(v, f.amount) : [] })} />
+          onChange={v => update({ customerId: v, allocAuto: true, allocations: v ? suggest(v, moneyOrZero(f.amount)) : [] })} />
       </Field>
       <div className="grid grid-cols-2 gap-2">
         <Field label="المبلغ">
           <MoneyInput value={f.amount} disabled={!editable}
-            onChange={v => update(f.allocAuto !== false && f.customerId ? { amount: v, allocations: suggest(f.customerId, v) } : { amount: v })} />
+            onChange={v => update(typeof v === 'number' && f.allocAuto !== false && f.customerId ? { amount: v, allocations: suggest(f.customerId, v) } : { amount: v })} />
         </Field>
         <Field label="التاريخ"><TextInput type="date" value={f.date} onChange={e => update({ date: e.target.value })} disabled={!editable} /></Field>
       </div>
@@ -236,7 +240,7 @@ function PaymentForm({ state, doc, f, editable, update }) {
         <div className="rounded-xl border border-border p-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-extrabold" style={{ color: NAVY }}>توزيع الدفعة</span>
-            <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => update({ allocAuto: true, allocations: suggest(f.customerId, f.amount) })}>
+            <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => update({ allocAuto: true, allocations: suggest(f.customerId, moneyOrZero(f.amount)) })}>
               اقترح على الأقدم
             </Button>
           </div>
@@ -284,7 +288,7 @@ function PurchaseForm({ state, doc, f, editable, update }) {
   const setLine = (i, p) => setLines(lines.map((l, j) => j === i ? { ...l, ...p } : l))
   const kindOf = id => state.categories.find(c => c.id === id)?.kind
 
-  const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => s + (l.net || 0), 0)
+  const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => s + moneyOrZero(l.net), 0)
 
   return (
     <div className="space-y-3">
@@ -321,7 +325,7 @@ function PurchaseForm({ state, doc, f, editable, update }) {
                 </div>
                 {editable && (
                   <div className="flex gap-1.5">
-                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: vatFor(l.net || 0) })}>ضريبة 15%</Button>
+                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: vatFor(moneyOrZero(l.net)) })}>ضريبة 15%</Button>
                     <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: 0 })}>بلا ضريبة</Button>
                   </div>
                 )}

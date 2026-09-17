@@ -15,7 +15,7 @@
  * المبالغ بالهللة. كل إجراء يعيد { state, error?, code? } ولا يعدّل الحالة الأصلية.
  */
 import { normalizeWhatsapp } from './whatsapp.js'
-import { toQuantity } from './money.js'
+import { isValidMoneyField, isValidQuantityField, moneyOrZero, toQuantity } from './money.js'
 
 export const STATE_VERSION = 2
 
@@ -123,19 +123,47 @@ export function sampleFields(kind, state, today) {
 // ── حسابات مساعدة ──────────────────────────────────────────────────────────
 
 export function linesNet(lines = []) {
-  return lines.reduce((s, l) => s + Math.round((toQuantity(l.qty) || 0) * (Number(l.price) || 0)), 0)
+  return lines.reduce((s, l) => s + Math.round((toQuantity(l.qty ?? '') || 0) * moneyOrZero(l.price)), 0)
 }
 
 export function purchaseTotals(fields) {
   const lines = fields.lines || []
-  const net = lines.reduce((s, l) => s + Math.round(Number(l.net) || 0), 0)
-  const vat = lines.reduce((s, l) => s + Math.max(0, Math.round(Number(l.vat) || 0)), 0)
+  const net = lines.reduce((s, l) => s + moneyOrZero(l.net), 0)
+  const vat = lines.reduce((s, l) => s + Math.max(0, moneyOrZero(l.vat)), 0)
   return { net, vat, total: net + vat }
+}
+
+/**
+ * الحقول التي تحمل إدخالاً غير صالح (نصاً لم يُفهم كرقم). وجود أي منها يمنع الاعتماد:
+ * لا نعتمد بقيمة سابقة ولا بصفر بدلاً من ما كتبه المستخدم.
+ */
+export function invalidInputs(kind, f = {}) {
+  const out = []
+  if (kind === 'sale') {
+    ;(f.lines || []).forEach((l, i) => {
+      if (!isValidQuantityField(l.qty)) out.push(`كمية البند ${i + 1}`)
+      if (!isValidMoneyField(l.price)) out.push(`سعر البند ${i + 1}`)
+    })
+    if (f.vatMode !== 'none' && !isValidMoneyField(f.vat)) out.push('الضريبة')
+  } else if (kind === 'payment') {
+    if (!isValidMoneyField(f.amount)) out.push('مبلغ السداد')
+    if ((f.allocations || []).some(a => !isValidMoneyField(a.amount))) out.push('مبالغ التوزيع')
+  } else if (kind === 'purchase') {
+    ;(f.lines || []).forEach((l, i) => {
+      if (!isValidMoneyField(l.net)) out.push(`مبلغ البند ${i + 1}`)
+      if (!isValidMoneyField(l.vat)) out.push(`ضريبة البند ${i + 1}`)
+    })
+  }
+  return out
+}
+
+export function invalidMessage(fields) {
+  return `قيمة غير صالحة في: ${fields.join('، ')} — صحّحها قبل المتابعة`
 }
 
 export function saleTotals(fields) {
   const net = linesNet(fields.lines)
-  const vat = fields.vatMode === 'none' ? 0 : Math.max(0, Math.round(Number(fields.vat) || 0))
+  const vat = fields.vatMode === 'none' ? 0 : Math.max(0, moneyOrZero(fields.vat))
   return { net, vat, total: net + vat }
 }
 
@@ -455,6 +483,8 @@ export function reduce(state, action) {
 
 /** يتحقق من توزيع مبلغ على بنود العميل المفتوحة. يعيد { allocations, allocated } أو { fail } */
 function validateAllocations(state, customerId, rawAllocations, verb) {
+  // مبلغ غير صالح لا يُسقط بصمت من التوزيع
+  if ((rawAllocations || []).some(a => !isValidMoneyField(a.amount))) return { fail: ['INVALID_INPUT', invalidMessage(['مبالغ التوزيع'])] }
   const allocations = (rawAllocations || []).filter(a => Math.round(Number(a.amount) || 0) > 0)
     .map(a => ({ target: a.target, amount: Math.round(Number(a.amount)) }))
   const open = new Map(openItems(state, customerId).map(i => [i.target, i]))
@@ -503,6 +533,8 @@ function approveDocument(state, action) {
   if (doc.status === 'approved') return { state, code: 'ALREADY_APPROVED' }
   if (doc.status !== 'pending') return fail(state, 'NOT_PENDING', 'المستند ليس بانتظار المراجعة')
   if (!doc.file?.id) return fail(state, 'FILE_REQUIRED', 'المستند إلزامي')
+  const invalid = invalidInputs(doc.kind, doc.fields)
+  if (invalid.length) return fail(state, 'INVALID_INPUT', invalidMessage(invalid))
 
   const at = action.at || new Date().toISOString()
   const seq = nextSeq(state)

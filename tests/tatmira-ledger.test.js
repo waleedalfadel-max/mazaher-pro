@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 import {
   createInitialState, reduce, ownerDashboard, customerSummary, invoiceView, statement,
   suggestAllocations, hasMovements, duplicateInvoiceNumber, accountBalances, OPENING,
-  availableCredit, migrate,
+  availableCredit, migrate, invalidInputs,
 } from '../tatmira-demo/src/lib/ledger.js'
-import { toHalalas, toQuantity } from '../tatmira-demo/src/lib/money.js'
+import {
+  toHalalas, toQuantity, moneyFieldValue, quantityFieldValue, isValidMoneyField, isValidQuantityField,
+} from '../tatmira-demo/src/lib/money.js'
 import { normalizeWhatsapp, invoiceMessage, whatsappUrl } from '../tatmira-demo/src/lib/whatsapp.js'
 
 const TODAY = '2026-09-17'
@@ -402,4 +404,102 @@ test('واتساب: لا أرقام عشوائية، ورسالة تشمل ال�
   assert.match(text, /1,150\.00/)
   assert.match(text, /نموذج تجريبي — ليس فاتورة ضريبية/)
   assert.ok(whatsappUrl('966500000001', text).startsWith('https://wa.me/966500000001?text='))
+})
+
+// ── الإدخال غير الصالح ────────────────────────────────────────────────────
+// الحقول تستخدم moneyFieldValue وquantityFieldValue لتحويل ما يُكتب إلى ما يُخزَّن،
+// فنحاكي بهما تعديل المستخدم لقيمة صحيحة إلى نص غير صالح.
+
+test('حقل المبلغ والكمية: النص غير الصالح يُخزَّن كما هو ولا تبقى القيمة السابقة', () => {
+  assert.equal(moneyFieldValue('50'), 5000)
+  assert.equal(moneyFieldValue('٥٠٫٥'), 5050)
+  assert.equal(moneyFieldValue(''), 0)
+  assert.equal(moneyFieldValue('50x'), '50x')
+  assert.equal(moneyFieldValue('5.0.0'), '5.0.0')
+  assert.equal(isValidMoneyField(moneyFieldValue('50x')), false)
+  assert.equal(quantityFieldValue('١٢'), 12)
+  assert.equal(quantityFieldValue('١٢أ'), '١٢أ')
+  assert.equal(isValidQuantityField(quantityFieldValue('١٢أ')), false)
+  assert.equal(isValidQuantityField('٢٠'), true)
+})
+
+test('فاتورة بيع: تعديل السعر والكمية إلى نص غير صالح يمنع الاعتماد، والتصحيح يسمح به', () => {
+  let s = createInitialState({ today: TODAY })
+  s = must(s, { type: 'DOC_ADD', id: 'bad', kind: 'sale', file: file('bad') })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: {
+    customerId: CUST, number: 'B-1', vatMode: 'standard', vat: moneyFieldValue('150'),
+    lines: [{ id: 'l1', desc: 'معمول', qty: quantityFieldValue('20'), price: moneyFieldValue('50') }],
+  } })
+  // المستخدم يعدّل السعر الصحيح 50 إلى «50x» والكمية إلى «٢٠أ»
+  const line = s.documents[0].fields.lines[0]
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: { lines: [{ ...line, price: moneyFieldValue('50x'), qty: quantityFieldValue('٢٠أ') }] } })
+  assert.deepEqual(invalidInputs('sale', s.documents[0].fields), ['كمية البند 1', 'سعر البند 1'])
+
+  const blocked = run(s, { type: 'DOC_APPROVE', id: 'bad' })
+  assert.equal(blocked.code, 'INVALID_INPUT')
+  assert.match(blocked.error, /سعر البند 1/)
+  assert.match(blocked.error, /كمية البند 1/)
+  assert.equal(blocked.state.invoices.length, 0, 'لم تُعتمد بالقيمة السابقة 50')
+  assert.equal(blocked.state.documents[0].status, 'pending')
+  assert.equal(ownerDashboard(blocked.state).salesNet, 0)
+
+  // الضريبة غير صالحة أيضاً تمنع
+  const vatBad = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: { vat: moneyFieldValue('١٥٠؟') } })
+  assert.ok(invalidInputs('sale', vatBad.documents[0].fields).includes('الضريبة'))
+
+  // التصحيح
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: { lines: [{ ...line, price: moneyFieldValue('٥٠'), qty: quantityFieldValue('٢٠') }] } })
+  assert.deepEqual(invalidInputs('sale', s.documents[0].fields), [])
+  s = must(s, { type: 'DOC_APPROVE', id: 'bad' })
+  assert.equal(s.invoices.length, 1)
+  assert.equal(s.invoices[0].net, 100000)
+  assert.equal(s.invoices[0].total, 115000)
+})
+
+test('السداد: مبلغ أو توزيع غير صالح يمنع الاعتماد ولا يُسقط التوزيع بصمت', () => {
+  let s = withInvoice(createInitialState({ today: TODAY }))
+  s = must(s, { type: 'DOC_ADD', id: 'pb', kind: 'payment', file: file('pb') })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'pb', fields: { customerId: CUST, accountId: 'acc-bank', amount: moneyFieldValue('600'), allocations: [{ target: 'inv-d1', amount: moneyFieldValue('600') }] } })
+
+  let t = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'pb', fields: { amount: moneyFieldValue('6OO') } })
+  let r = run(t, { type: 'DOC_APPROVE', id: 'pb' })
+  assert.equal(r.code, 'INVALID_INPUT')
+  assert.match(r.error, /مبلغ السداد/)
+  assert.equal(r.state.payments.length, 0)
+
+  t = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'pb', fields: { allocations: [{ target: 'inv-d1', amount: moneyFieldValue('600,,x') }] } })
+  r = run(t, { type: 'DOC_APPROVE', id: 'pb' })
+  assert.equal(r.code, 'INVALID_INPUT')
+  assert.match(r.error, /مبالغ التوزيع/)
+  assert.equal(r.state.payments.length, 0)
+
+  r = run(s, { type: 'DOC_APPROVE', id: 'pb' })
+  assert.equal(r.error, undefined)
+  assert.equal(invoiceView(r.state, r.state.invoices[0]).remaining, 55000)
+})
+
+test('المشتريات: مبلغ بند غير صالح يمنع الاعتماد، والتصحيح يسمح به', () => {
+  let s = createInitialState({ today: TODAY })
+  s = must(s, { type: 'DOC_ADD', id: 'mb', kind: 'purchase', file: file('mb') })
+  const lines = s.documents[0].fields.lines
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'mb', fields: { lines: [{ ...lines[0], net: moneyFieldValue('200ر') }, lines[1]] } })
+  const r = run(s, { type: 'DOC_APPROVE', id: 'mb' })
+  assert.equal(r.code, 'INVALID_INPUT')
+  assert.match(r.error, /مبلغ البند 1/)
+  assert.equal(r.state.purchases.length, 0)
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'mb', fields: { lines: [{ ...lines[0], net: moneyFieldValue('200') }, lines[1]] } })
+  s = must(s, { type: 'DOC_APPROVE', id: 'mb' })
+  assert.equal(s.purchases[0].net, 25000)
+})
+
+test('استخدام الرصيد: مبلغ تسوية غير صالح يمنع التأكيد ولا يُسقط بصمت، والتصحيح يسمح به', () => {
+  let s = withInvoice(createInitialState({ today: TODAY }), { id: 'c1', number: 'K-1' })
+  s = withPayment(s, { id: 'cp', amount: toHalalas(1300) }).state
+  s = withInvoice(s, { id: 'c2', number: 'K-2' })
+  const bad = run(s, { type: 'CREDIT_APPLY', id: 'op', customerId: CUST, allocations: [{ target: 'inv-c2', amount: moneyFieldValue('150x') }] })
+  assert.equal(bad.code, 'INVALID_INPUT')
+  assert.equal(bad.state.creditApplications.length, 0)
+  const good = run(s, { type: 'CREDIT_APPLY', id: 'op', customerId: CUST, allocations: [{ target: 'inv-c2', amount: moneyFieldValue('150') }] })
+  assert.equal(good.error, undefined)
+  assert.equal(invoiceView(good.state, good.state.invoices.find(i => i.number === 'K-2')).remaining, 100000)
 })
