@@ -6,7 +6,7 @@ import { Button, Field, Modal, Notice, TextInput } from './ui.jsx'
 
 /** إضافة عميل أو تعديل اسمه ورقم واتسابه */
 export default function CustomerForm({ open, customer, onClose, onSaved }) {
-  const { dispatch } = useStore()
+  const { state, dispatch } = useStore()
   const [name, setName] = useState('')
   const [whatsapp, setWhatsapp] = useState('')
   const [error, setError] = useState('')
@@ -21,6 +21,7 @@ export default function CustomerForm({ open, customer, onClose, onSaved }) {
   }, [open, customer])
 
   const normalized = normalizeWhatsapp(whatsapp)
+  const customerLabel = state.lab.customerLabel || 'عميل'
 
   function save() {
     const r = customer
@@ -38,8 +39,8 @@ export default function CustomerForm({ open, customer, onClose, onSaved }) {
         <Button onClick={save}>حفظ</Button>
       </>}>
       <div className="space-y-3">
-        <Field label="اسم نقطة البيع">
-          <TextInput value={name} onChange={e => setName(e.target.value)} autoFocus placeholder="مثال: نقطة بيع 11" />
+        <Field label={`اسم ${customerLabel}`}>
+          <TextInput value={name} onChange={e => setName(e.target.value)} autoFocus placeholder={`مثال: ${customerLabel} جديد`} />
         </Field>
         <Field label="رقم الواتساب (اختياري)"
           hint={normalized ? <>سيُحفظ بصيغة <span className="num">{displayWhatsapp(normalized)}</span></> : 'مثال: 05xxxxxxxx — اتركه فارغاً إن لم يتوفر'}

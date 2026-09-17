@@ -72,7 +72,8 @@ export function selectableCategories(state, currentId) {
 
 /**
  * تقرير المصروفات لفترة. يعيد أقساماً (مباشرة ثم تشغيلية) ← مجموعات ← تصنيفات ← حركات.
- * كل إجمالي هو مجموع ما تحته من الحركات نفسها، والمبالغ قبل الضريبة (الضريبة تُعرض منفصلة).
+ * المنشأة التي لا تفصل الضريبة ترى إجمالي فاتورة المورد ضمن التكلفة، والمنشأة المفعّل عندها
+ * إعداد الضريبة ترى الصافي تكلفةً والضريبة منفصلة. القرار محفوظ داخل البند وقت الاعتماد.
  */
 export function expenseReport(state, { from = '', to = '' } = {}) {
   const inRange = d => (!from || d >= from) && (!to || d <= to)
@@ -81,6 +82,8 @@ export function expenseReport(state, { from = '', to = '' } = {}) {
 
   for (const p of state.purchases.filter(p => inRange(p.date))) {
     p.lines.forEach((line, lineIndex) => {
+      const amount = line.expenseAmount ?? line.net
+      const separatedVat = line.separatedVat ?? line.vat
       const kind = line.categoryKind
       const gKey = `${kind}|${line.groupId}`
       if (!groups.has(gKey)) {
@@ -101,11 +104,12 @@ export function expenseReport(state, { from = '', to = '' } = {}) {
       const c = g.categories.get(line.categoryId)
       c.movements.push({
         key: `${p.id}|${lineIndex}`, date: p.date, docId: p.docId, purchaseId: p.id,
-        payee: p.payee || '', number: p.number || '', desc: line.desc, net: line.net, vat: line.vat,
+        payee: p.payee || '', number: p.number || '', desc: line.desc,
+        amount, net: line.net, documentVat: line.vat, separatedVat,
         categoryName: line.categoryName, groupName: line.groupName,
       })
-      c.total += line.net; c.vat += line.vat
-      g.total += line.net; g.vat += line.vat
+      c.total += amount; c.vat += separatedVat
+      g.total += amount; g.vat += separatedVat
     })
   }
 

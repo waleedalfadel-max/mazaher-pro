@@ -77,8 +77,10 @@ function GroupCard({ group, clr, sales, expanded, toggle }) {
                           {m.desc}{m.payee ? ` — ${m.payee}` : ''}
                         </span>
                         <span className="text-left shrink-0">
-                          <span className="num text-xs font-semibold block" style={{ color: clr.color }}>{fmt(m.net)}</span>
-                          {m.vat > 0 && <span className="num text-[10px] block" style={{ color: '#8FAAAA' }}>+ ضريبة {fmt(m.vat)}</span>}
+                          <span className="num text-xs font-semibold block" style={{ color: clr.color }}>{fmt(m.amount)}</span>
+                          {m.documentVat > 0 && <span className="num text-[10px] block" style={{ color: '#8FAAAA' }}>
+                            ضريبة مورد {fmt(m.documentVat)} — {m.separatedVat > 0 ? 'مفصولة' : 'ضمن التكلفة'}
+                          </span>}
                         </span>
                         <span className="text-[11px] font-bold shrink-0" style={{ color: '#4A9E97' }}>المستند ←</span>
                       </Link>
@@ -132,14 +134,16 @@ export default function Reports() {
       <Card className="p-3 mb-4"><PeriodFilter value={period} onChange={setPeriod} /></Card>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-3">
-        <Stat label="المبيعات (قبل الضريبة)" value={d.salesNet} />
+        <Stat label={d.taxActive ? 'المبيعات (قبل الضريبة)' : 'المبيعات'} value={d.salesNet} />
         <Stat label="المواد المباشرة" value={report.direct.total} />
         <Stat label="المصروفات التشغيلية" value={report.operating.total} />
         <Stat label="الربحية التقديرية" value={d.estimatedProfit} tone={d.estimatedProfit >= 0 ? 'good' : 'bad'} note="قبل تسويات المخزون وتكلفة الوصفات" />
       </div>
       <Notice tone="warning" className="mb-5">
-        الربحية الحالية <b>تقديرية</b>: المبيعات قبل الضريبة ناقص المواد المباشرة والمصروفات التشغيلية، قبل تسويات المخزون وتكلفة الوصفات.
-        المبالغ قبل الضريبة، وضريبة المصروفات (<Money value={report.vat} />) منفصلة.
+        الربحية الحالية <b>تقديرية</b>: {d.taxActive ? 'المبيعات قبل الضريبة' : 'المبيعات'} ناقص المواد المباشرة والمصروفات التشغيلية، قبل تسويات المخزون وتكلفة الوصفات.
+        {' '}{d.taxActive
+          ? <>ضريبة المصروفات المفصولة (<Money value={report.vat} />) لا تدخل في التكلفة.</>
+          : 'ضريبة المورد — إن وجدت — داخلة في تكلفة المصروف.'}
       </Notice>
 
       <Section title="المواد المباشرة" subtitle="مواد تدخل في المنتج" section={report.direct}
@@ -149,7 +153,7 @@ export default function Reports() {
 
       <Card className="p-4">
         <div className="flex items-center justify-between text-sm font-extrabold" style={{ color: NAVY }}>
-          <span>إجمالي المصروفات (قبل الضريبة)</span><Money value={report.total} strong />
+          <span>{d.taxActive ? 'إجمالي المصروفات بعد فصل الضريبة' : 'إجمالي المصروفات'}</span><Money value={report.total} strong />
         </div>
         <div className="text-[11px] mt-2" style={{ color: '#8FAAAA' }}>
           كل إجمالي هو مجموع ما تحته من حركات. تصنيف المستندات المعتمدة ثابت كما كان وقت اعتمادها.

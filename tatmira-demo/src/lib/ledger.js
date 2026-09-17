@@ -22,8 +22,12 @@ import {
   DEFAULT_CATEGORIES, LEGACY_CATEGORY_GROUP, categoryInfo, defaultCategories, defaultGroups, expenseReport, findGroup,
 } from './expenses.js'
 import { DOC_KIND_IDS, OWNER_ID, actorOf, authorize, defaultEmployees, findEmployee, isOwner } from './permissions.js'
+import {
+  DEFAULT_TAX_RATE_BPS, INITIAL_EFFECTIVE_FROM, defaultTaxSettings, expenseAmounts, isTaxMode, saleAmounts,
+  taxEnabled, taxSettingForDate, taxSnapshot,
+} from './tax.js'
 
-export const STATE_VERSION = 3
+export const STATE_VERSION = 4
 
 export const DOC_KINDS = {
   sale:     'فاتورة بيع',
@@ -63,7 +67,9 @@ export function createInitialState({ today = todayISO() } = {}) {
   const openings = { 1: 250000, 2: 120000, 3: 80000 } // أرصدة افتتاحية تجريبية لثلاث نقاط فقط
   return {
     version: STATE_VERSION,
-    lab: { name: 'معمل تتميرا', city: '', phone: '', vatNumber: '', crNumber: '' },
+    lab: { name: 'معمل تتميرا', city: '', phone: '', crNumber: '', customerLabel: 'نقطة بيع' },
+    // تتميرا لا تطبق الضريبة حالياً. يستطيع المالك إضافة إعداد مؤرّخ من الواجهة.
+    taxSettings: defaultTaxSettings(),
     customers: Array.from({ length: 10 }, (_, i) => ({
       id: `cust-${i + 1}`,
       name: `نقطة بيع ${i + 1}`,
@@ -94,16 +100,19 @@ export function createInitialState({ today = todayISO() } = {}) {
 export function sampleFields(kind, state, today) {
   const n = (state.counters?.sample || 0) + 1
   if (kind === 'sale') {
+    const tax = taxSettingForDate(state, today)
+    // في وضع «شامل» نحافظ على صافي تجريبي يقارب 50 ريالاً للوحدة.
+    const price = tax.mode === 'inclusive'
+      ? Math.round((5000 * (10000 + tax.rateBps)) / 10000)
+      : 5000
     return {
       customerId: '',
       number: `DEMO-${String(n).padStart(4, '0')}`,
       date: today,
       lines: [
-        { id: newId('line'), desc: 'معمول تمر — علبة', qty: 10, price: 5000 },
-        { id: newId('line'), desc: 'كعك تمر — علبة',   qty: 10, price: 5000 },
+        { id: newId('line'), desc: 'معمول تمر — علبة', qty: 10, price },
+        { id: newId('line'), desc: 'كعك تمر — علبة',   qty: 10, price },
       ],
-      vatMode: 'standard',
-      vat: 15000,
     }
   }
   if (kind === 'payment') {
@@ -144,7 +153,6 @@ export function invalidInputs(kind, f = {}) {
       if (!isValidQuantityField(l.qty)) out.push(`كمية البند ${i + 1}`)
       if (!isValidMoneyField(l.price)) out.push(`سعر البند ${i + 1}`)
     })
-    if (f.vatMode !== 'none' && !isValidMoneyField(f.vat)) out.push('الضريبة')
   } else if (kind === 'payment') {
     if (!isValidMoneyField(f.amount)) out.push('مبلغ السداد')
     if ((f.allocations || []).some(a => !isValidMoneyField(a.amount))) out.push('مبالغ التوزيع')
@@ -161,10 +169,15 @@ export function invalidMessage(fields) {
   return `قيمة غير صالحة في: ${fields.join('، ')} — صحّحها قبل المتابعة`
 }
 
-export function saleTotals(fields) {
-  const net = linesNet(fields.lines)
-  const vat = fields.vatMode === 'none' ? 0 : Math.max(0, moneyOrZero(fields.vat))
-  return { net, vat, total: net + vat }
+export function saleTotals(fields, setting) {
+  const base = linesNet(fields.lines)
+  if (setting || fields.taxProfile) return saleAmounts(base, setting || fields.taxProfile)
+  // توافق قراءة بيانات الإصدار السابق فقط. الاعتماد الجديد يمرر دائماً إعداد المنشأة المؤرّخ.
+  if (fields.vatMode === 'standard') {
+    const vat = Math.max(0, moneyOrZero(fields.vat))
+    return { net: base, vat, total: base + vat }
+  }
+  return { net: base, vat: 0, total: base }
 }
 
 function normalizeNumber(num) {
@@ -323,6 +336,12 @@ export function ownerDashboard(state, { from = '', to = '' } = {}) {
   const direct = expenses.direct.total
   const operating = expenses.operating.total
   const inputVat = expenses.vat
+  const expenseVatIncluded = state.purchases.filter(p => inRange(p.date)).reduce((sum, p) => sum + p.lines.reduce(
+    (s, l) => s + Math.max(0, (l.vat || 0) - (l.separatedVat ?? l.vat ?? 0)), 0,
+  ), 0)
+  const taxActive = taxEnabled(taxSettingForDate(state, to || todayISO()))
+    || inv.some(i => taxEnabled(i.taxProfile))
+    || state.purchases.some(p => inRange(p.date) && taxEnabled(p.taxProfile))
 
   let due = 0, credit = 0
   for (const c of state.customers) {
@@ -331,12 +350,12 @@ export function ownerDashboard(state, { from = '', to = '' } = {}) {
     credit += sum.credit
   }
   return {
-    salesNet, salesVat, salesGross: salesNet + salesVat,
+    salesNet, salesVat, salesGross: inv.reduce((s, i) => s + i.total, 0), taxActive,
     invoicesCount: inv.length,
     invoicesWithoutVat: inv.filter(i => i.vat === 0).length,
     collected, paymentsCount: pays.length,
     due, credit,
-    direct, operating, inputVat,
+    direct, operating, inputVat, expenseVatIncluded,
     estimatedProfit: salesNet - direct - operating,
     pendingDocs: state.documents.filter(d => d.status === 'pending').length,
     accounts: accountBalances(state, { to }),
@@ -372,6 +391,30 @@ export function reduce(state, action) {
   switch (action.type) {
     case 'LAB_UPDATE':
       return ok({ ...state, lab: { ...state.lab, ...action.patch } })
+
+    case 'TAX_SETTING_SAVE': {
+      if (!isTaxMode(action.mode)) return fail(state, 'BAD_TAX_MODE', 'اختر طريقة التعامل مع الضريبة')
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(action.effectiveFrom || ''))) {
+        return fail(state, 'DATE_REQUIRED', 'اختر تاريخ بدء تطبيق إعداد الضريبة')
+      }
+      const rateBps = Math.round(Number(action.rateBps))
+      if (action.mode !== 'disabled' && (!Number.isFinite(rateBps) || rateBps <= 0 || rateBps > 10000)) {
+        return fail(state, 'BAD_TAX_RATE', 'اكتب نسبة ضريبة صحيحة أكبر من صفر')
+      }
+      const existing = (state.taxSettings || []).find(s => s.effectiveFrom === action.effectiveFrom || (action.id && s.id === action.id))
+      const setting = {
+        id: existing?.id || action.id || newId('tax'),
+        mode: action.mode,
+        rateBps: Number.isFinite(rateBps) ? rateBps : DEFAULT_TAX_RATE_BPS,
+        vatNumber: String(action.vatNumber || '').trim(),
+        effectiveFrom: action.effectiveFrom,
+      }
+      const taxSettings = existing
+        ? state.taxSettings.map(s => s.id === existing.id ? setting : s)
+        : [...(state.taxSettings || []), setting]
+      taxSettings.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+      return ok({ ...state, taxSettings })
+    }
 
     case 'CUSTOMER_ADD': {
       const name = String(action.name || '').trim()
@@ -605,7 +648,8 @@ function approveDocument(state, action) {
     if (lines.some(l => !(toQuantity(l.qty) > 0) || !(Number(l.price) >= 0) || !String(l.desc || '').trim())) {
       return fail(state, 'BAD_LINE', 'راجع البنود: الوصف والكمية والسعر')
     }
-    const { net, vat, total } = saleTotals({ ...f, lines })
+    const documentTax = taxSettingForDate(state, f.date)
+    const { net, vat, total } = saleTotals({ ...f, lines }, documentTax)
     if (net <= 0) return fail(state, 'BAD_TOTAL', 'صافي الفاتورة يجب أن يكون أكبر من صفر')
     const dup = state.invoices.find(i => normalizeNumber(i.number) === normalizeNumber(f.number))
     if (dup && !action.confirmDuplicate) {
@@ -614,7 +658,7 @@ function approveDocument(state, action) {
     const invoice = {
       id: `inv-${doc.id}`, docId: doc.id, customerId: c.id, number: String(f.number).trim(), date: f.date,
       lines: lines.map(l => ({ desc: String(l.desc).trim(), qty: toQuantity(l.qty), price: Math.round(Number(l.price)) })),
-      net, vat, total, approvedAt: at, approvedSeq: seq,
+      net, vat, total, taxProfile: taxSnapshot(documentTax), approvedAt: at, approvedSeq: seq,
     }
     next = { ...state, invoices: [...state.invoices, invoice] }
   } else if (doc.kind === 'payment') {
@@ -643,6 +687,7 @@ function approveDocument(state, action) {
     if (!account || account.archived) return fail(state, 'ACCOUNT_REQUIRED', 'اختر حساب الدفع')
     const rawLines = (f.lines || []).filter(l => String(l.desc || '').trim() || l.net || l.vat || l.categoryId)
     if (!rawLines.length) return fail(state, 'LINES_REQUIRED', 'أضف بنداً واحداً على الأقل')
+    const documentTax = taxSettingForDate(state, f.date)
     const lines = []
     for (const [i, l] of rawLines.entries()) {
       const { category, group } = categoryInfo(state, l.categoryId)
@@ -650,18 +695,20 @@ function approveDocument(state, action) {
       const net = Math.round(Number(l.net) || 0)
       const vat = Math.max(0, Math.round(Number(l.vat) || 0))
       if (net <= 0) return fail(state, 'BAD_TOTAL', `مبلغ البند ${i + 1} قبل الضريبة يجب أن يكون أكبر من صفر`)
+      const { expenseAmount, separatedVat } = expenseAmounts(net, vat, documentTax)
       // لقطة ثابتة من التصنيف وقت الاعتماد
       lines.push({
         desc: String(l.desc || '').trim() || category.name,
         categoryId: category.id, categoryName: category.name,
         groupId: group.id, groupName: group.name, categoryKind: group.kind,
-        net, vat,
+        net, vat, expenseAmount, separatedVat,
       })
     }
     const { net, vat, total } = purchaseTotals({ lines })
     const purchase = {
       id: `pur-${doc.id}`, docId: doc.id, payee: String(f.payee || '').trim(), number: String(f.number || '').trim(),
-      date: f.date, lines, net, vat, total, accountId: account.id, approvedAt: at, approvedSeq: seq,
+      date: f.date, lines, net, vat, total, taxProfile: taxSnapshot(documentTax),
+      accountId: account.id, approvedAt: at, approvedSeq: seq,
     }
     next = { ...state, purchases: [...state.purchases, purchase] }
   }
@@ -733,12 +780,43 @@ function migrateV2toV3(saved) {
   }
 }
 
+/** الإصدار 3 ← 4: إعداد ضريبة المنشأة المؤرّخ ولقطة ضريبية لكل مستند معتمد. */
+function migrateV3toV4(saved) {
+  const legacyProfile = (net, vat) => {
+    const mode = vat > 0 ? 'exclusive' : 'disabled'
+    const rateBps = net > 0 && vat > 0 ? Math.round((vat * 10000) / net) : DEFAULT_TAX_RATE_BPS
+    return taxSnapshot({ mode, rateBps, vatNumber: saved.lab?.vatNumber || '', effectiveFrom: INITIAL_EFFECTIVE_FROM })
+  }
+  const currentMode = saved.lab?.vatNumber ? 'exclusive' : 'disabled'
+  return {
+    ...saved,
+    version: 4,
+    lab: { ...saved.lab, customerLabel: saved.lab?.customerLabel || 'نقطة بيع' },
+    taxSettings: defaultTaxSettings({ mode: currentMode, vatNumber: saved.lab?.vatNumber || '' }),
+    invoices: saved.invoices.map(i => ({
+      ...i,
+      taxProfile: i.taxProfile || legacyProfile(i.net || 0, i.vat || 0),
+    })),
+    purchases: saved.purchases.map(p => ({
+      ...p,
+      taxProfile: p.taxProfile || legacyProfile(p.net || 0, p.vat || 0),
+      lines: p.lines.map(l => ({
+        ...l,
+        // الإصدار السابق كان يعرض صافي المصروف ويفصل ضريبة المورد؛ نحافظ على أرقامه حرفياً.
+        expenseAmount: l.expenseAmount ?? l.net ?? 0,
+        separatedVat: l.separatedVat ?? l.vat ?? 0,
+      })),
+    })),
+  }
+}
+
 /** ترقية بيانات الجهاز من أي إصدار سابق دون فقد بيانات */
 export function migrate(saved, today) {
   if (!saved || !Array.isArray(saved.customers)) return createInitialState({ today })
   let s = saved
   if (s.version === 1) s = migrateV1toV2(s)
   if (s.version === 2) s = migrateV2toV3(s)
+  if (s.version === 3) s = migrateV3toV4(s)
   if (s.version !== STATE_VERSION) return createInitialState({ today })
   return s
 }

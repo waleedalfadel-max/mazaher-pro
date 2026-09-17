@@ -1,9 +1,14 @@
 import React, { forwardRef } from 'react'
 import { fmt } from '../lib/money.js'
 import { DEMO_LABEL } from './ui.jsx'
+import { taxEnabled, taxModeLabel } from '../lib/tax.js'
 
 /** ملخص فاتورة للمشاركة اليدوية — يحمل دائماً «نموذج تجريبي — ليس فاتورة ضريبية» */
 const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice }, ref) {
+  const taxable = taxEnabled(invoice.taxProfile)
+  const totals = taxable
+    ? [['الصافي', invoice.net], ['الضريبة', invoice.vat], ['الإجمالي', invoice.total]]
+    : [['الإجمالي', invoice.total]]
   return (
     <div ref={ref} dir="rtl" style={{ width: 720, padding: 32, background: '#fff', color: '#1B3A5C', position: 'relative', fontFamily: 'Cairo, sans-serif' }}>
       <div style={{ background: '#FEF3C7', color: '#92400E', border: '2px solid #F59E0B', borderRadius: 12, padding: '10px 14px', textAlign: 'center', fontWeight: 800, fontSize: 18, marginBottom: 20 }}>
@@ -14,6 +19,7 @@ const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice }
           <div style={{ fontSize: 22, fontWeight: 800 }}>{lab.name}</div>
           {lab.city && <div style={{ fontSize: 13, color: '#5A7A8A' }}>{lab.city}</div>}
           {lab.phone && <div style={{ fontSize: 13, color: '#5A7A8A' }}>{lab.phone}</div>}
+          {taxable && invoice.taxProfile?.vatNumber && <div style={{ fontSize: 13, color: '#5A7A8A' }}>الرقم الضريبي: <span dir="ltr">{invoice.taxProfile.vatNumber}</span></div>}
         </div>
         <div style={{ textAlign: 'left' }}>
           <div style={{ fontSize: 16, fontWeight: 800 }}>ملخص فاتورة بيع</div>
@@ -27,7 +33,7 @@ const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice }
           <tr style={{ background: '#1B3A5C', color: '#fff' }}>
             <th style={{ padding: 8, textAlign: 'right' }}>البند</th>
             <th style={{ padding: 8 }}>الكمية</th>
-            <th style={{ padding: 8 }}>السعر</th>
+            <th style={{ padding: 8 }}>{invoice.taxProfile?.mode === 'inclusive' ? 'السعر شامل الضريبة' : invoice.taxProfile?.mode === 'exclusive' ? 'السعر قبل الضريبة' : 'السعر'}</th>
             <th style={{ padding: 8 }}>المبلغ</th>
           </tr>
         </thead>
@@ -42,9 +48,10 @@ const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice }
           ))}
         </tbody>
       </table>
+      <div style={{ fontSize: 12, color: '#5A7A8A', marginTop: 10 }}>معالجة الضريبة: {taxModeLabel(invoice.taxProfile)}</div>
       <div style={{ marginTop: 16, marginRight: 'auto', width: 280, fontSize: 14 }}>
-        {[['الصافي', invoice.net], ['الضريبة', invoice.vat], ['الإجمالي', invoice.total]].map(([k, v], i) => (
-          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: i === 2 ? '2px solid #1B3A5C' : 'none', fontWeight: i === 2 ? 800 : 400 }}>
+        {totals.map(([k, v], i) => (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: i === totals.length - 1 ? '2px solid #1B3A5C' : 'none', fontWeight: i === totals.length - 1 ? 800 : 400 }}>
             <span>{k}</span><span>{fmt(v)} ر.س</span>
           </div>
         ))}

@@ -34,9 +34,9 @@ export default function Dashboard() {
 
       <h2 className="text-sm font-extrabold mb-2" style={{ color: NAVY }}>المبيعات والتحصيل</h2>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-5">
-        <Stat label="المبيعات (قبل الضريبة)" value={d.salesNet}
-          note={`${d.invoicesCount} فاتورة${d.invoicesWithoutVat ? ` — منها ${d.invoicesWithoutVat} بلا ضريبة` : ''}`} />
-        <Stat label="ضريبة المبيعات" value={d.salesVat} note="تُعرض منفصلة عن المبيعات" />
+        <Stat label={d.taxActive ? 'المبيعات (قبل الضريبة)' : 'المبيعات'} value={d.salesNet}
+          note={`${d.invoicesCount} فاتورة`} />
+        {d.taxActive && <Stat label="ضريبة المبيعات" value={d.salesVat} note="تُعرض منفصلة عن المبيعات" />}
         <Stat label="المحصَّل" value={d.collected} tone="good" note={`${d.paymentsCount} دفعة معتمدة — ليست مبيعات جديدة`} />
         <Stat label="المتبقي لدى العملاء" value={d.due} tone={d.due > 0 ? 'bad' : undefined}
           note={`${untilLabel} — يشمل الأرصدة الافتتاحية التجريبية`} />
@@ -53,9 +53,9 @@ export default function Dashboard() {
         <Link to="/reports" className="text-xs font-bold underline" style={{ color: '#4A9E97' }}>التفاصيل في التقارير</Link>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 mb-5">
-        <Stat label="المواد المباشرة" value={d.direct} note="قبل الضريبة" />
-        <Stat label="المصروفات التشغيلية" value={d.operating} note="قبل الضريبة" />
-        <Stat label="ضريبة المصروفات" value={d.inputVat} />
+        <Stat label="المواد المباشرة" value={d.direct} note={d.taxActive ? 'بعد فصل الضريبة' : 'شاملة ضريبة المورد إن وجدت'} />
+        <Stat label="المصروفات التشغيلية" value={d.operating} note={d.taxActive ? 'بعد فصل الضريبة' : 'شاملة ضريبة المورد إن وجدت'} />
+        {d.taxActive && <Stat label="ضريبة المصروفات المفصولة" value={d.inputVat} />}
       </div>
 
       <Card className="p-4 mb-5" style={{ borderColor: '#FCD34D' }}>
@@ -71,7 +71,7 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="text-xs mt-2 num text-right" style={{ color: '#8FAAAA', direction: 'rtl' }}>
-          = المبيعات قبل الضريبة − المواد المباشرة − المصروفات التشغيلية
+          = {d.taxActive ? 'المبيعات قبل الضريبة' : 'المبيعات'} − المواد المباشرة − المصروفات التشغيلية
         </div>
       </Card>
 

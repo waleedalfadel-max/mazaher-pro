@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useStore } from '../store.jsx'
-import { newId } from '../lib/ledger.js'
+import { newId, todayISO } from '../lib/ledger.js'
 import { displayWhatsapp } from '../lib/whatsapp.js'
 import { Badge, Button, Card, Field, Modal, Notice, PageTitle, Select, TextInput, NAVY } from '../components/ui.jsx'
 import CustomerForm from '../components/CustomerForm.jsx'
 import { EXPENSE_KIND } from '../lib/expenses.js'
 import { ROLES } from '../lib/permissions.js'
+import { TAX_MODE, rateBpsToPercent, ratePercentToBps, taxEnabled, taxSettingForDate } from '../lib/tax.js'
 
 function Section({ title, subtitle, children, action }) {
   return (
@@ -31,20 +32,105 @@ function LabInfo() {
   const set = (k, v) => { setLab(l => ({ ...l, [k]: v })); setSaved(false) }
   function save() {
     if (!lab.name.trim()) return
-    dispatch({ type: 'LAB_UPDATE', patch: { ...lab, name: lab.name.trim() } })
+    dispatch({ type: 'LAB_UPDATE', patch: {
+      ...lab,
+      name: lab.name.trim(),
+      customerLabel: String(lab.customerLabel || '').trim() || 'عميل',
+    } })
     setSaved(true)
   }
   return (
-    <Section title="بيانات المعمل">
+    <Section title="بيانات المنشأة" subtitle="تظهر في الواجهة وملخصات الفواتير ويمكن تعديلها دون مبرمج">
       <div className="grid sm:grid-cols-2 gap-2">
-        <Field label="اسم المعمل" error={!lab.name.trim() ? 'الاسم مطلوب' : ''}><TextInput value={lab.name} onChange={e => set('name', e.target.value)} /></Field>
+        <Field label="اسم المنشأة" error={!lab.name.trim() ? 'الاسم مطلوب' : ''}><TextInput value={lab.name} onChange={e => set('name', e.target.value)} /></Field>
         <Field label="المدينة"><TextInput value={lab.city} onChange={e => set('city', e.target.value)} /></Field>
-        <Field label="هاتف المعمل"><TextInput value={lab.phone} onChange={e => set('phone', e.target.value)} dir="ltr" className="text-left" inputMode="tel" /></Field>
-        <Field label="الرقم الضريبي (للعرض فقط)"><TextInput value={lab.vatNumber} onChange={e => set('vatNumber', e.target.value)} dir="ltr" className="text-left" inputMode="numeric" /></Field>
+        <Field label="هاتف المنشأة"><TextInput value={lab.phone || ''} onChange={e => set('phone', e.target.value)} dir="ltr" className="text-left" inputMode="tel" /></Field>
+        <Field label="السجل التجاري (اختياري)"><TextInput value={lab.crNumber || ''} onChange={e => set('crNumber', e.target.value)} dir="ltr" className="text-left" inputMode="numeric" /></Field>
+        <Field label="مسمى العميل" hint="مثال: نقطة بيع، عميل، موزع"><TextInput value={lab.customerLabel || ''} onChange={e => set('customerLabel', e.target.value)} /></Field>
       </div>
       <div className="flex items-center gap-2 mt-3">
         <Button onClick={save} disabled={!lab.name.trim()}>حفظ</Button>
         {saved && <span className="text-sm text-emerald-700 font-bold">حُفظ</span>}
+      </div>
+    </Section>
+  )
+}
+
+function TaxSettingsSection() {
+  const { state, dispatch } = useStore()
+  const today = todayISO()
+  const current = taxSettingForDate(state, today)
+  const [draft, setDraft] = useState(() => ({
+    mode: current.mode,
+    rate: rateBpsToPercent(current.rateBps),
+    vatNumber: current.vatNumber || '',
+    effectiveFrom: today,
+  }))
+  const [result, setResult] = useState(null)
+  const enabled = draft.mode !== 'disabled'
+
+  function save() {
+    const rateBps = ratePercentToBps(draft.rate)
+    if (enabled && Number.isNaN(rateBps)) return setResult({ tone: 'error', text: 'راجع نسبة الضريبة' })
+    const r = dispatch({
+      type: 'TAX_SETTING_SAVE', id: newId('tax'), mode: draft.mode,
+      rateBps: enabled ? rateBps : (Number.isNaN(rateBps) ? current.rateBps : rateBps),
+      vatNumber: draft.vatNumber, effectiveFrom: draft.effectiveFrom,
+    })
+    if (r.error) return setResult({ tone: 'error', text: r.error })
+    setResult({ tone: 'success', text: 'حُفظ إعداد الضريبة. يطبّق على المستندات حسب تاريخها، ولا يغيّر المعتمد سابقاً.' })
+  }
+
+  const descriptions = {
+    disabled: 'لا تُضاف ضريبة للمبيعات، وضريبة المورد — إن وجدت — تدخل ضمن التكلفة.',
+    inclusive: 'السعر المدخل هو ما سيدفعه العميل، ويستخرج النظام الصافي والضريبة منه.',
+    exclusive: 'السعر المدخل قبل الضريبة، ويضيف النظام الضريبة عليه.',
+  }
+  const history = [...(state.taxSettings || [])].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))
+
+  return (
+    <Section title="الضريبة" subtitle="إعداد واحد للمنشأة، محفوظ بالتاريخ ومثبّت داخل كل مستند معتمد">
+      <div className="grid sm:grid-cols-3 gap-2">
+        {Object.entries(TAX_MODE).map(([mode, info]) => (
+          <button key={mode} type="button" onClick={() => { setDraft(d => ({ ...d, mode })); setResult(null) }}
+            className="rounded-xl border p-3 text-right transition-all"
+            style={draft.mode === mode
+              ? { background: '#E8F5F4', borderColor: '#6EB7B0', boxShadow: '0 0 0 2px rgba(110,183,176,.2)' }
+              : { background: '#fff', borderColor: '#D4E8E6' }}>
+            <div className="font-extrabold text-sm" style={{ color: '#1B3A5C' }}>{info.label}</div>
+            <div className="text-[11px] mt-1 leading-relaxed" style={{ color: '#5A7A8A' }}>{descriptions[mode]}</div>
+          </button>
+        ))}
+      </div>
+
+      {enabled && (
+        <div className="grid sm:grid-cols-2 gap-2 mt-3">
+          <Field label="نسبة الضريبة %" error={Number.isNaN(ratePercentToBps(draft.rate)) ? 'نسبة غير صحيحة' : ''}>
+            <TextInput value={draft.rate} onChange={e => setDraft(d => ({ ...d, rate: e.target.value }))} inputMode="decimal" dir="ltr" className="text-left" placeholder="15" />
+          </Field>
+          <Field label="الرقم الضريبي" hint="اختياري في النموذج التجريبي">
+            <TextInput value={draft.vatNumber} onChange={e => setDraft(d => ({ ...d, vatNumber: e.target.value }))} inputMode="numeric" dir="ltr" className="text-left" />
+          </Field>
+        </div>
+      )}
+      <div className="grid sm:grid-cols-2 gap-2 mt-3 items-end">
+        <Field label="يبدأ التطبيق على المستندات بتاريخ" hint="المستندات المعتمدة سابقاً لا تتغير">
+          <TextInput type="date" value={draft.effectiveFrom} onChange={e => setDraft(d => ({ ...d, effectiveFrom: e.target.value }))} />
+        </Field>
+        <Button onClick={save} disabled={!draft.effectiveFrom || (enabled && Number.isNaN(ratePercentToBps(draft.rate)))}>حفظ إعداد الضريبة</Button>
+      </div>
+      {result && <Notice tone={result.tone} className="mt-3">{result.text}</Notice>}
+
+      <div className="mt-4 pt-3 border-t border-border">
+        <div className="text-xs font-bold mb-2" style={{ color: '#5A7A8A' }}>السجل الضريبي</div>
+        <div className="flex flex-wrap gap-1.5">
+          {history.map(s => (
+            <Badge key={s.id} tone={taxEnabled(s) ? 'approved' : 'neutral'}>
+              من <span className="num mx-1">{s.effectiveFrom}</span> — {TAX_MODE[s.mode]?.short || 'بدون ضريبة'}
+              {taxEnabled(s) ? ` (${rateBpsToPercent(s.rateBps)}%)` : ''}
+            </Badge>
+          ))}
+        </div>
       </div>
     </Section>
   )
@@ -275,6 +361,7 @@ export default function Settings() {
     <div>
       <PageTitle title="الإعدادات" subtitle="كل التعديلات من هنا دون الحاجة لمبرمج" />
       <LabInfo />
+      <TaxSettingsSection />
       <CustomersSection />
       <EmployeesCard />
       <EditableList title="حسابات الاستلام والدفع" subtitle="تستقبل السداد وتُدفع منها المصروفات"

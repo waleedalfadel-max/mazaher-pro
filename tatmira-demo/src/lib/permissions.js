@@ -51,7 +51,7 @@ export function can(emp, capability, arg) {
 
 /** جدول الإجراء ← القدرة المطلوبة (ما سيُنقل إلى الخادم لاحقاً) */
 const ACTION_CAPABILITY = {
-  LAB_UPDATE: 'manageSettings',
+  LAB_UPDATE: 'manageSettings', TAX_SETTING_SAVE: 'manageSettings',
   CUSTOMER_ADD: 'manageCustomers', CUSTOMER_UPDATE: 'manageCustomers', CUSTOMER_ARCHIVE: 'manageCustomers', CUSTOMER_DELETE: 'manageCustomers',
   ACCOUNT_SAVE: 'manageSettings', ACCOUNT_ARCHIVE: 'manageSettings',
   GROUP_SAVE: 'manageSettings', GROUP_ARCHIVE: 'manageSettings',

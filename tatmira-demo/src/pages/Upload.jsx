@@ -7,8 +7,8 @@ import { can, isOwner } from '../lib/permissions.js'
 import { Button, Card, Field, Notice, PageTitle, Select, NAVY, TEAL } from '../components/ui.jsx'
 
 const OPTIONS = [
-  { kind: 'sale',     icon: '🧾', label: DOC_KINDS.sale,            hint: 'فاتورة آجلة لنقطة بيع — تثبت كاملة على العميل' },
-  { kind: 'payment',  icon: '💸', label: DOC_KINDS.payment,         hint: 'إيصال تحويل أو سند قبض من نقطة بيع' },
+  { kind: 'sale',     icon: '🧾', label: DOC_KINDS.sale,            hint: label => `فاتورة آجلة لـ${label} — تثبت كاملة عليه` },
+  { kind: 'payment',  icon: '💸', label: DOC_KINDS.payment,         hint: label => `إيصال تحويل أو سند قبض من ${label}` },
   { kind: 'purchase', icon: '📑', label: 'إضافة مستند مصروفات',    hint: 'مشتريات، إيجار، رواتب، كهرباء، صيانة وغيرها' },
 ]
 const MAX_BYTES = 15 * 1024 * 1024
@@ -17,7 +17,10 @@ export default function Upload() {
   const { state, dispatch, actor } = useStore()
   const navigate = useNavigate()
   const inputRef = useRef(null)
-  const options = OPTIONS.filter(o => can(actor, 'upload', o.kind))
+  const customerLabel = state.lab.customerLabel || 'عميل'
+  const options = OPTIONS.filter(o => can(actor, 'upload', o.kind)).map(o => ({
+    ...o, hint: typeof o.hint === 'function' ? o.hint(customerLabel) : o.hint,
+  }))
   const owner = isOwner(actor)
   const [kind, setKind] = useState(options.length === 1 ? options[0].kind : '')
   const [customerId, setCustomerId] = useState('')
@@ -91,9 +94,9 @@ export default function Upload() {
 
       <Card className="p-4">
         {needsCustomer && (
-          <Field label={customerRequired ? 'العميل' : 'العميل (يمكن اختياره عند المراجعة)'} className="mb-3">
-            <Select value={customerId} onChange={e => { setCustomerId(e.target.value); setError('') }} aria-label="العميل">
-              <option value="">— اختر العميل —</option>
+          <Field label={customerRequired ? customerLabel : `${customerLabel} (يمكن اختياره عند المراجعة)`} className="mb-3">
+            <Select value={customerId} onChange={e => { setCustomerId(e.target.value); setError('') }} aria-label={customerLabel}>
+              <option value="">— اختر {customerLabel} —</option>
               {state.customers.filter(c => !c.archived).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
           </Field>

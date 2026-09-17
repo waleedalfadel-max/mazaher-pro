@@ -11,6 +11,7 @@ import {
 import FilePreview from '../components/FilePreview.jsx'
 import { EXPENSE_KIND, categoryInfo, selectableCategories } from '../lib/expenses.js'
 import { can, documentsFor } from '../lib/permissions.js'
+import { expenseAmounts, rateBpsToPercent, taxEnabled, taxModeLabel, taxSettingForDate } from '../lib/tax.js'
 
 export default function ReviewDocument() {
   const { id } = useParams()
@@ -165,14 +166,13 @@ function AccountSelect({ state, value, onChange, disabled }) {
 }
 
 function SaleForm({ state, doc, f, editable, update }) {
-  const totals = saleTotals(f)
+  const approved = doc.status === 'approved' ? state.invoices.find(i => i.docId === doc.id) : null
+  const tax = approved?.taxProfile || taxSettingForDate(state, f.date)
+  const totals = approved || saleTotals(f, tax)
   const dup = editable ? duplicateInvoiceNumber(state, f.number, { excludeDocId: doc.id }) : null
-  const autoVat = f.vatMode !== 'none' && f.vatAuto !== false
 
   function setLines(lines) {
-    const patch = { lines }
-    if (autoVat) patch.vat = vatFor(saleTotals({ ...f, lines }).net)
-    update(patch)
+    update({ lines })
   }
   const setLine = (i, p) => setLines(f.lines.map((l, j) => j === i ? { ...l, ...p } : l))
 
@@ -193,6 +193,12 @@ function SaleForm({ state, doc, f, editable, update }) {
         </Notice>
       )}
 
+      <Notice tone={taxEnabled(tax) ? 'info' : 'warning'}>
+        إعداد المنشأة لهذه الفاتورة: <b>{taxModeLabel(tax)}</b>
+        {taxEnabled(tax) && <> — نسبة <span className="num">{rateBpsToPercent(tax.rateBps)}%</span></>}.
+        {' '}الإعداد يُحدد من تاريخ الفاتورة، ولا يغيّره الذكاء الاصطناعي.
+      </Notice>
+
       <div>
         <div className="text-xs font-bold mb-1" style={{ color: '#5A7A8A' }}>البنود</div>
         <div className="space-y-2">
@@ -208,7 +214,9 @@ function SaleForm({ state, doc, f, editable, update }) {
                 <Field label="الكمية">
                   <QuantityInput value={l.qty} onChange={v => setLine(i, { qty: v })} disabled={!editable} aria-label="الكمية" />
                 </Field>
-                <Field label="سعر الوحدة"><MoneyInput value={l.price} onChange={v => setLine(i, { price: v })} disabled={!editable} /></Field>
+                <Field label={tax.mode === 'inclusive' ? 'سعر الوحدة (شامل الضريبة)' : tax.mode === 'exclusive' ? 'سعر الوحدة (قبل الضريبة)' : 'سعر الوحدة'}>
+                  <MoneyInput value={l.price} onChange={v => setLine(i, { price: v })} disabled={!editable} />
+                </Field>
                 <div className="text-xs pb-3 text-left" style={{ color: '#5A7A8A' }}><Money value={Math.round((toQuantity(l.qty ?? '') || 0) * moneyOrZero(l.price))} /></div>
               </div>
             </div>
@@ -221,23 +229,8 @@ function SaleForm({ state, doc, f, editable, update }) {
       </div>
 
       <div className="rounded-xl border border-border p-3 space-y-2">
-        <div className="flex gap-1.5">
-          {[['standard', 'ضريبة 15%'], ['none', 'بلا ضريبة']].map(([mode, label]) => (
-            <button key={mode} disabled={!editable}
-              onClick={() => update(mode === 'none' ? { vatMode: 'none', vat: 0 } : { vatMode: 'standard', vatAuto: true, vat: vatFor(totals.net) })}
-              className="flex-1 py-1.5 rounded-lg text-xs font-bold border"
-              style={f.vatMode === mode ? { background: NAVY, color: '#fff', borderColor: NAVY } : { background: '#fff', color: NAVY, borderColor: '#D4E8E6' }}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <Row label="الصافي" value={totals.net} />
-        {f.vatMode !== 'none' && (
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm">الضريبة</span>
-            <div className="w-36"><MoneyInput value={f.vat} onChange={v => update({ vat: v, vatAuto: false })} disabled={!editable} /></div>
-          </div>
-        )}
+        {taxEnabled(tax) && <Row label="الصافي" value={totals.net} />}
+        {taxEnabled(tax) && <Row label="الضريبة" value={totals.vat} />}
         <Row label="الإجمالي" value={totals.total} strong />
       </div>
     </div>
@@ -326,17 +319,28 @@ function PurchaseForm({ state, doc, f, editable, update }) {
   const lines = f.lines || []
   const totals = purchaseTotals(f)
   const approved = doc.status === 'approved' ? state.purchases.find(p => p.docId === doc.id) : null
+  const tax = approved?.taxProfile || taxSettingForDate(state, f.date)
   const setLines = next => update({ lines: next })
   const setLine = (i, p) => setLines(lines.map((l, j) => j === i ? { ...l, ...p } : l))
   const kindOf = id => categoryInfo(state, id).kind
 
-  const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => s + moneyOrZero(l.net), 0)
+  const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => {
+    const { expenseAmount } = expenseAmounts(moneyOrZero(l.net), moneyOrZero(l.vat), tax)
+    return s + expenseAmount
+  }, 0)
+  const recognizedTotal = lines.reduce((s, l) => s + expenseAmounts(moneyOrZero(l.net), moneyOrZero(l.vat), tax).expenseAmount, 0)
 
   return (
     <div className="space-y-3">
       <Notice tone="info">
         مستند المصروفات يشمل المشتريات والإيجار والرواتب والكهرباء والصيانة وغيرها. لكل بند تصنيفه، والضريبة اختيارية لكل بند.
         الاعتماد يخصم الإجمالي من مصدر الدفع.
+      </Notice>
+      <Notice tone={taxEnabled(tax) ? 'info' : 'warning'}>
+        إعداد المنشأة بتاريخ المستند: <b>{taxModeLabel(tax)}</b>.
+        {' '}{taxEnabled(tax)
+          ? 'ضريبة المورد تُفصل عن تكلفة المصروف في هذا النموذج.'
+          : 'ضريبة المورد — إن ظهرت في المستند — تدخل كاملةً ضمن تكلفة المصروف.'}
       </Notice>
       <Field label="الجهة / المستفيد (اختياري)">
         <TextInput value={f.payee || ''} onChange={e => update({ payee: e.target.value })} disabled={!editable} placeholder="مثال: مورد التمور، المؤجر، شركة الكهرباء" />
@@ -372,7 +376,10 @@ function PurchaseForm({ state, doc, f, editable, update }) {
                 </div>
                 {editable && (
                   <div className="flex gap-1.5">
-                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: vatFor(moneyOrZero(l.net)) })}>ضريبة 15%</Button>
+                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs"
+                      onClick={() => setLine(i, { vat: vatFor(moneyOrZero(l.net), tax.rateBps / 10000) })}>
+                      ضريبة {rateBpsToPercent(tax.rateBps)}%
+                    </Button>
                     <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: 0 })}>بلا ضريبة</Button>
                   </div>
                 )}
@@ -396,7 +403,12 @@ function PurchaseForm({ state, doc, f, editable, update }) {
                 <div>{l.desc}</div>
                 <div className="text-[11px]" style={{ color: '#5A7A8A' }}>{l.groupName} ← {l.categoryName} — {KIND_LABEL[l.categoryKind]}</div>
               </div>
-              <div className="text-left"><Money value={l.net} /><div className="text-[11px]" style={{ color: '#8FAAAA' }}>ضريبة <Money value={l.vat} /></div></div>
+              <div className="text-left">
+                <Money value={l.expenseAmount ?? l.net} />
+                {l.vat > 0 && <div className="text-[11px]" style={{ color: '#8FAAAA' }}>
+                  ضريبة المورد <Money value={l.vat} /> — {(l.separatedVat ?? l.vat) > 0 ? 'مفصولة' : 'ضمن التكلفة'}
+                </div>}
+              </div>
             </div>
           ))}
         </div>
@@ -408,8 +420,11 @@ function PurchaseForm({ state, doc, f, editable, update }) {
           <Row label="مصروفات تشغيلية" value={byKind('operating')} />
         </>}
         <Row label="قبل الضريبة" value={approved ? approved.net : totals.net} />
-        <Row label="الضريبة" value={approved ? approved.vat : totals.vat} />
+        <Row label="ضريبة المورد في المستند" value={approved ? approved.vat : totals.vat} />
         <Row label="الإجمالي" value={approved ? approved.total : totals.total} strong />
+        <Row label="المحتسب في المصروفات" value={approved
+          ? approved.lines.reduce((s, l) => s + (l.expenseAmount ?? l.net), 0)
+          : recognizedTotal} />
       </div>
       <Field label="مصدر الدفع"><AccountSelect state={state} value={f.accountId} onChange={v => update({ accountId: v })} disabled={!editable} /></Field>
     </div>

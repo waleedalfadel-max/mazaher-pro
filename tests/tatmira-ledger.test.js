@@ -9,6 +9,7 @@ import {
   toHalalas, toQuantity, moneyFieldValue, quantityFieldValue, isValidMoneyField, isValidQuantityField,
 } from '../tatmira-demo/src/lib/money.js'
 import { normalizeWhatsapp, invoiceMessage, whatsappUrl } from '../tatmira-demo/src/lib/whatsapp.js'
+import { INITIAL_EFFECTIVE_FROM } from '../tatmira-demo/src/lib/tax.js'
 
 const TODAY = '2026-09-17'
 
@@ -27,12 +28,16 @@ const file = id => ({ id: `file-${id}`, name: `${id}.pdf`, type: 'application/pd
 const CUST = 'cust-5'
 const OTHER = 'cust-6'
 
+function withTax(state, mode = 'exclusive', { effectiveFrom = INITIAL_EFFECTIVE_FROM, rateBps = 1500 } = {}) {
+  return must(state, { type: 'TAX_SETTING_SAVE', mode, rateBps, vatNumber: 'DEMO', effectiveFrom })
+}
+
 function withInvoice(state, { id = 'd1', customerId = CUST, number = 'A-1', date = TODAY } = {}) {
+  state = withTax(state, 'exclusive')
   state = must(state, { type: 'DOC_ADD', id, kind: 'sale', file: file(id) })
   state = must(state, { type: 'DOC_UPDATE_FIELDS', id, fields: {
     customerId, number, date,
     lines: [{ id: 'l1', desc: 'معمول', qty: 20, price: toHalalas(50) }],
-    vatMode: 'standard', vat: toHalalas(150),
   } })
   return must(state, { type: 'DOC_APPROVE', id })
 }
@@ -51,6 +56,7 @@ test('البذرة: عشر نقاط بيع بأرقام واتساب فارغة'
   assert.equal(s.customers.length, 10)
   assert.deepEqual(s.customers.map(c => c.name), Array.from({ length: 10 }, (_, i) => `نقطة بيع ${i + 1}`))
   assert.ok(s.customers.every(c => c.whatsapp === ''))
+  assert.equal(s.taxSettings[0].mode, 'disabled', 'تتميرا تبدأ بدون ضريبة')
 })
 
 test('فاتورة 1,150 = صافي 1,000 + ضريبة 150، واعتمادها يرفع المبيعات والرصيد لا البنك', () => {
@@ -197,7 +203,7 @@ test('تنبيه تكرار رقم الفاتورة ويحتاج تأكيداً 
 test('فاتورة بلا ضريبة تُحتسب صافياً كاملاً', () => {
   let s = createInitialState({ today: TODAY })
   s = must(s, { type: 'DOC_ADD', id: 'nv', kind: 'sale', file: file('nv') })
-  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'nv', fields: { customerId: CUST, vatMode: 'none', vat: 99999 } })
+  s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'nv', fields: { customerId: CUST } })
   s = must(s, { type: 'DOC_APPROVE', id: 'nv' })
   assert.equal(s.invoices[0].vat, 0)
   assert.equal(s.invoices[0].total, s.invoices[0].net)
@@ -249,6 +255,7 @@ test('العملاء: إضافة وتعديل واتساب وأرشفة، ولا
 
 test('المشتريات مدفوعة مباشرة: تخفض الحساب وتُفصل مواد مباشرة عن تشغيلية، والربحية تقديرية', () => {
   let s = withInvoice(createInitialState({ today: TODAY }))
+  s = withTax(s, 'exclusive')
   s = must(s, { type: 'DOC_ADD', id: 'm', kind: 'purchase', file: file('m') })
   s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'm', fields: { accountId: 'acc-cash', lines: [{ categoryId: 'cat-dates', net: 30000, vat: 4500 }] } })
   s = must(s, { type: 'DOC_APPROVE', id: 'm' })
@@ -267,6 +274,7 @@ test('المشتريات مدفوعة مباشرة: تخفض الحساب وتُ
 
 test('فاتورة مشتريات واحدة تجمع مواد مباشرة ومصروفات تشغيلية بتصنيف لكل بند', () => {
   let s = createInitialState({ today: TODAY })
+  s = withTax(s, 'exclusive')
   s = must(s, { type: 'DOC_ADD', id: 'mix', kind: 'purchase', file: file('mix') })
   s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'mix', fields: { accountId: 'acc-bank', lines: [
     { desc: 'تمور', categoryId: 'cat-dates', net: 40000, vat: 6000 },
@@ -326,7 +334,7 @@ test('ترقية بيانات الجهاز القديمة: مشتريات بتص
     documents: [{ id: 'pend', kind: 'purchase', status: 'pending', file: file('pend'), fields: { supplier: 'x', date: TODAY, categoryId: 'cat-dates', description: 'تمر', net: 500, vat: 75, accountId: 'acc-bank' } }],
   }
   const s = migrate(v1, TODAY)
-  assert.equal(s.version, 3)
+  assert.equal(s.version, 4)
   assert.deepEqual(s.creditApplications, [])
   assert.equal(s.purchases[0].lines[0].categoryKind, 'operating')
   assert.equal(s.purchases[0].lines[0].groupId, 'grp-utilities')
@@ -439,9 +447,10 @@ test('حقل المبلغ والكمية: النص غير الصالح يُخز�
 
 test('فاتورة بيع: تعديل السعر والكمية إلى نص غير صالح يمنع الاعتماد، والتصحيح يسمح به', () => {
   let s = createInitialState({ today: TODAY })
+  s = withTax(s, 'exclusive')
   s = must(s, { type: 'DOC_ADD', id: 'bad', kind: 'sale', file: file('bad') })
   s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: {
-    customerId: CUST, number: 'B-1', vatMode: 'standard', vat: moneyFieldValue('150'),
+    customerId: CUST, number: 'B-1',
     lines: [{ id: 'l1', desc: 'معمول', qty: quantityFieldValue('20'), price: moneyFieldValue('50') }],
   } })
   // المستخدم يعدّل السعر الصحيح 50 إلى «50x» والكمية إلى «٢٠أ»
@@ -456,10 +465,6 @@ test('فاتورة بيع: تعديل السعر والكمية إلى نص غي
   assert.equal(blocked.state.invoices.length, 0, 'لم تُعتمد بالقيمة السابقة 50')
   assert.equal(blocked.state.documents[0].status, 'pending')
   assert.equal(ownerDashboard(blocked.state).salesNet, 0)
-
-  // الضريبة غير صالحة أيضاً تمنع
-  const vatBad = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: { vat: moneyFieldValue('١٥٠؟') } })
-  assert.ok(invalidInputs('sale', vatBad.documents[0].fields).includes('الضريبة'))
 
   // التصحيح
   s = must(s, { type: 'DOC_UPDATE_FIELDS', id: 'bad', fields: { lines: [{ ...line, price: moneyFieldValue('٥٠'), qty: quantityFieldValue('٢٠') }] } })

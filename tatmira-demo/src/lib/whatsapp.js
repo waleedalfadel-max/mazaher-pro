@@ -24,11 +24,15 @@ export function displayWhatsapp(n) {
 }
 
 export function invoiceMessage({ labName, customerName, invoice }) {
-  return [
+  const rows = [
     `السلام عليكم ${customerName}،`,
     `مرفق لكم تفاصيل فاتورة ${labName}:`,
     `رقم الفاتورة: ${invoice.number}`,
     `التاريخ: ${invoice.date}`,
+  ]
+  if (invoice.vat > 0) rows.push(`الصافي: ${fmt(invoice.net)} ر.س`, `الضريبة: ${fmt(invoice.vat)} ر.س`)
+  return [
+    ...rows,
     `الإجمالي: ${fmt(invoice.total)} ر.س`,
     '',
     'نموذج تجريبي — ليس فاتورة ضريبية',

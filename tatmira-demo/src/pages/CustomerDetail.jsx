@@ -8,6 +8,7 @@ import CustomerForm from '../components/CustomerForm.jsx'
 import CreditApplyDialog from '../components/CreditApplyDialog.jsx'
 import InvoiceActions from '../components/InvoiceActions.jsx'
 import Statement from '../components/Statement.jsx'
+import { taxEnabled } from '../lib/tax.js'
 
 const TABS = [['invoices', 'الفواتير'], ['payments', 'الدفعات'], ['statement', 'كشف الحساب']]
 
@@ -132,9 +133,9 @@ export default function CustomerDetail() {
                   <div className="mt-1"><Badge tone={inv.payStatus}>{PAY_STATUS[inv.payStatus]}</Badge></div>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2 text-xs mt-2" style={{ color: '#5A7A8A' }}>
-                <div>الصافي<br /><Money value={inv.net} /></div>
-                <div>الضريبة<br /><Money value={inv.vat} /></div>
+              <div className={`grid ${taxEnabled(inv.taxProfile) ? 'grid-cols-3' : 'grid-cols-2'} gap-2 text-xs mt-2`} style={{ color: '#5A7A8A' }}>
+                <div>{taxEnabled(inv.taxProfile) ? 'الصافي' : 'قيمة الفاتورة'}<br /><Money value={inv.net} /></div>
+                {taxEnabled(inv.taxProfile) && <div>الضريبة<br /><Money value={inv.vat} /></div>}
                 <div>المتبقي<br /><Money value={inv.remaining} strong className={inv.remaining ? 'text-red-600' : 'text-emerald-700'} /></div>
               </div>
               <div className="mt-3"><InvoiceActions invoice={inv} customer={customer} /></div>

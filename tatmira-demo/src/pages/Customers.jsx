@@ -23,10 +23,11 @@ export default function Customers() {
     .map(c => ({ c, s: customerSummary(state, c.id) })), [state, q, showArchived])
 
   const archivedCount = state.customers.filter(c => c.archived).length
+  const customerLabel = state.lab.customerLabel || 'عميل'
 
   return (
     <div>
-      <PageTitle title="العملاء" subtitle="نقاط البيع التي تشتري بالآجل"
+      <PageTitle title="العملاء" subtitle={`${customerLabel} يشتري بالآجل ويظهر له كشف حساب`}
         action={<Button onClick={() => setAdding(true)}>+ عميل</Button>} />
 
       <div className="flex flex-col sm:flex-row gap-2 mb-3">

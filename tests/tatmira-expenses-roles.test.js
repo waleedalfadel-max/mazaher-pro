@@ -5,6 +5,7 @@ import {
 } from '../tatmira-demo/src/lib/ledger.js'
 import { expenseReport } from '../tatmira-demo/src/lib/expenses.js'
 import { can, documentsFor, OWNER_ID } from '../tatmira-demo/src/lib/permissions.js'
+import { INITIAL_EFFECTIVE_FROM } from '../tatmira-demo/src/lib/tax.js'
 
 const TODAY = '2026-09-17'
 const run = (state, action) => reduce(state, { today: TODAY, at: '2026-09-17T10:00:00.000Z', ...action })
@@ -14,6 +15,7 @@ function must(state, action) {
   return r.state
 }
 const file = id => ({ id: `file-${id}`, name: `${id}.pdf`, type: 'application/pdf', size: 1000 })
+const withTax = state => must(state, { type: 'TAX_SETTING_SAVE', mode: 'exclusive', rateBps: 1500, vatNumber: 'DEMO', effectiveFrom: INITIAL_EFFECTIVE_FROM })
 
 function expenseDoc(state, id, { date = TODAY, payee = '', lines, approve = true, accountId = 'acc-bank' }) {
   state = must(state, { type: 'DOC_ADD', id, kind: 'purchase', file: file(id) })
@@ -29,8 +31,8 @@ function assertReportConsistent(report) {
     for (const g of section.groups) {
       assert.equal(g.total, g.categories.reduce((s, c) => s + c.total, 0), `مجموعة ${g.name}`)
       for (const c of g.categories) {
-        assert.equal(c.total, c.movements.reduce((s, m) => s + m.net, 0), `تصنيف ${c.name}`)
-        assert.equal(c.vat, c.movements.reduce((s, m) => s + m.vat, 0))
+        assert.equal(c.total, c.movements.reduce((s, m) => s + m.amount, 0), `تصنيف ${c.name}`)
+        assert.equal(c.vat, c.movements.reduce((s, m) => s + m.separatedVat, 0))
       }
     }
   }
@@ -49,7 +51,7 @@ test('التسمية: «مستند مصروفات» بدل «فاتورة مشت
 })
 
 test('التقرير: مجاميع التصنيفات = المجموعات = الأقسام = لوحة المالك، لمستند مختلط ومصروف بلا ضريبة', () => {
-  let s = createInitialState({ today: TODAY })
+  let s = withTax(createInitialState({ today: TODAY }))
   // مستند مختلط: مواد مباشرة + إيجار سكن
   s = expenseDoc(s, 'mixed', { payee: 'مورد التمور', lines: [
     { desc: 'تمور', categoryId: 'cat-dates', net: 20000, vat: 3000 },
@@ -90,7 +92,7 @@ test('التقرير: مجاميع التصنيفات = المجموعات = ا�
 
   // المصروف بلا ضريبة
   const salary = all.operating.groups.find(g => g.groupId === 'grp-salary').categories[0].movements[0]
-  assert.equal(salary.vat, 0)
+  assert.equal(salary.documentVat, 0)
   assert.equal(s.purchases.find(p => p.docId === 'novat').total, 450000)
 
   // التنقل من التقرير إلى المستند: كل حركة تشير لمستند معتمد موجود
@@ -108,7 +110,7 @@ test('التقرير: مجاميع التصنيفات = المجموعات = ا�
 })
 
 test('الإعدادات: إعادة تسمية المجموعة تغيّر الاسم المعروض فقط، ونقل التصنيف لا يعيد تصنيف الماضي', () => {
-  let s = createInitialState({ today: TODAY })
+  let s = withTax(createInitialState({ today: TODAY }))
   s = expenseDoc(s, 'old', { lines: [{ desc: 'صيانة', categoryId: 'cat-maint', net: 40000, vat: 0 }] })
   s = must(s, { type: 'GROUP_SAVE', id: 'grp-maintenance', name: 'الصيانة والإصلاح', kind: 'operating' })
   s = must(s, { type: 'CATEGORY_SAVE', id: 'cat-maint', name: 'صيانة المعدات', groupId: 'grp-other' })
@@ -172,11 +174,12 @@ function legacyV2() {
   }
 }
 
-test('الترقية 2 ← 3 تحفظ البيانات التجريبية: الفواتير والدفعات والمستندات والأرقام', () => {
+test('الترقية 2 ← 4 تحفظ البيانات التجريبية: الفواتير والدفعات والمستندات والأرقام', () => {
   const v2 = legacyV2()
   const s = migrate(structuredClone(v2), TODAY)
-  assert.equal(s.version, 3)
-  assert.deepEqual(s.invoices, v2.invoices)
+  assert.equal(s.version, 4)
+  assert.deepEqual(s.invoices.map(({ taxProfile, ...i }) => i), v2.invoices)
+  assert.equal(s.invoices[0].taxProfile.mode, 'exclusive')
   assert.deepEqual(s.payments, v2.payments)
   assert.deepEqual(s.customers, v2.customers)
   assert.deepEqual(s.counters, v2.counters)
@@ -199,6 +202,7 @@ test('الترقية 2 ← 3 تحفظ البيانات التجريبية: ال�
   assert.ok(s.categories.some(c => c.id === 'cat-rent-housing'), 'أُضيفت التصنيفات الافتراضية الناقصة')
   assert.ok(s.categories.every(c => !('kind' in c)))
   assert.equal(s.employees.length, 3)
+  assert.equal(s.taxSettings[0].mode, 'disabled', 'إعداد المنشأة الحالي لا يعيد كتابة الماضي')
 
   const d = ownerDashboard(s)
   assert.equal(d.salesNet, 100000)
