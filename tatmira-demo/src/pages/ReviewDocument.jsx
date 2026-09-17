@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { useStore } from '../store.jsx'
 import {
   DOC_KINDS, REVIEW_STATUS, duplicateInvoiceNumber, invalidInputs, newId, openItems, purchaseTotals, saleTotals, suggestAllocations,
@@ -9,18 +9,25 @@ import {
   Badge, Button, Card, Field, InvalidInputsNotice, Money, MoneyInput, Notice, QuantityInput, Select, TextInput, NAVY,
 } from '../components/ui.jsx'
 import FilePreview from '../components/FilePreview.jsx'
+import { EXPENSE_KIND, categoryInfo, selectableCategories } from '../lib/expenses.js'
+import { can, documentsFor } from '../lib/permissions.js'
 
 export default function ReviewDocument() {
   const { id } = useParams()
-  const { state, dispatch } = useStore()
+  const { state, dispatch, actor } = useStore()
+  const location = useLocation()
   const [result, setResult] = useState(null)
   const [needsDupConfirm, setNeedsDupConfirm] = useState(false)
   const [dupConfirmed, setDupConfirmed] = useState(false)
 
   useEffect(() => { setResult(null); setNeedsDupConfirm(false); setDupConfirmed(false) }, [id])
 
-  const doc = state.documents.find(d => d.id === id)
+  const reviewer = can(actor, 'review')
+  // غير المالك يرى مستنداته فقط
+  const doc = documentsFor(state, actor).find(d => d.id === id)
   if (!doc) return <Card className="p-6 text-center">المستند غير موجود — <Link to="/documents" className="underline">العودة</Link></Card>
+  if (!reviewer) return <DocumentStatus state={state} doc={doc} justUploaded={location.state?.justUploaded} />
+  const fromReports = location.state?.from === 'reports'
 
   const editable = doc.status === 'pending'
   const f = doc.fields
@@ -51,7 +58,9 @@ export default function ReviewDocument() {
 
   return (
     <div>
-      <Link to="/documents" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ المستندات</Link>
+      {fromReports
+        ? <Link to="/reports" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ التقارير</Link>
+        : <Link to="/documents" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ المستندات</Link>}
       <div className="flex flex-wrap items-center gap-2 mt-2 mb-3">
         <h1 className="text-xl font-extrabold" style={{ color: NAVY }}>{DOC_KINDS[doc.kind]}</h1>
         <Badge tone={doc.status}>{REVIEW_STATUS[doc.status]}</Badge>
@@ -92,10 +101,43 @@ export default function ReviewDocument() {
           {doc.status === 'approved' && approvedEntity && (
             <Notice tone="success" className="mt-4">
               معتمد في <span className="num">{doc.reviewedAt?.slice(0, 10)}</span>.
-              {' '}{doc.kind !== 'purchase' && <Link to={`/customers/${approvedEntity.customerId}`} className="underline font-bold">عرض حساب العميل</Link>}
+              {' '}{doc.kind !== 'purchase'
+                ? <Link to={`/customers/${approvedEntity.customerId}`} className="underline font-bold">عرض حساب العميل</Link>
+                : <Link to="/reports" className="underline font-bold">عرض في التقارير</Link>}
             </Notice>
           )}
         </Card>
+      </div>
+    </div>
+  )
+}
+
+const STATUS_TEXT = {
+  pending: 'بانتظار مراجعة المالك واعتماده',
+  approved: 'اعتمده المالك',
+  rejected: 'رفضه المالك',
+}
+
+/** متابعة حالة المستند للموظف المحدود: بلا مبالغ ولا أرصدة ولا تعديل ولا اعتماد */
+function DocumentStatus({ state, doc, justUploaded }) {
+  const customer = state.customers.find(c => c.id === doc.fields?.customerId)
+  return (
+    <div>
+      <Link to="/documents" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ مستنداتي</Link>
+      <div className="flex flex-wrap items-center gap-2 mt-2 mb-3">
+        <h1 className="text-xl font-extrabold" style={{ color: NAVY }}>{DOC_KINDS[doc.kind]}</h1>
+        <Badge tone={doc.status}>{REVIEW_STATUS[doc.status]}</Badge>
+      </div>
+      {justUploaded && <Notice tone="success" className="mb-3">أُرسل المستند للمراجعة. ستتغير حالته هنا بعد مراجعة المالك.</Notice>}
+      <div className="grid lg:grid-cols-2 gap-3">
+        <Card className="p-4 space-y-2 text-sm">
+          <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>الحالة</span><b>{STATUS_TEXT[doc.status]}</b></div>
+          {customer && <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>العميل</span><b>{customer.name}</b></div>}
+          <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>تاريخ الرفع</span><b className="num">{doc.uploadedAt?.slice(0, 10)}</b></div>
+          <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>الملف</span><b className="truncate">{doc.file.name}</b></div>
+          <div className="text-xs pt-2" style={{ color: '#8FAAAA' }}>مراجعة البيانات والمبالغ واعتمادها من صلاحية المالك.</div>
+        </Card>
+        <FilePreview file={doc.file} compact />
       </div>
     </div>
   )
@@ -278,7 +320,7 @@ function PaymentForm({ state, doc, f, editable, update }) {
   )
 }
 
-const KIND_LABEL = { direct: 'مواد مباشرة', operating: 'مصروفات تشغيلية' }
+const KIND_LABEL = EXPENSE_KIND
 
 function PurchaseForm({ state, doc, f, editable, update }) {
   const lines = f.lines || []
@@ -286,16 +328,21 @@ function PurchaseForm({ state, doc, f, editable, update }) {
   const approved = doc.status === 'approved' ? state.purchases.find(p => p.docId === doc.id) : null
   const setLines = next => update({ lines: next })
   const setLine = (i, p) => setLines(lines.map((l, j) => j === i ? { ...l, ...p } : l))
-  const kindOf = id => state.categories.find(c => c.id === id)?.kind
+  const kindOf = id => categoryInfo(state, id).kind
 
   const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => s + moneyOrZero(l.net), 0)
 
   return (
     <div className="space-y-3">
-      <Notice tone="info">المشتريات في هذا النموذج مدفوعة مباشرة: الاعتماد يخصم الإجمالي من حساب الدفع. لكل بند تصنيفه.</Notice>
-      <Field label="المورد"><TextInput value={f.supplier} onChange={e => update({ supplier: e.target.value })} disabled={!editable} /></Field>
+      <Notice tone="info">
+        مستند المصروفات يشمل المشتريات والإيجار والرواتب والكهرباء والصيانة وغيرها. لكل بند تصنيفه، والضريبة اختيارية لكل بند.
+        الاعتماد يخصم الإجمالي من مصدر الدفع.
+      </Notice>
+      <Field label="الجهة / المستفيد (اختياري)">
+        <TextInput value={f.payee || ''} onChange={e => update({ payee: e.target.value })} disabled={!editable} placeholder="مثال: مورد التمور، المؤجر، شركة الكهرباء" />
+      </Field>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="رقم الفاتورة"><TextInput value={f.number} onChange={e => update({ number: e.target.value })} disabled={!editable} dir="ltr" className="text-left" /></Field>
+        <Field label="رقم المستند (اختياري)"><TextInput value={f.number || ''} onChange={e => update({ number: e.target.value })} disabled={!editable} dir="ltr" className="text-left" /></Field>
         <Field label="التاريخ"><TextInput type="date" value={f.date} onChange={e => update({ date: e.target.value })} disabled={!editable} /></Field>
       </div>
 
@@ -313,9 +360,9 @@ function PurchaseForm({ state, doc, f, editable, update }) {
                 </div>
                 <Select value={l.categoryId} onChange={e => setLine(i, { categoryId: e.target.value })} disabled={!editable} aria-label="تصنيف البند">
                   <option value="">— اختر التصنيف —</option>
-                  {Object.entries(KIND_LABEL).map(([kind, label]) => (
-                    <optgroup key={kind} label={label}>
-                      {state.categories.filter(c => c.kind === kind && (!c.archived || c.id === l.categoryId)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {selectableCategories(state, l.categoryId).map(({ group, categories }) => (
+                    <optgroup key={group.id} label={`${group.name} — ${KIND_LABEL[group.kind]}`}>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </optgroup>
                   ))}
                 </Select>
@@ -342,12 +389,12 @@ function PurchaseForm({ state, doc, f, editable, update }) {
       {approved && (
         <div className="rounded-xl border border-border p-3 text-sm space-y-2">
           <div className="font-extrabold" style={{ color: NAVY }}>البنود المعتمدة</div>
-          <div className="text-[11px]" style={{ color: '#8FAAAA' }}>التصنيف ونوعه مثبّتان كما كانا وقت الاعتماد</div>
+          <div className="text-[11px]" style={{ color: '#8FAAAA' }}>المجموعة والتصنيف ونوعه مثبّتة كما كانت وقت الاعتماد</div>
           {approved.lines.map((l, i) => (
             <div key={i} className="flex items-start justify-between gap-2">
               <div>
                 <div>{l.desc}</div>
-                <div className="text-[11px]" style={{ color: '#5A7A8A' }}>{l.categoryName} — {KIND_LABEL[l.categoryKind]}</div>
+                <div className="text-[11px]" style={{ color: '#5A7A8A' }}>{l.groupName} ← {l.categoryName} — {KIND_LABEL[l.categoryKind]}</div>
               </div>
               <div className="text-left"><Money value={l.net} /><div className="text-[11px]" style={{ color: '#8FAAAA' }}>ضريبة <Money value={l.vat} /></div></div>
             </div>
@@ -364,7 +411,7 @@ function PurchaseForm({ state, doc, f, editable, update }) {
         <Row label="الضريبة" value={approved ? approved.vat : totals.vat} />
         <Row label="الإجمالي" value={approved ? approved.total : totals.total} strong />
       </div>
-      <Field label="حساب الدفع"><AccountSelect state={state} value={f.accountId} onChange={v => update({ accountId: v })} disabled={!editable} /></Field>
+      <Field label="مصدر الدفع"><AccountSelect state={state} value={f.accountId} onChange={v => update({ accountId: v })} disabled={!editable} /></Field>
     </div>
   )
 }

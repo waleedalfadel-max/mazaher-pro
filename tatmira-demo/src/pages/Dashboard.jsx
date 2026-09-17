@@ -48,11 +48,14 @@ export default function Dashboard() {
         </Notice>
       )}
 
-      <h2 className="text-sm font-extrabold mb-2" style={{ color: NAVY }}>المشتريات والمصروفات</h2>
+      <div className="flex items-baseline justify-between mb-2">
+        <h2 className="text-sm font-extrabold" style={{ color: NAVY }}>المصروفات</h2>
+        <Link to="/reports" className="text-xs font-bold underline" style={{ color: '#4A9E97' }}>التفاصيل في التقارير</Link>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 mb-5">
-        <Stat label="مشتريات المواد المباشرة" value={d.direct} note="قبل الضريبة" />
+        <Stat label="المواد المباشرة" value={d.direct} note="قبل الضريبة" />
         <Stat label="المصروفات التشغيلية" value={d.operating} note="قبل الضريبة" />
-        <Stat label="ضريبة المشتريات" value={d.inputVat} />
+        <Stat label="ضريبة المصروفات" value={d.inputVat} />
       </div>
 
       <Card className="p-4 mb-5" style={{ borderColor: '#FCD34D' }}>
@@ -84,7 +87,7 @@ export default function Dashboard() {
             ))}
           </div>
           <div className="text-[11px] mt-3" style={{ color: '#8FAAAA' }}>
-            التحصيلات المعتمدة ناقص المشتريات المدفوعة {untilLabel}. لا تشمل أرصدة بنكية فعلية.
+            التحصيلات المعتمدة ناقص المصروفات المدفوعة {untilLabel}. لا تشمل أرصدة بنكية فعلية.
           </div>
         </Card>
 

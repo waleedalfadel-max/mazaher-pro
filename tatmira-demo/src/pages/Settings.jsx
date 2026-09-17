@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom'
 import { useStore } from '../store.jsx'
 import { newId } from '../lib/ledger.js'
 import { displayWhatsapp } from '../lib/whatsapp.js'
-import { Badge, Button, Card, Field, Notice, PageTitle, Select, TextInput, NAVY } from '../components/ui.jsx'
+import { Badge, Button, Card, Field, Modal, Notice, PageTitle, Select, TextInput, NAVY } from '../components/ui.jsx'
 import CustomerForm from '../components/CustomerForm.jsx'
+import { EXPENSE_KIND } from '../lib/expenses.js'
+import { ROLES } from '../lib/permissions.js'
 
 function Section({ title, subtitle, children, action }) {
   return (
@@ -133,6 +135,132 @@ function EditableList({ title, subtitle, items, kinds, saveType, archiveType, id
   )
 }
 
+/** مجموعات المصروفات وتصنيفاتها الفرعية — تُستخدم في مستند المصروفات والتقارير */
+function ExpenseGroupsSection() {
+  const { state, dispatch } = useStore()
+  const [groupDraft, setGroupDraft] = useState(null)
+  const [catDraft, setCatDraft] = useState(null)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState(() => new Set())
+  const [showArchived, setShowArchived] = useState(false)
+
+  const toggle = id => setOpen(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const groups = state.expenseGroups.filter(g => showArchived || !g.archived)
+  const activeGroups = state.expenseGroups.filter(g => !g.archived)
+
+  function saveGroup() {
+    const r = dispatch({ type: 'GROUP_SAVE', ...groupDraft })
+    if (r.error) return setError(r.error)
+    setGroupDraft(null)
+  }
+  function saveCategory() {
+    const r = dispatch({ type: 'CATEGORY_SAVE', ...catDraft })
+    if (r.error) return setError(r.error)
+    setOpen(prev => new Set(prev).add(catDraft.groupId))
+    setCatDraft(null)
+  }
+  const original = groupDraft && state.expenseGroups.find(g => g.id === groupDraft.id)
+  const originalCat = catDraft && state.categories.find(c => c.id === catDraft.id)
+
+  return (
+    <Section title="مجموعات وتصنيفات المصروفات" subtitle="تظهر في مستند المصروفات وتقرير المصروفات. تعديلها لا يغيّر تصنيف المستندات المعتمدة سابقاً."
+      action={<Button className="!py-1.5 !text-xs" onClick={() => { setGroupDraft({ id: newId('grp'), name: '', kind: 'operating' }); setError('') }}>+ مجموعة</Button>}>
+      <div className="space-y-2">
+        {groups.map(g => {
+          const cats = state.categories.filter(c => c.groupId === g.id && (showArchived || !c.archived))
+          const isOpen = open.has(g.id)
+          return (
+            <div key={g.id} className="rounded-xl border border-border overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2" style={{ background: g.kind === 'direct' ? '#eff6ff' : '#F4F8F7' }}>
+                <button onClick={() => toggle(g.id)} aria-expanded={isOpen} className="flex-1 flex items-center gap-2 text-right min-w-0">
+                  <span className="text-xs transition-transform" style={{ transform: isOpen ? 'rotate(90deg)' : 'none', display: 'inline-block' }}>▶</span>
+                  <span className={`font-bold text-sm truncate ${g.archived ? 'line-through text-slate-400' : ''}`} style={{ color: NAVY }}>{g.name}</span>
+                  <Badge tone={g.kind === 'direct' ? 'approved' : 'neutral'}>{EXPENSE_KIND[g.kind]}</Badge>
+                  <span className="text-[11px] shrink-0" style={{ color: '#8FAAAA' }}>{cats.length}</span>
+                </button>
+                {!g.archived && <Button variant="secondary" className="!py-1 !px-2 !text-xs" onClick={() => { setGroupDraft({ id: g.id, name: g.name, kind: g.kind }); setError('') }}>تعديل</Button>}
+                <Button variant="secondary" className="!py-1 !px-2 !text-xs" onClick={() => dispatch({ type: 'GROUP_ARCHIVE', id: g.id, archived: !g.archived })}>{g.archived ? 'استرجاع' : 'أرشفة'}</Button>
+              </div>
+              {isOpen && (
+                <div className="divide-y divide-border">
+                  {cats.map(c => (
+                    <div key={c.id} className="flex items-center justify-between gap-2 px-4 py-2 bg-white">
+                      <span className={`text-sm ${c.archived ? 'line-through text-slate-400' : ''}`}>📌 {c.name}</span>
+                      <div className="flex gap-1.5">
+                        {!c.archived && <Button variant="secondary" className="!py-1 !px-2 !text-xs" onClick={() => { setCatDraft({ id: c.id, name: c.name, groupId: c.groupId }); setError('') }}>تعديل</Button>}
+                        <Button variant="secondary" className="!py-1 !px-2 !text-xs" onClick={() => dispatch({ type: 'CATEGORY_ARCHIVE', id: c.id, archived: !c.archived })}>{c.archived ? 'استرجاع' : 'أرشفة'}</Button>
+                      </div>
+                    </div>
+                  ))}
+                  {!g.archived && (
+                    <div className="px-4 py-2 bg-white">
+                      <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => { setCatDraft({ id: newId('cat'), name: '', groupId: g.id }); setError('') }}>+ تصنيف في {g.name}</Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {(state.expenseGroups.some(g => g.archived) || state.categories.some(c => c.archived)) && (
+        <button onClick={() => setShowArchived(v => !v)} className="text-xs font-bold underline mt-2" style={{ color: '#4A9E97' }}>
+          {showArchived ? 'إخفاء المؤرشف' : 'عرض المؤرشف'}
+        </button>
+      )}
+
+      <Modal open={!!groupDraft} onClose={() => setGroupDraft(null)} title={original ? 'تعديل مجموعة' : 'إضافة مجموعة'}
+        footer={<><Button variant="secondary" onClick={() => setGroupDraft(null)}>إلغاء</Button><Button onClick={saveGroup}>حفظ</Button></>}>
+        {groupDraft && (
+          <div className="space-y-3">
+            <Field label="اسم المجموعة"><TextInput value={groupDraft.name} onChange={e => setGroupDraft({ ...groupDraft, name: e.target.value })} placeholder="مثال: التسويق" autoFocus /></Field>
+            <Field label="النوع">
+              <Select value={groupDraft.kind} onChange={e => setGroupDraft({ ...groupDraft, kind: e.target.value })} aria-label="نوع المجموعة">
+                <option value="direct">{EXPENSE_KIND.direct}</option>
+                <option value="operating">{EXPENSE_KIND.operating}</option>
+              </Select>
+            </Field>
+            {original && original.kind !== groupDraft.kind && <Notice tone="warning">تغيير النوع يطبَّق على المستندات الجديدة فقط؛ المعتمد سابقاً يبقى كما هو.</Notice>}
+            {error && <Notice tone="error">{error}</Notice>}
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!catDraft} onClose={() => setCatDraft(null)} title={originalCat ? 'تعديل تصنيف' : 'إضافة تصنيف'}
+        footer={<><Button variant="secondary" onClick={() => setCatDraft(null)}>إلغاء</Button><Button onClick={saveCategory}>حفظ</Button></>}>
+        {catDraft && (
+          <div className="space-y-3">
+            <Field label="اسم التصنيف"><TextInput value={catDraft.name} onChange={e => setCatDraft({ ...catDraft, name: e.target.value })} placeholder="مثال: إعلانات" autoFocus /></Field>
+            <Field label="المجموعة">
+              <Select value={catDraft.groupId} onChange={e => setCatDraft({ ...catDraft, groupId: e.target.value })} aria-label="مجموعة التصنيف">
+                {activeGroups.map(g => <option key={g.id} value={g.id}>{g.name} — {EXPENSE_KIND[g.kind]}</option>)}
+              </Select>
+            </Field>
+            {originalCat && originalCat.groupId !== catDraft.groupId && <Notice tone="warning">النقل يطبَّق على المستندات الجديدة فقط؛ المعتمد سابقاً يبقى في مجموعته.</Notice>}
+            {error && <Notice tone="error">{error}</Notice>}
+          </div>
+        )}
+      </Modal>
+    </Section>
+  )
+}
+
+function EmployeesCard() {
+  const { state } = useStore()
+  const active = state.employees.filter(e => e.active)
+  return (
+    <Section title="الموظفون والصلاحيات" subtitle="إضافة موظف وتحديد ما يرفعه وتعطيله — محاكاة بلا تسجيل دخول"
+      action={<Link to="/settings/employees"><Button className="!py-1.5 !text-xs">إدارة</Button></Link>}>
+      <div className="flex flex-wrap gap-1.5">
+        {state.employees.map(e => (
+          <Badge key={e.id} tone={e.active ? 'neutral' : 'rejected'}>{e.name} — {ROLES[e.role]?.label}{e.active ? '' : ' (معطّل)'}</Badge>
+        ))}
+      </div>
+      <div className="text-[11px] mt-2" style={{ color: '#8FAAAA' }}>{active.length} موظف نشط</div>
+    </Section>
+  )
+}
+
 export default function Settings() {
   const { state, reset } = useStore()
   const [resetDone, setResetDone] = useState(false)
@@ -148,10 +276,10 @@ export default function Settings() {
       <PageTitle title="الإعدادات" subtitle="كل التعديلات من هنا دون الحاجة لمبرمج" />
       <LabInfo />
       <CustomersSection />
-      <EditableList title="حسابات الاستلام والدفع" subtitle="تستقبل السداد وتُدفع منها المشتريات"
+      <EmployeesCard />
+      <EditableList title="حسابات الاستلام والدفع" subtitle="تستقبل السداد وتُدفع منها المصروفات"
         items={state.accounts} kinds={[['cash', 'نقد'], ['bank', 'بنك']]} saveType="ACCOUNT_SAVE" archiveType="ACCOUNT_ARCHIVE" idPrefix="acc" />
-      <EditableList title="تصنيفات المشتريات والمصروفات" subtitle="المواد المباشرة منفصلة عن المصروفات التشغيلية في لوحة المالك"
-        items={state.categories} kinds={[['direct', 'مواد مباشرة'], ['operating', 'تشغيلية']]} saveType="CATEGORY_SAVE" archiveType="CATEGORY_ARCHIVE" idPrefix="cat" />
+      <ExpenseGroupsSection />
 
       <Section title="بيانات النموذج" subtitle="البيانات محفوظة في متصفح هذا الجهاز فقط">
         <Button variant="danger" onClick={doReset}>إعادة ضبط النموذج</Button>

@@ -10,19 +10,25 @@
  * - الرصيد الافتتاحي مستحق سابق وليس مبيعات.
  * - «استخدام الرصيد المتاح» ينقل الزائد من دفعات سابقة إلى فواتير مفتوحة: لا إيراد ولا تحصيل جديد،
  *   ولا يتغير رصيد العميل الإجمالي — يتغير فقط ما هو مسدد من كل فاتورة.
- * - تصنيف كل بند مشتريات (اسمه ونوعه) يُثبَّت وقت الاعتماد، فتعديل الإعدادات لاحقاً لا يغيّر التقارير السابقة.
+ * - مستند المصروفات (النوع الداخلي purchase) يشمل المشتريات والإيجار والرواتب والكهرباء وغيرها. تصنيف كل بند
+ *   ومجموعته ونوعه تُثبَّت وقت الاعتماد، فتعديل الإعدادات لاحقاً لا يغيّر التقارير السابقة.
+ * - كل إجراء يمر على جدول الصلاحيات (permissions.js) — محاكاة محلية وليست حماية.
  *
  * المبالغ بالهللة. كل إجراء يعيد { state, error?, code? } ولا يعدّل الحالة الأصلية.
  */
 import { normalizeWhatsapp } from './whatsapp.js'
 import { isValidMoneyField, isValidQuantityField, moneyOrZero, toQuantity } from './money.js'
+import {
+  DEFAULT_CATEGORIES, LEGACY_CATEGORY_GROUP, categoryInfo, defaultCategories, defaultGroups, expenseReport, findGroup,
+} from './expenses.js'
+import { DOC_KIND_IDS, OWNER_ID, actorOf, authorize, defaultEmployees, findEmployee, isOwner } from './permissions.js'
 
-export const STATE_VERSION = 2
+export const STATE_VERSION = 3
 
 export const DOC_KINDS = {
   sale:     'فاتورة بيع',
   payment:  'إثبات سداد',
-  purchase: 'فاتورة مشتريات',
+  purchase: 'مستند مصروفات',
 }
 
 export const REVIEW_STATUS = {
@@ -70,16 +76,9 @@ export function createInitialState({ today = todayISO() } = {}) {
       { id: 'acc-cash', name: 'الصندوق', kind: 'cash', archived: false },
       { id: 'acc-bank', name: 'البنك — الحساب الجاري', kind: 'bank', archived: false },
     ],
-    categories: [
-      { id: 'cat-dates',   name: 'تمور',                 kind: 'direct',    archived: false },
-      { id: 'cat-flour',   name: 'دقيق وسميد',           kind: 'direct',    archived: false },
-      { id: 'cat-butter',  name: 'سمن وزبدة',            kind: 'direct',    archived: false },
-      { id: 'cat-pack',    name: 'مواد تغليف',           kind: 'direct',    archived: false },
-      { id: 'cat-power',   name: 'كهرباء وماء',          kind: 'operating', archived: false },
-      { id: 'cat-rent',    name: 'إيجار',                kind: 'operating', archived: false },
-      { id: 'cat-salary',  name: 'رواتب',                kind: 'operating', archived: false },
-      { id: 'cat-deliver', name: 'نقل وتوصيل',           kind: 'operating', archived: false },
-    ],
+    expenseGroups: defaultGroups(),
+    categories: defaultCategories(),
+    employees: defaultEmployees(),
     documents: [],
     invoices: [],
     payments: [],
@@ -110,12 +109,13 @@ export function sampleFields(kind, state, today) {
   if (kind === 'payment') {
     return { customerId: '', date: today, amount: 60000, accountId: 'acc-bank', reference: '', allocations: [] }
   }
+  // مستند مصروفات: الجهة ورقم المستند اختياريان، والضريبة لكل بند (قد تكون صفراً)
   return {
-    supplier: 'مورد تجريبي', number: `P-DEMO-${String(n).padStart(4, '0')}`, date: today, accountId: 'acc-bank',
+    payee: 'جهة تجريبية', number: '', date: today, accountId: 'acc-bank',
     lines: [
-      { id: newId('pline'), desc: 'تمور خام',        categoryId: 'cat-dates', net: 20000, vat: 3000 },
-      { id: newId('pline'), desc: 'أكياس تغليف',     categoryId: 'cat-pack',  net: 5000,  vat: 750 },
-      { id: newId('pline'), desc: 'توصيل الطلبية',   categoryId: 'cat-deliver', net: 3000, vat: 0 },
+      { id: newId('pline'), desc: 'تمور خام',          categoryId: 'cat-dates',        net: 20000, vat: 3000 },
+      { id: newId('pline'), desc: 'أكياس تغليف',       categoryId: 'cat-pack',         net: 5000,  vat: 750 },
+      { id: newId('pline'), desc: 'إيجار سكن العمال',  categoryId: 'cat-rent-housing', net: 80000, vat: 0 },
     ],
   }
 }
@@ -314,16 +314,15 @@ export function ownerDashboard(state, { from = '', to = '' } = {}) {
   const inRange = d => (!from || d >= from) && (!to || d <= to)
   const inv = state.invoices.filter(i => inRange(i.date))
   const pays = state.payments.filter(p => inRange(p.date))
-  const purch = state.purchases.filter(p => inRange(p.date))
-  // النوع المثبّت وقت الاعتماد — لا يُقرأ من الإعدادات الحالية
-  const purchLines = purch.flatMap(p => p.lines)
+  // المصروفات من تقرير المصروفات نفسه (اللقطة المثبّتة وقت الاعتماد) — نفس المصدر ونفس الأرقام
+  const expenses = expenseReport(state, { from, to })
 
   const salesNet = inv.reduce((s, i) => s + i.net, 0)
   const salesVat = inv.reduce((s, i) => s + i.vat, 0)
   const collected = pays.reduce((s, p) => s + p.amount, 0)
-  const direct = purchLines.filter(l => l.categoryKind === 'direct').reduce((s, l) => s + l.net, 0)
-  const operating = purchLines.filter(l => l.categoryKind === 'operating').reduce((s, l) => s + l.net, 0)
-  const inputVat = purchLines.reduce((s, l) => s + l.vat, 0)
+  const direct = expenses.direct.total
+  const operating = expenses.operating.total
+  const inputVat = expenses.vat
 
   let due = 0, credit = 0
   for (const c of state.customers) {
@@ -368,6 +367,8 @@ function withCounters(state, patch) {
 }
 
 export function reduce(state, action) {
+  const denied = authorize(state, action)
+  if (denied) return fail(state, denied.code, denied.error)
   switch (action.type) {
     case 'LAB_UPDATE':
       return ok({ ...state, lab: { ...state.lab, ...action.patch } })
@@ -426,33 +427,85 @@ export function reduce(state, action) {
     case 'ACCOUNT_ARCHIVE':
       return ok({ ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, archived: !!action.archived } : a) })
 
+    case 'GROUP_SAVE': {
+      const name = String(action.name || '').trim()
+      if (!name) return fail(state, 'NAME_REQUIRED', 'اكتب اسم المجموعة')
+      if (!['direct', 'operating'].includes(action.kind)) return fail(state, 'BAD_KIND', 'نوع المجموعة غير صحيح')
+      const exists = findGroup(state, action.id)
+      const expenseGroups = exists
+        ? state.expenseGroups.map(g => g.id === action.id ? { ...g, name, kind: action.kind } : g)
+        : [...state.expenseGroups, { id: action.id || newId('grp'), name, kind: action.kind, archived: false }]
+      return ok({ ...state, expenseGroups })
+    }
+
+    case 'GROUP_ARCHIVE':
+      return ok({ ...state, expenseGroups: state.expenseGroups.map(g => g.id === action.id ? { ...g, archived: !!action.archived } : g) })
+
     case 'CATEGORY_SAVE': {
       const name = String(action.name || '').trim()
       if (!name) return fail(state, 'NAME_REQUIRED', 'اكتب اسم التصنيف')
-      if (!['direct', 'operating'].includes(action.kind)) return fail(state, 'BAD_KIND', 'نوع التصنيف غير صحيح')
+      const group = findGroup(state, action.groupId)
+      if (!group || group.archived) return fail(state, 'GROUP_REQUIRED', 'اختر مجموعة التصنيف')
       const exists = state.categories.find(c => c.id === action.id)
       const categories = exists
-        ? state.categories.map(c => c.id === action.id ? { ...c, name, kind: action.kind } : c)
-        : [...state.categories, { id: action.id || newId('cat'), name, kind: action.kind, archived: false }]
+        ? state.categories.map(c => c.id === action.id ? { ...c, name, groupId: group.id } : c)
+        : [...state.categories, { id: action.id || newId('cat'), name, groupId: group.id, archived: false }]
       return ok({ ...state, categories })
     }
 
     case 'CATEGORY_ARCHIVE':
       return ok({ ...state, categories: state.categories.map(c => c.id === action.id ? { ...c, archived: !!action.archived } : c) })
 
+    case 'EMPLOYEE_SAVE': {
+      const name = String(action.name || '').trim()
+      if (!name) return fail(state, 'NAME_REQUIRED', 'اكتب اسم الموظف')
+      const existing = findEmployee(state, action.id)
+      // دور المالك ثابت ولا يُمنح لموظف آخر
+      const role = existing?.role === 'owner' ? 'owner' : action.role
+      if (role !== 'owner' ? !['purchasing', 'sales'].includes(role) : existing?.role !== 'owner') return fail(state, 'BAD_ROLE', 'اختر دور الموظف')
+      const docKinds = role === 'owner'
+        ? [...DOC_KIND_IDS]
+        : DOC_KIND_IDS.filter(k => (action.docKinds || []).includes(k))
+      if (!docKinds.length) return fail(state, 'DOC_KINDS_REQUIRED', 'اختر نوع مستند واحداً على الأقل')
+      const employees = existing
+        ? state.employees.map(e => e.id === existing.id ? { ...e, name, role, docKinds } : e)
+        : [...state.employees, { id: action.id || newId('emp'), name, role, docKinds, active: true }]
+      return ok({ ...state, employees })
+    }
+
+    case 'EMPLOYEE_SET_ACTIVE': {
+      const emp = findEmployee(state, action.id)
+      if (!emp) return fail(state, 'NOT_FOUND', 'الموظف غير موجود')
+      if (emp.role === 'owner') return fail(state, 'OWNER_ALWAYS_ACTIVE', 'لا يمكن تعطيل المالك')
+      return ok({ ...state, employees: state.employees.map(e => e.id === emp.id ? { ...e, active: !!action.active } : e) })
+    }
+
     case 'DOC_ADD': {
       if (!DOC_KINDS[action.kind]) return fail(state, 'BAD_KIND', 'نوع المستند غير صحيح')
       if (!action.file?.id) return fail(state, 'FILE_REQUIRED', 'اختر ملف المستند')
       if (state.documents.some(d => d.id === action.id)) return ok(state)
+      const actor = actorOf(state, action.actorId)
+      // الموظف المحدود لا يمرر إلا العميل؛ بقية الحقول يراجعها المالك
+      const given = action.fields || {}
+      const fields = isOwner(actor) ? given : ('customerId' in given ? { customerId: given.customerId } : {})
+      if (action.kind !== 'purchase') {
+        if (fields.customerId) {
+          const c = findCustomer(state, fields.customerId)
+          if (!c || c.archived) return fail(state, 'CUSTOMER_REQUIRED', 'اختر عميلاً نشطاً')
+        } else if (!isOwner(actor)) {
+          return fail(state, 'CUSTOMER_REQUIRED', 'اختر العميل')
+        }
+      }
       const today = action.today || todayISO()
       const doc = {
         id: action.id || newId('doc'),
         kind: action.kind,
+        uploadedBy: actor.id,
         file: { id: action.file.id, name: action.file.name, type: action.file.type, size: action.file.size },
         uploadedAt: action.uploadedAt || new Date().toISOString(),
         status: 'pending',
         sample: true,
-        fields: { ...sampleFields(action.kind, state, today), ...(action.fields || {}) },
+        fields: { ...sampleFields(action.kind, state, today), ...fields },
       }
       return ok(withCounters({ ...state, documents: [doc, ...state.documents] }, { sample: (state.counters?.sample || 0) + 1 }))
     }
@@ -585,25 +638,29 @@ function approveDocument(state, action) {
     }
     next = { ...state, payments: [...state.payments, payment] }
   } else {
-    if (!String(f.supplier || '').trim()) return fail(state, 'SUPPLIER_REQUIRED', 'اكتب اسم المورد')
-    if (!f.date) return fail(state, 'DATE_REQUIRED', 'اختر تاريخ الفاتورة')
+    if (!f.date) return fail(state, 'DATE_REQUIRED', 'اختر تاريخ المستند')
     const account = state.accounts.find(a => a.id === f.accountId)
     if (!account || account.archived) return fail(state, 'ACCOUNT_REQUIRED', 'اختر حساب الدفع')
     const rawLines = (f.lines || []).filter(l => String(l.desc || '').trim() || l.net || l.vat || l.categoryId)
     if (!rawLines.length) return fail(state, 'LINES_REQUIRED', 'أضف بنداً واحداً على الأقل')
     const lines = []
     for (const [i, l] of rawLines.entries()) {
-      const category = state.categories.find(c => c.id === l.categoryId)
-      if (!category || category.archived) return fail(state, 'CATEGORY_REQUIRED', `اختر تصنيف البند ${i + 1}`)
+      const { category, group } = categoryInfo(state, l.categoryId)
+      if (!category || category.archived || !group || group.archived) return fail(state, 'CATEGORY_REQUIRED', `اختر تصنيف البند ${i + 1}`)
       const net = Math.round(Number(l.net) || 0)
       const vat = Math.max(0, Math.round(Number(l.vat) || 0))
       if (net <= 0) return fail(state, 'BAD_TOTAL', `مبلغ البند ${i + 1} قبل الضريبة يجب أن يكون أكبر من صفر`)
       // لقطة ثابتة من التصنيف وقت الاعتماد
-      lines.push({ desc: String(l.desc || '').trim() || category.name, categoryId: category.id, categoryName: category.name, categoryKind: category.kind, net, vat })
+      lines.push({
+        desc: String(l.desc || '').trim() || category.name,
+        categoryId: category.id, categoryName: category.name,
+        groupId: group.id, groupName: group.name, categoryKind: group.kind,
+        net, vat,
+      })
     }
     const { net, vat, total } = purchaseTotals({ lines })
     const purchase = {
-      id: `pur-${doc.id}`, docId: doc.id, supplier: String(f.supplier).trim(), number: String(f.number || '').trim(),
+      id: `pur-${doc.id}`, docId: doc.id, payee: String(f.payee || '').trim(), number: String(f.number || '').trim(),
       date: f.date, lines, net, vat, total, accountId: account.id, approvedAt: at, approvedSeq: seq,
     }
     next = { ...state, purchases: [...state.purchases, purchase] }
@@ -616,14 +673,8 @@ function approveDocument(state, action) {
   return ok(withCounters(next, { approved: seq }))
 }
 
-/**
- * ترقية بيانات الجهاز من الإصدار 1: فاتورة المشتريات كانت بتصنيف واحد، ولم تكن تحفظ نوعه.
- * نحوّلها لبند واحد ونثبّت نوع التصنيف كما هو في الإعدادات لحظة الترقية.
- */
-export function migrate(saved, today) {
-  if (!saved || !Array.isArray(saved.customers)) return createInitialState({ today })
-  if (saved.version === STATE_VERSION) return saved
-  if (saved.version !== 1) return createInitialState({ today })
+/** الإصدار 1 ← 2: فاتورة المشتريات كانت بتصنيف واحد ولم تحفظ نوعه → بند واحد مثبّت النوع */
+function migrateV1toV2(saved) {
   const cat = id => saved.categories.find(c => c.id === id)
   const toLine = x => ({
     desc: x.description || cat(x.categoryId)?.name || '', categoryId: x.categoryId,
@@ -632,7 +683,7 @@ export function migrate(saved, today) {
   })
   return {
     ...saved,
-    version: STATE_VERSION,
+    version: 2,
     creditApplications: [],
     purchases: saved.purchases.map(p => p.lines ? p : { ...p, lines: [toLine(p)] }),
     documents: saved.documents.map(d => {
@@ -641,4 +692,53 @@ export function migrate(saved, today) {
       return { ...d, fields: { ...rest, lines: [{ id: newId('pline'), desc: description || '', categoryId: categoryId || '', net: net || 0, vat: vat || 0 }] } }
     }),
   }
+}
+
+/**
+ * الإصدار 2 ← 3: مجموعات المصروفات، «الجهة / المستفيد» بدل المورد، والموظفون.
+ * لا يُحذف شيء: المورد يُنقل إلى الجهة، وتبقى أسماء التصنيفات كما هي، وتُضاف التصنيفات الافتراضية الناقصة فقط.
+ * بنود المصروفات المعتمدة تحتفظ بنوعها المثبّت، وتُنسب لمجموعة من نفس النوع.
+ */
+function migrateV2toV3(saved) {
+  const groups = defaultGroups()
+  const kindOf = id => groups.find(g => g.id === id)?.kind
+  const categories = saved.categories.map(({ kind, ...c }) => ({
+    ...c, groupId: LEGACY_CATEGORY_GROUP[c.id] || (kind === 'direct' ? 'grp-direct' : 'grp-other'),
+  }))
+  for (const d of DEFAULT_CATEGORIES) if (!categories.some(c => c.id === d.id)) categories.push({ ...d, archived: false })
+  const lineGroup = line => {
+    const groupId = categories.find(c => c.id === line.categoryId)?.groupId
+    if (groupId && kindOf(groupId) === line.categoryKind) return groupId
+    return line.categoryKind === 'direct' ? 'grp-direct' : 'grp-other'
+  }
+  const renamePayee = ({ supplier, ...rest }) => ({ ...rest, payee: rest.payee ?? supplier ?? '' })
+  return {
+    ...saved,
+    version: 3,
+    expenseGroups: groups,
+    categories,
+    employees: defaultEmployees(),
+    purchases: saved.purchases.map(p => ({
+      ...renamePayee(p),
+      lines: p.lines.map(l => {
+        const groupId = l.groupId || lineGroup(l)
+        return { ...l, groupId, groupName: l.groupName || groups.find(g => g.id === groupId).name }
+      }),
+    })),
+    documents: saved.documents.map(d => ({
+      ...d,
+      uploadedBy: d.uploadedBy || OWNER_ID,
+      fields: d.kind === 'purchase' ? renamePayee(d.fields) : d.fields,
+    })),
+  }
+}
+
+/** ترقية بيانات الجهاز من أي إصدار سابق دون فقد بيانات */
+export function migrate(saved, today) {
+  if (!saved || !Array.isArray(saved.customers)) return createInitialState({ today })
+  let s = saved
+  if (s.version === 1) s = migrateV1toV2(s)
+  if (s.version === 2) s = migrateV2toV3(s)
+  if (s.version !== STATE_VERSION) return createInitialState({ today })
+  return s
 }

@@ -1,8 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { createInitialState, migrate, reduce, todayISO } from './lib/ledger.js'
 import { clearFiles, getFile } from './lib/files.js'
+import { OWNER_ID } from './lib/permissions.js'
 
 const STORAGE_KEY = 'tatmira-demo:v1'
+// الموظف المعروض حالياً في «معاينة الأدوار» — محاكاة، ليست جلسة دخول
+const ACTING_KEY = 'tatmira-demo:acting'
 const StoreContext = createContext(null)
 
 function load() {
@@ -20,10 +23,21 @@ export function StoreProvider({ children }) {
   if (ref.current === null) ref.current = load()
   const [state, setState] = useState(ref.current)
   const [storageOk, setStorageOk] = useState(true)
+  const actingRef = useRef(null)
+  if (actingRef.current === null) {
+    try { actingRef.current = localStorage.getItem(ACTING_KEY) || OWNER_ID } catch { actingRef.current = OWNER_ID }
+  }
+  const [actingId, setActingId] = useState(actingRef.current)
+
+  const setActing = useCallback(id => {
+    actingRef.current = id
+    setActingId(id)
+    try { localStorage.setItem(ACTING_KEY, id) } catch {}
+  }, [])
 
   // يُطبَّق الإجراء على أحدث حالة فوراً (ref) — الضغطة الثانية ترى نتيجة الأولى
   const dispatch = useCallback(action => {
-    const result = reduce(ref.current, { today: todayISO(), ...action })
+    const result = reduce(ref.current, { today: todayISO(), actorId: actingRef.current, ...action })
     if (result.state !== ref.current) {
       ref.current = result.state
       setState(result.state)
@@ -35,8 +49,9 @@ export function StoreProvider({ children }) {
     const fresh = createInitialState({ today: todayISO() })
     ref.current = fresh
     setState(fresh)
+    setActing(OWNER_ID)
     await clearFiles()
-  }, [])
+  }, [setActing])
 
   useEffect(() => {
     try {
@@ -47,8 +62,11 @@ export function StoreProvider({ children }) {
     }
   }, [state])
 
+  // موظف محذوف أو غير معروف ← المالك
+  const actor = state.employees.find(e => e.id === actingId) || state.employees.find(e => e.id === OWNER_ID)
+
   return (
-    <StoreContext.Provider value={{ state, dispatch, reset, storageOk }}>
+    <StoreContext.Provider value={{ state, dispatch, reset, storageOk, actor, setActing }}>
       {children}
     </StoreContext.Provider>
   )

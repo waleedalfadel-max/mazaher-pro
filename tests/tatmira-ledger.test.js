@@ -299,28 +299,42 @@ test('نوع التصنيف يُثبَّت وقت الاعتماد: تعديل �
   const before = ownerDashboard(s)
   assert.equal(before.direct, 20000)
 
-  s = must(s, { type: 'CATEGORY_SAVE', id: 'cat-dates', name: 'تمور (معدّل)', kind: 'operating' })
+  // نقل التصنيف لمجموعة تشغيلية، وتغيير نوع مجموعته الأصلية، ثم أرشفته
+  s = must(s, { type: 'CATEGORY_SAVE', id: 'cat-dates', name: 'تمور (معدّل)', groupId: 'grp-other' })
+  s = must(s, { type: 'GROUP_SAVE', id: 'grp-direct', name: 'المواد المباشرة', kind: 'operating' })
   s = must(s, { type: 'CATEGORY_ARCHIVE', id: 'cat-dates', archived: true })
   const after = ownerDashboard(s)
   assert.equal(after.direct, 20000, 'بقيت مواد مباشرة')
   assert.equal(after.operating, 0)
   assert.equal(s.purchases[0].lines[0].categoryName, 'تمور')
   assert.equal(s.purchases[0].lines[0].categoryKind, 'direct')
+  assert.equal(s.purchases[0].lines[0].groupId, 'grp-direct')
 })
 
 test('ترقية بيانات الجهاز القديمة: مشتريات بتصنيف واحد تتحول لبند مثبّت النوع', () => {
-  const v1 = createInitialState({ today: TODAY })
-  v1.version = 1
-  delete v1.creditApplications
-  v1.purchases = [{ id: 'pur-old', docId: 'old', supplier: 'مورد', number: '', date: TODAY, categoryId: 'cat-power', description: 'كهرباء', net: 10000, vat: 1500, total: 11500, accountId: 'acc-bank', approvedSeq: 1 }]
-  v1.documents = [{ id: 'pend', kind: 'purchase', status: 'pending', file: file('pend'), fields: { supplier: 'x', date: TODAY, categoryId: 'cat-dates', description: 'تمر', net: 500, vat: 75, accountId: 'acc-bank' } }]
+  const v1 = {
+    version: 1,
+    lab: { name: 'معمل تتميرا' },
+    customers: createInitialState({ today: TODAY }).customers,
+    accounts: createInitialState({ today: TODAY }).accounts,
+    categories: [
+      { id: 'cat-dates', name: 'تمور', kind: 'direct', archived: false },
+      { id: 'cat-power', name: 'كهرباء وماء', kind: 'operating', archived: false },
+    ],
+    invoices: [], payments: [], counters: { sample: 1, approved: 1 },
+    purchases: [{ id: 'pur-old', docId: 'old', supplier: 'مورد', number: '', date: TODAY, categoryId: 'cat-power', description: 'كهرباء', net: 10000, vat: 1500, total: 11500, accountId: 'acc-bank', approvedSeq: 1 }],
+    documents: [{ id: 'pend', kind: 'purchase', status: 'pending', file: file('pend'), fields: { supplier: 'x', date: TODAY, categoryId: 'cat-dates', description: 'تمر', net: 500, vat: 75, accountId: 'acc-bank' } }],
+  }
   const s = migrate(v1, TODAY)
-  assert.equal(s.version, 2)
+  assert.equal(s.version, 3)
   assert.deepEqual(s.creditApplications, [])
   assert.equal(s.purchases[0].lines[0].categoryKind, 'operating')
+  assert.equal(s.purchases[0].lines[0].groupId, 'grp-utilities')
+  assert.equal(s.purchases[0].payee, 'مورد')
   assert.equal(ownerDashboard(s).operating, 10000)
   assert.equal(s.documents[0].fields.lines[0].categoryId, 'cat-dates')
   assert.equal(s.documents[0].fields.categoryId, undefined)
+  assert.equal(s.documents[0].fields.payee, 'x')
 })
 
 test('استخدام الرصيد المتاح يسوّي فاتورة لاحقة دون إيراد أو تحصيل جديد، ولا يتكرر', () => {
