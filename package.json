@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "build:tatmira-preview": "node scripts/build-tatmira-preview.mjs",
     "dev:tatmira-accounts": "vite --config vite.tatmira-accounts.config.js",
     "build:tatmira-accounts": "vite build --config vite.tatmira-accounts.config.js",
     "dev": "vite",
