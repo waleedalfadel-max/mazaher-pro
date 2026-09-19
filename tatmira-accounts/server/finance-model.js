@@ -64,9 +64,10 @@ function allocations(value) {
 export function executeCommand(state, actor, input, { requestId, file, now = new Date().toISOString() }) {
   if (!canCommand(actor, input)) return { state, ...invalid('FORBIDDEN', 'لا تملك صلاحية هذا الإجراء') };
   try {
-    const action = keys(input, ['type', 'id', 'name', 'whatsapp', 'archived', 'kind', 'groupId', 'mode', 'rateBps', 'vatNumber', 'effectiveFrom', 'customerId']);
+    const action = keys(input, ['type', 'id', 'name', 'whatsapp', 'archived', 'kind', 'groupId', 'mode', 'rateBps', 'vatNumber', 'effectiveFrom', 'customerId', 'confirmDuplicate']);
     for (const key of ['id', 'name', 'whatsapp', 'groupId', 'vatNumber', 'customerId']) if (key in action && !string(action[key])) throw invalid();
     if ('archived' in action && typeof action.archived !== 'boolean') throw invalid();
+    if ('confirmDuplicate' in action && typeof action.confirmDuplicate !== 'boolean') throw invalid();
     if (action.type === 'TAX_SETTING_SAVE' && (!date(action.effectiveFrom) || !Number.isInteger(action.rateBps))) throw invalid();
     if (action.type === 'LAB_UPDATE') {
       action.patch = keys(input.patch || {}, ['name', 'city', 'phone', 'crNumber', 'customerLabel']);
@@ -111,18 +112,45 @@ export function visibleDocument(actor, doc) {
 }
 export function projectLedger(state, actor) {
   const review = allowed(actor, 'review'), reports = allowed(actor, 'view_reports');
+  const financialDetails = actor.role === 'owner' || review || reports;
   const customerAccess = review || reports || allowed(actor, 'manage_customers') || allowed(actor, 'upload_sale') || allowed(actor, 'upload_payment');
+  const documents = state.documents.filter(d => visibleDocument(actor, d)).map(d => {
+    const projectedFile = { ...keys(d.file, ['name', 'type', 'size']), documentId: d.id };
+    if (financialDetails) {
+      const { file, ...details } = d;
+      return { ...details, file: projectedFile };
+    }
+    // Upload-only employees can follow status and reopen their original file,
+    // but extracted accounting data remains private after review.
+    return {
+      ...keys(d, ['id', 'kind', 'uploadedBy', 'uploadedAt', 'status']),
+      fields: keys(d.fields || {}, ['customerId']),
+      file: projectedFile,
+    };
+  });
+  const reportAccounts = state.accounts.map(a => keys(a, ['id', 'name', 'kind', 'archived']));
+  const reportCategories = state.categories.map(c => keys(c, ['id', 'name', 'groupId', 'archived']));
+  const reportGroups = state.expenseGroups.map(g => keys(g, ['id', 'name', 'kind', 'archived']));
+  const reportTaxSettings = state.taxSettings.map(s => keys(s, ['id', 'mode', 'rateBps', 'effectiveFrom']));
   return {
     lab: state.lab,
-    documents: state.documents.filter(d => visibleDocument(actor, d)).map(({ file, ...d }) => ({ ...d, file: keys(file, ['name', 'type', 'size']) })),
-    customers: customerAccess ? state.customers.map(c => keys(c, ['id', 'name', 'whatsapp', 'archived'])) : [],
-    accounts: review || actor.role === 'owner' ? state.accounts : [],
-    categories: review || actor.role === 'owner' ? state.categories : [],
-    expenseGroups: review || actor.role === 'owner' ? state.expenseGroups : [],
-    taxSettings: review || actor.role === 'owner' ? state.taxSettings : [],
+    documents,
+    customers: customerAccess ? state.customers.map(c => keys(c, financialDetails
+      ? ['id', 'name', 'whatsapp', 'archived', 'openingBalance', 'openingDate']
+      : ['id', 'name', 'whatsapp', 'archived'])) : [],
+    accounts: review || actor.role === 'owner' ? state.accounts : reports ? reportAccounts : [],
+    categories: review || actor.role === 'owner' ? state.categories : reports ? reportCategories : [],
+    expenseGroups: review || actor.role === 'owner' ? state.expenseGroups : reports ? reportGroups : [],
+    taxSettings: review || actor.role === 'owner' ? state.taxSettings : reports ? reportTaxSettings : [],
+    ...(financialDetails ? {
+      invoices: state.invoices,
+      payments: state.payments,
+      purchases: state.purchases,
+      creditApplications: state.creditApplications || [],
+      counters: state.counters || {},
+    } : {}),
     ...(review ? { openItems: Object.fromEntries(state.customers.map(c => [c.id, openItems(state, c.id)])) } : {}),
     ...(reports ? { dashboard: ownerDashboard(state), customerBalances: state.customers.map(c => ({ id: c.id, name: c.name, ...customerSummary(state, c.id) })),
       statements: Object.fromEntries(state.customers.map(c => [c.id, statement(state, c.id)])) } : {}),
   };
 }
-

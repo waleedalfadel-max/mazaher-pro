@@ -4,16 +4,16 @@ import { DEMO_LABEL } from './ui.jsx'
 import { taxEnabled, taxModeLabel } from '../lib/tax.js'
 
 /** ملخص فاتورة للمشاركة اليدوية — يحمل دائماً «نموذج تجريبي — ليس فاتورة ضريبية» */
-const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice }, ref) {
+const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice, demo = true }, ref) {
   const taxable = taxEnabled(invoice.taxProfile)
   const totals = taxable
     ? [['الصافي', invoice.net], ['الضريبة', invoice.vat], ['الإجمالي', invoice.total]]
     : [['الإجمالي', invoice.total]]
   return (
     <div ref={ref} dir="rtl" style={{ width: 720, padding: 32, background: '#fff', color: '#1B3A5C', position: 'relative', fontFamily: 'Cairo, sans-serif' }}>
-      <div style={{ background: '#FEF3C7', color: '#92400E', border: '2px solid #F59E0B', borderRadius: 12, padding: '10px 14px', textAlign: 'center', fontWeight: 800, fontSize: 18, marginBottom: 20 }}>
+      {demo && <div style={{ background: '#FEF3C7', color: '#92400E', border: '2px solid #F59E0B', borderRadius: 12, padding: '10px 14px', textAlign: 'center', fontWeight: 800, fontSize: 18, marginBottom: 20 }}>
         {DEMO_LABEL}
-      </div>
+      </div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 800 }}>{lab.name}</div>
@@ -56,9 +56,9 @@ const InvoiceSheet = forwardRef(function InvoiceSheet({ lab, customer, invoice }
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 28, fontSize: 12, color: '#92400E', textAlign: 'center', fontWeight: 700 }}>
+      {demo && <div style={{ marginTop: 28, fontSize: 12, color: '#92400E', textAlign: 'center', fontWeight: 700 }}>
         {DEMO_LABEL} — مستند توضيحي من نموذج تحسيب التجريبي
-      </div>
+      </div>}
     </div>
   )
 })

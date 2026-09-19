@@ -14,7 +14,9 @@ const OWNER_ACTIONS = new Set([
   "set_active",
   "set_pin",
 ]);
+const MUTATION_ACTIONS = new Set(["save_employee", "set_active", "set_pin"]);
 const ACTIONS = new Set(["pin_login", "me", "logout", ...OWNER_ACTIONS]);
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 export function normalizePin(value) {
   if (typeof value !== "string") return "";
   return value
@@ -86,7 +88,7 @@ export function createHandler({
       )
         return reply(400, { error: "INVALID_REQUEST" });
       const payload = {};
-      for (const key of ["id", "name", "grants", "active"])
+      for (const key of ["id", "name", "grants", "active", "expectedVersion"])
         if (Object.hasOwn(body, key)) payload[key] = body[key];
       if (Object.hasOwn(body, "pin")) {
         payload.pin = normalizePin(body.pin);
@@ -101,6 +103,11 @@ export function createHandler({
           payload.grants.some((g) => !GRANTS.includes(g)))
       )
         return reply(400, { error: "INVALID_GRANTS" });
+      if (
+        payload.expectedVersion !== undefined &&
+        (!Number.isSafeInteger(payload.expectedVersion) || payload.expectedVersion < 1)
+      )
+        return reply(400, { error: "INVALID_REQUEST" });
       const token = request.headers
         .get("authorization")
         ?.match(/^Bearer ([^\s]+)$/i)?.[1];
@@ -119,15 +126,21 @@ export function createHandler({
           ownerId = data.user.id;
         }
       }
+      if (MUTATION_ACTIONS.has(body.action)) {
+        if (!UUID.test(body.requestId || ""))
+          return reply(400, { error: "INVALID_REQUEST" });
+        if (payload.id !== undefined && payload.expectedVersion === undefined)
+          return reply(400, { error: "INVALID_REQUEST" });
+      }
       // No caller-supplied userId, role or owner email crosses this boundary.
-      const { data, error } = await admin.rpc("tatmira_accounts", {
-        p_action: body.action,
-        p_slug: body.tenant,
-        p_owner: ownerId,
-        p_token: employeeToken,
-        p_payload: payload,
-        p_address: body.action === "pin_login" ? clientAddress(request) : "",
-      });
+      const mutation = MUTATION_ACTIONS.has(body.action);
+      const { data, error } = await admin.rpc(
+        mutation ? "tatmira_accounts_mutate" : "tatmira_accounts",
+        mutation
+          ? { p_action: body.action, p_slug: body.tenant, p_owner: ownerId, p_payload: payload, p_request_id: body.requestId }
+          : { p_action: body.action, p_slug: body.tenant, p_owner: ownerId, p_token: employeeToken, p_payload: payload,
+              p_address: body.action === "pin_login" ? clientAddress(request) : "" },
+      );
       if (error || !data) return reply(503, { error: "AUTH_UNAVAILABLE" });
       if (data.error) {
         const status =
@@ -137,6 +150,8 @@ export function createHandler({
               ? 401
               : ["OWNER_ONLY", "TENANT_UNAVAILABLE"].includes(data.error)
                 ? 403
+                : ["CONFLICT", "REQUEST_ID_REUSED"].includes(data.error)
+                  ? 409
                 : 400;
         return reply(status, { error: data.error });
       }

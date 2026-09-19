@@ -15,41 +15,60 @@ import { expenseAmounts, rateBpsToPercent, taxEnabled, taxModeLabel, taxSettingF
 
 export default function ReviewDocument() {
   const { id } = useParams()
-  const { state, dispatch, actor } = useStore()
+  const { state, dispatch, actor, remote, busy } = useStore()
   const location = useLocation()
   const [result, setResult] = useState(null)
   const [needsDupConfirm, setNeedsDupConfirm] = useState(false)
   const [dupConfirmed, setDupConfirmed] = useState(false)
+  const [remoteFields, setRemoteFields] = useState(null)
 
   useEffect(() => { setResult(null); setNeedsDupConfirm(false); setDupConfirmed(false) }, [id])
 
   const reviewer = can(actor, 'review')
+  const financialViewer = can(actor, 'viewFinancials')
   // غير المالك يرى مستنداته فقط
   const doc = documentsFor(state, actor).find(d => d.id === id)
+  useEffect(() => {
+    if (remote && doc) setRemoteFields(structuredClone(doc.fields))
+  }, [remote, doc?.id])
   if (!doc) return <Card className="p-6 text-center">المستند غير موجود — <Link to="/documents" className="underline">العودة</Link></Card>
-  if (!reviewer) return <DocumentStatus state={state} doc={doc} justUploaded={location.state?.justUploaded} />
+  if (!reviewer && !financialViewer) return <DocumentStatus state={state} doc={doc} justUploaded={location.state?.justUploaded} />
   const fromReports = location.state?.from === 'reports'
 
-  const editable = doc.status === 'pending'
-  const f = doc.fields
+  const editable = reviewer && doc.status === 'pending'
+  const f = remote ? (remoteFields || doc.fields) : doc.fields
+  const dirty = remote && JSON.stringify(f) !== JSON.stringify(doc.fields)
   const invalid = editable ? invalidInputs(doc.kind, f) : []
   const update = fields => {
+    if (remote) {
+      setRemoteFields(current => ({ ...(current || doc.fields), ...fields }))
+      if (result?.tone === 'error') setResult(null)
+      return
+    }
     const r = dispatch({ type: 'DOC_UPDATE_FIELDS', id: doc.id, fields })
     if (r.error) setResult({ tone: 'error', text: r.error })
     else if (result?.tone === 'error') setResult(null)
   }
 
-  function approve() {
-    const r = dispatch({ type: 'DOC_APPROVE', id: doc.id, confirmDuplicate: dupConfirmed })
+  async function saveFields() {
+    const r = await dispatch({ type: 'DOC_UPDATE_FIELDS', id: doc.id, fields: f })
+    if (r.error) return setResult({ tone: 'error', text: r.error })
+    setResult({ tone: 'success', text: 'حُفظت بيانات المراجعة' })
+  }
+
+  async function approve() {
+    if (dirty) return setResult({ tone: 'warning', text: 'احفظ بيانات المراجعة أولًا ثم اعتمد المستند' })
+    const r = await dispatch({ type: 'DOC_APPROVE', id: doc.id, confirmDuplicate: dupConfirmed })
     if (r.code === 'DUPLICATE_NUMBER') { setNeedsDupConfirm(true); return setResult({ tone: 'warning', text: r.error }) }
     if (r.error) return setResult({ tone: 'error', text: r.error })
     if (r.code === 'ALREADY_APPROVED') return setResult({ tone: 'info', text: 'المستند معتمد مسبقاً — لم تُنشأ حركة جديدة' })
     setResult({ tone: 'success', text: 'اعتُمد المستند' })
   }
 
-  function reject() {
+  async function reject() {
     if (!confirm('رفض المستند؟ لن يدخل في أي رقم.')) return
-    dispatch({ type: 'DOC_REJECT', id: doc.id })
+    const r = await dispatch({ type: 'DOC_REJECT', id: doc.id })
+    if (r.error) return setResult({ tone: 'error', text: r.error })
     setResult({ tone: 'info', text: 'رُفض المستند' })
   }
 
@@ -93,9 +112,11 @@ export default function ReviewDocument() {
           {editable && invalid.length > 0 && <div className="mt-3"><InvalidInputsNotice fields={invalid} /></div>}
 
           {editable && (
-            <div className="grid grid-cols-3 gap-2 mt-4">
-              <Button variant="danger" onClick={reject}>رفض</Button>
-              <Button className="col-span-2 !py-3" onClick={approve} disabled={invalid.length > 0 || (needsDupConfirm && !dupConfirmed)}>اعتماد</Button>
+            <div className={`grid ${remote ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'} gap-2 mt-4`}>
+              <Button variant="danger" disabled={busy} onClick={reject}>رفض</Button>
+              {remote && <Button variant="secondary" className="sm:col-span-1" disabled={busy || !dirty} onClick={saveFields}>حفظ البيانات</Button>}
+              <Button className={`${remote ? 'col-span-2' : 'col-span-2'} !py-3`} onClick={approve}
+                disabled={busy || dirty || invalid.length > 0 || (needsDupConfirm && !dupConfirmed)}>اعتماد</Button>
             </div>
           )}
 

@@ -8,7 +8,7 @@ import { Button, Card, DEMO_LABEL, NAVY } from './ui.jsx'
 import PeriodFilter, { ALL_TIME } from './PeriodFilter.jsx'
 
 export default function Statement({ customer }) {
-  const { state } = useStore()
+  const { state, remote } = useStore()
   const [period, setPeriod] = useState(ALL_TIME)
   const sheetRef = useRef(null)
   const [renderSheet, setRenderSheet] = useState(false)
@@ -19,7 +19,7 @@ export default function Statement({ customer }) {
     await new Promise(r => setTimeout(r, 120))
     try {
       const blob = await elementToPdfBlob(sheetRef.current)
-      downloadBlob(blob, safeFileName(`كشف-حساب-${customer.name}-نموذج-تجريبي.pdf`))
+      downloadBlob(blob, safeFileName(`كشف-حساب-${customer.name}${remote ? '' : '-نموذج-تجريبي'}.pdf`))
     } finally {
       setRenderSheet(false)
     }
@@ -38,9 +38,9 @@ export default function Statement({ customer }) {
 
       <Card className="p-3 sm:p-5 print-area">
         <div dir="rtl" className="bg-white" style={{ color: NAVY }}>
-          <div className="text-center text-sm font-extrabold rounded-xl px-3 py-2 mb-3" style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #F59E0B' }}>
+          {!remote && <div className="text-center text-sm font-extrabold rounded-xl px-3 py-2 mb-3" style={{ background: '#FEF3C7', color: '#92400E', border: '1px solid #F59E0B' }}>
             {DEMO_LABEL}
-          </div>
+          </div>}
           <div className="flex flex-wrap justify-between gap-2 mb-3">
             <div>
               <div className="text-lg font-extrabold">كشف حساب — {customer.name}</div>
@@ -102,13 +102,13 @@ export default function Statement({ customer }) {
           {st.closing < 0 && (
             <div className="text-xs mt-2 font-bold text-emerald-700">الرصيد بالسالب يعني رصيداً دائناً للعميل ({fmt(-st.closing)} ر.س)</div>
           )}
-          <div className="text-[11px] mt-3 text-center" style={{ color: '#92400E' }}>{DEMO_LABEL}</div>
+          {!remote && <div className="text-[11px] mt-3 text-center" style={{ color: '#92400E' }}>{DEMO_LABEL}</div>}
         </div>
       </Card>
 
       {renderSheet && (
         <div style={{ position: 'fixed', left: -10000, top: 0 }} aria-hidden="true">
-          <StatementSheet ref={sheetRef} lab={state.lab} st={st} periodLabel={periodLabel} hasPrior={hasPrior} from={period.from} />
+          <StatementSheet ref={sheetRef} lab={state.lab} st={st} periodLabel={periodLabel} hasPrior={hasPrior} from={period.from} demo={!remote} />
         </div>
       )}
     </div>
@@ -117,10 +117,10 @@ export default function Statement({ customer }) {
 
 const cell = { padding: '7px 8px', borderBottom: '1px solid #D4E8E6' }
 
-const StatementSheet = forwardRef(function StatementSheet({ lab, st, periodLabel, hasPrior, from }, ref) {
+const StatementSheet = forwardRef(function StatementSheet({ lab, st, periodLabel, hasPrior, from, demo = true }, ref) {
   return (
     <div ref={ref} dir="rtl" style={{ width: 760, padding: 32, background: '#fff', color: NAVY, fontFamily: 'Cairo, sans-serif' }}>
-      <div style={{ background: '#FEF3C7', color: '#92400E', border: '2px solid #F59E0B', borderRadius: 12, padding: '8px 14px', textAlign: 'center', fontWeight: 800, fontSize: 17, marginBottom: 18 }}>{DEMO_LABEL}</div>
+      {demo && <div style={{ background: '#FEF3C7', color: '#92400E', border: '2px solid #F59E0B', borderRadius: 12, padding: '8px 14px', textAlign: 'center', fontWeight: 800, fontSize: 17, marginBottom: 18 }}>{DEMO_LABEL}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800 }}>كشف حساب — {st.customer.name}</div>
@@ -162,7 +162,7 @@ const StatementSheet = forwardRef(function StatementSheet({ lab, st, periodLabel
         </tbody>
       </table>
       {st.closing < 0 && <div style={{ fontSize: 12, marginTop: 8, color: '#166534', fontWeight: 700 }}>الرصيد بالسالب يعني رصيداً دائناً للعميل</div>}
-      <div style={{ marginTop: 24, fontSize: 12, color: '#92400E', textAlign: 'center', fontWeight: 700 }}>{DEMO_LABEL} — مستند توضيحي من نموذج تحسيب التجريبي</div>
+      {demo && <div style={{ marginTop: 24, fontSize: 12, color: '#92400E', textAlign: 'center', fontWeight: 700 }}>{DEMO_LABEL} — مستند توضيحي من نموذج تحسيب التجريبي</div>}
     </div>
   )
 })

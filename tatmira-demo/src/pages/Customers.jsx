@@ -5,9 +5,12 @@ import { customerSummary } from '../lib/ledger.js'
 import { displayWhatsapp } from '../lib/whatsapp.js'
 import { Badge, Button, Card, Empty, Money, PageTitle, TextInput, NAVY } from '../components/ui.jsx'
 import CustomerForm from '../components/CustomerForm.jsx'
+import { can } from '../lib/permissions.js'
 
 export default function Customers() {
-  const { state } = useStore()
+  const { state, actor } = useStore()
+  const financials = can(actor, 'viewFinancials') || can(actor, 'review')
+  const canManage = can(actor, 'manageCustomers')
   const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [showArchived, setShowArchived] = useState(false)
@@ -18,17 +21,17 @@ export default function Customers() {
     .filter(c => {
       const term = q.trim()
       const digits = term.replace(/\D/g, '')
-      return !term || c.name.includes(term) || (digits !== '' && c.whatsapp.includes(digits))
+      return !term || c.name.includes(term) || (digits !== '' && (c.whatsapp || '').includes(digits))
     })
-    .map(c => ({ c, s: customerSummary(state, c.id) })), [state, q, showArchived])
+    .map(c => ({ c, s: financials ? customerSummary(state, c.id) : null })), [state, q, showArchived, financials])
 
   const archivedCount = state.customers.filter(c => c.archived).length
   const customerLabel = state.lab.customerLabel || 'عميل'
 
   return (
     <div>
-      <PageTitle title="العملاء" subtitle={`${customerLabel} يشتري بالآجل ويظهر له كشف حساب`}
-        action={<Button onClick={() => setAdding(true)}>+ عميل</Button>} />
+      <PageTitle title="العملاء" subtitle={financials ? `${customerLabel} يشتري بالآجل ويظهر له كشف حساب` : 'بيانات العملاء وأرقام التواصل'}
+        action={canManage ? <Button onClick={() => setAdding(true)}>+ عميل</Button> : null} />
 
       <div className="flex flex-col sm:flex-row gap-2 mb-3">
         <TextInput value={q} onChange={e => setQ(e.target.value)} placeholder="ابحث بالاسم أو الرقم" />
@@ -54,11 +57,11 @@ export default function Customers() {
                 {c.whatsapp ? <span className="num">{displayWhatsapp(c.whatsapp)}</span> : 'لا يوجد رقم واتساب'}
               </div>
             </div>
-            <div className="text-left shrink-0">
+            {financials && <div className="text-left shrink-0">
               {s.credit > 0
                 ? <><Money value={s.credit} strong className="text-emerald-700" /><div className="text-[11px] text-emerald-700">رصيد دائن</div></>
                 : <><Money value={s.balance} strong className={s.balance > 0 ? 'text-red-600' : ''} /><div className="text-[11px]" style={{ color: '#8FAAAA' }}>{s.balance > 0 ? 'مستحق' : 'لا مستحقات'}</div></>}
-            </div>
+            </div>}
             {c.archived && <Badge>مؤرشف</Badge>}
           </Link>
         ))}

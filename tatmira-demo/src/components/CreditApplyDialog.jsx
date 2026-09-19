@@ -6,7 +6,7 @@ import { Button, InvalidInputsNotice, Modal, Money, MoneyInput, Notice, NAVY } f
 
 /** تسوية فواتير العميل من رصيده الزائد — لا إيراد ولا تحصيل جديد */
 export default function CreditApplyDialog({ open, customer, onClose, onDone }) {
-  const { state, dispatch } = useStore()
+  const { state, dispatch, busy } = useStore()
   const [allocations, setAllocations] = useState([])
   const [opId, setOpId] = useState('')
   const [error, setError] = useState('')
@@ -31,9 +31,9 @@ export default function CreditApplyDialog({ open, customer, onClose, onDone }) {
     setAllocations(keep ? [...rest, { target, amount }] : rest)
   }
 
-  function confirm() {
+  async function confirm() {
     if (hasInvalid) return setError(invalidMessage(['مبالغ التسوية']))
-    const r = dispatch({ type: 'CREDIT_APPLY', id: opId, customerId: customer.id, allocations })
+    const r = await dispatch({ type: 'CREDIT_APPLY', id: opId, customerId: customer.id, allocations })
     if (r.error) return setError(r.error)
     onDone?.(r.code === 'ALREADY_APPLIED' ? 'التسوية منفذة مسبقاً — لم تتكرر' : 'تمت التسوية من الرصيد المتاح')
     onClose()
@@ -43,7 +43,7 @@ export default function CreditApplyDialog({ open, customer, onClose, onDone }) {
     <Modal open={open} onClose={onClose} title="استخدام الرصيد المتاح"
       footer={<>
         <Button variant="secondary" onClick={onClose}>إلغاء</Button>
-        <Button onClick={confirm} disabled={hasInvalid || total <= 0 || total > available}>تأكيد التسوية</Button>
+        <Button onClick={confirm} disabled={busy || hasInvalid || total <= 0 || total > available}>{busy ? 'جارٍ التنفيذ…' : 'تأكيد التسوية'}</Button>
       </>}>
       <div className="space-y-3">
         <div className="flex items-center justify-between rounded-xl p-3" style={{ background: '#F0FDF4' }}>

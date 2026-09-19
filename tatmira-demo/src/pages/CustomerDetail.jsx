@@ -9,13 +9,14 @@ import CreditApplyDialog from '../components/CreditApplyDialog.jsx'
 import InvoiceActions from '../components/InvoiceActions.jsx'
 import Statement from '../components/Statement.jsx'
 import { taxEnabled } from '../lib/tax.js'
+import { can } from '../lib/permissions.js'
 
 const TABS = [['invoices', 'الفواتير'], ['payments', 'الدفعات'], ['statement', 'كشف الحساب']]
 
 export default function CustomerDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { state, dispatch } = useStore()
+  const { state, dispatch, actor, remote, busy } = useStore()
   const [tab, setTab] = useState('invoices')
   const [editing, setEditing] = useState(false)
   const [message, setMessage] = useState(null)
@@ -35,23 +36,43 @@ export default function CustomerDetail() {
     return <Card className="p-6 text-center">العميل غير موجود — <Link to="/customers" className="underline">العودة للعملاء</Link></Card>
   }
 
-  const canDelete = !hasMovements(state, customer.id)
+  const canManage = can(actor, 'manageCustomers')
+  const financials = can(actor, 'viewFinancials') || can(actor, 'review')
+  const canDelete = !remote && !hasMovements(state, customer.id)
   const credit = availableCredit(state, customer.id)
   const hasOpen = openItems(state, customer.id).length > 0
   const accountName = accId => state.accounts.find(a => a.id === accId)?.name || '—'
   const targetLabel = t => t === OPENING ? 'رصيد افتتاحي' : `فاتورة ${state.invoices.find(i => i.id === t)?.number || ''}`
 
-  function toggleArchive() {
-    const r = dispatch({ type: 'CUSTOMER_ARCHIVE', id: customer.id, archived: !customer.archived })
+  async function toggleArchive() {
+    const r = await dispatch({ type: 'CUSTOMER_ARCHIVE', id: customer.id, archived: !customer.archived })
     setMessage(r.error ? { tone: 'error', text: r.error } : { tone: 'success', text: customer.archived ? 'أُعيد العميل للنشطين' : 'أُرشف العميل — تبقى حركاته محفوظة' })
   }
 
-  function remove() {
+  async function remove() {
     if (!confirm(`حذف ${customer.name}؟`)) return
-    const r = dispatch({ type: 'CUSTOMER_DELETE', id: customer.id })
+    const r = await dispatch({ type: 'CUSTOMER_DELETE', id: customer.id })
     if (r.error) return setMessage({ tone: 'error', text: r.error })
     navigate('/customers')
   }
+
+  if (!financials) return (
+    <div>
+      <Link to="/customers" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ العملاء</Link>
+      <Card className="p-4 mt-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-extrabold flex items-center gap-2" style={{ color: NAVY }}>{customer.name} {customer.archived && <Badge>مؤرشف</Badge>}</h1>
+            <div className="text-sm mt-1" style={{ color: '#5A7A8A' }}>واتساب: {customer.whatsapp ? <span className="num">{displayWhatsapp(customer.whatsapp)}</span> : 'غير مسجّل'}</div>
+          </div>
+          {canManage && <div className="flex gap-1.5"><Button variant="secondary" disabled={busy} onClick={() => setEditing(true)}>✏️ تعديل</Button><Button variant="secondary" disabled={busy} onClick={toggleArchive}>{customer.archived ? 'إلغاء الأرشفة' : 'أرشفة'}</Button></div>}
+        </div>
+        <div className="text-xs mt-4" style={{ color: '#8FAAAA' }}>صلاحية هذا الحساب تتيح إدارة بيانات العملاء فقط؛ الأرصدة والتقارير المالية غير متاحة.</div>
+      </Card>
+      {message && <Notice tone={message.tone} className="mt-3">{message.text}</Notice>}
+      <CustomerForm open={editing} customer={customer} onClose={() => setEditing(false)} />
+    </div>
+  )
 
   return (
     <div>
@@ -69,8 +90,8 @@ export default function CustomerDetail() {
               </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              <Button variant="secondary" className="!py-2" onClick={() => setEditing(true)}>✏️ تعديل</Button>
-              <Button variant="secondary" className="!py-2" onClick={toggleArchive}>{customer.archived ? 'إلغاء الأرشفة' : 'أرشفة'}</Button>
+              {canManage && <Button variant="secondary" className="!py-2" disabled={busy} onClick={() => setEditing(true)}>✏️ تعديل</Button>}
+              {canManage && <Button variant="secondary" className="!py-2" disabled={busy} onClick={toggleArchive}>{customer.archived ? 'إلغاء الأرشفة' : 'أرشفة'}</Button>}
               {canDelete && <Button variant="danger" className="!py-2" onClick={remove}>حذف</Button>}
             </div>
           </div>
@@ -91,16 +112,16 @@ export default function CustomerDetail() {
           </div>
           {summary.opening > 0 && (
             <div className="text-[11px] mt-2" style={{ color: '#92400E' }}>
-              يشمل رصيداً افتتاحياً تجريبياً <Money value={summary.opening} /> بتاريخ <span className="num">{customer.openingDate}</span> — ليس مبيعات
+              يشمل رصيداً افتتاحياً{remote ? '' : ' تجريبياً'} <Money value={summary.opening} /> بتاريخ <span className="num">{customer.openingDate}</span> — ليس مبيعات
             </div>
           )}
           {credit > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 mt-3 rounded-xl p-2.5" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
               <div className="text-xs font-bold text-emerald-800">رصيد متاح من دفعات زائدة: <Money value={credit} strong /></div>
-              {hasOpen && <Button className="!py-1.5 !text-xs" onClick={() => setApplyingCredit(true)}>استخدام الرصيد المتاح</Button>}
+              {hasOpen && can(actor, 'review') && <Button className="!py-1.5 !text-xs" onClick={() => setApplyingCredit(true)}>استخدام الرصيد المتاح</Button>}
             </div>
           )}
-          {!canDelete && <div className="text-[11px] mt-1" style={{ color: '#8FAAAA' }}>لا يمكن حذف عميل لديه حركات — يمكن أرشفته</div>}
+          {!remote && !canDelete && <div className="text-[11px] mt-1" style={{ color: '#8FAAAA' }}>لا يمكن حذف عميل لديه حركات — يمكن أرشفته</div>}
         </Card>
 
         {message && <Notice tone={message.tone} className="mb-3">{message.text}</Notice>}

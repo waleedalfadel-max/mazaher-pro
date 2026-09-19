@@ -34,6 +34,26 @@ export function actorOf(state, actorId) {
 
 export const isOwner = emp => emp?.role === 'owner'
 
+const GRANT_FOR_CAPABILITY = {
+  review: 'review',
+  viewFinancials: 'view_reports',
+  manageCustomers: 'manage_customers',
+}
+
+/**
+ * A short role label for the shared application.  Employee roles are not a
+ * second authorization system: the label is derived only from the grants
+ * returned by the server.
+ */
+export function actorRoleLabel(emp) {
+  if (isOwner(emp)) return 'المالك'
+  if (emp?.grants?.includes('review')) return 'المحاسب'
+  if (emp?.grants?.includes('view_reports') || emp?.grants?.includes('manage_customers')) return 'المدير'
+  if (emp?.grants?.includes('upload_expense')) return 'مسؤول المشتريات'
+  if (emp?.grants?.some(g => ['upload_sale', 'upload_payment'].includes(g))) return 'مندوب المبيعات'
+  return 'موظف'
+}
+
 /**
  * القدرات:
  * - upload(kind): رفع نوع مستند محدد
@@ -45,7 +65,14 @@ export const isOwner = emp => emp?.role === 'owner'
 export function can(emp, capability, arg) {
   if (!emp || !emp.active) return false
   if (capability === 'ownDocuments') return true
-  if (capability === 'upload') return (emp.docKinds || []).includes(arg)
+  if (capability === 'upload') {
+    if (isOwner(emp)) return true
+    const remoteGrant = { sale: 'upload_sale', payment: 'upload_payment', purchase: 'upload_expense' }[arg]
+    return remoteGrant && Array.isArray(emp.grants) ? emp.grants.includes(remoteGrant) : (emp.docKinds || []).includes(arg)
+  }
+  if (capability === 'manageSettings' || capability === 'manageEmployees') return isOwner(emp)
+  const grant = GRANT_FOR_CAPABILITY[capability]
+  if (grant) return isOwner(emp) || !!emp.grants?.includes(grant)
   return isOwner(emp)
 }
 
@@ -77,6 +104,6 @@ export function authorize(state, action) {
 /** المستندات التي يراها الموظف: المالك يرى الكل، وغيره مستنداته فقط */
 export function documentsFor(state, emp) {
   if (!emp || !emp.active) return []
-  if (isOwner(emp)) return state.documents
+  if (isOwner(emp) || can(emp, 'review') || can(emp, 'viewFinancials')) return state.documents
   return state.documents.filter(d => d.uploadedBy === emp.id)
 }

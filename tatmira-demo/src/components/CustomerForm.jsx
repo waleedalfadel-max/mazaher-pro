@@ -6,7 +6,7 @@ import { Button, Field, Modal, Notice, TextInput } from './ui.jsx'
 
 /** إضافة عميل أو تعديل اسمه ورقم واتسابه */
 export default function CustomerForm({ open, customer, onClose, onSaved }) {
-  const { state, dispatch } = useStore()
+  const { state, dispatch, busy: storeBusy } = useStore()
   const [name, setName] = useState('')
   const [whatsapp, setWhatsapp] = useState('')
   const [error, setError] = useState('')
@@ -18,25 +18,30 @@ export default function CustomerForm({ open, customer, onClose, onSaved }) {
     setWhatsapp(customer?.whatsapp ? displayWhatsapp(customer.whatsapp) : '')
     setError('')
     setDraftId(newId('cust'))
-  }, [open, customer])
+  }, [open, customer?.id])
 
   const normalized = normalizeWhatsapp(whatsapp)
   const customerLabel = state.lab.customerLabel || 'عميل'
 
-  function save() {
-    const r = customer
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    if (saving) return
+    setSaving(true)
+    const r = await (customer
       ? dispatch({ type: 'CUSTOMER_UPDATE', id: customer.id, name, whatsapp })
-      : dispatch({ type: 'CUSTOMER_ADD', id: draftId, name, whatsapp })
+      : dispatch({ type: 'CUSTOMER_ADD', id: draftId, name, whatsapp }))
+    setSaving(false)
     if (r.error) return setError(r.error)
-    onSaved?.(customer?.id || draftId)
+    onSaved?.(customer?.id || r.documentId || draftId)
     onClose()
   }
 
   return (
     <Modal open={open} onClose={onClose} title={customer ? 'تعديل بيانات العميل' : 'إضافة عميل'}
       footer={<>
-        <Button variant="secondary" onClick={onClose}>إلغاء</Button>
-        <Button onClick={save}>حفظ</Button>
+        <Button variant="secondary" disabled={saving} onClick={onClose}>إلغاء</Button>
+        <Button disabled={saving || storeBusy || !name.trim() || normalized === null} onClick={save}>{saving ? 'جارٍ الحفظ…' : 'حفظ'}</Button>
       </>}>
       <div className="space-y-3">
         <Field label={`اسم ${customerLabel}`}>

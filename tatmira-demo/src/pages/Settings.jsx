@@ -25,18 +25,21 @@ function Section({ title, subtitle, children, action }) {
 }
 
 function LabInfo() {
-  const { state, dispatch } = useStore()
+  const { state, dispatch, busy } = useStore()
   const [lab, setLab] = useState(state.lab)
   const [saved, setSaved] = useState(false)
-  useEffect(() => setLab(state.lab), [state.lab])
-  const set = (k, v) => { setLab(l => ({ ...l, [k]: v })); setSaved(false) }
-  function save() {
+  const [dirty, setDirty] = useState(false)
+  useEffect(() => { if (!dirty) setLab(state.lab) }, [state.lab, dirty])
+  const set = (k, v) => { setLab(l => ({ ...l, [k]: v })); setSaved(false); setDirty(true) }
+  async function save() {
     if (!lab.name.trim()) return
-    dispatch({ type: 'LAB_UPDATE', patch: {
+    const r = await dispatch({ type: 'LAB_UPDATE', patch: {
       ...lab,
       name: lab.name.trim(),
       customerLabel: String(lab.customerLabel || '').trim() || 'عميل',
     } })
+    if (r.error) return
+    setDirty(false)
     setSaved(true)
   }
   return (
@@ -49,7 +52,7 @@ function LabInfo() {
         <Field label="مسمى العميل" hint="مثال: نقطة بيع، عميل، موزع"><TextInput value={lab.customerLabel || ''} onChange={e => set('customerLabel', e.target.value)} /></Field>
       </div>
       <div className="flex items-center gap-2 mt-3">
-        <Button onClick={save} disabled={!lab.name.trim()}>حفظ</Button>
+        <Button onClick={save} disabled={busy || !lab.name.trim()}>حفظ</Button>
         {saved && <span className="text-sm text-emerald-700 font-bold">حُفظ</span>}
       </div>
     </Section>
@@ -57,7 +60,7 @@ function LabInfo() {
 }
 
 function TaxSettingsSection() {
-  const { state, dispatch } = useStore()
+  const { state, dispatch, remote, busy } = useStore()
   const today = todayISO()
   const current = taxSettingForDate(state, today)
   const [draft, setDraft] = useState(() => ({
@@ -69,10 +72,10 @@ function TaxSettingsSection() {
   const [result, setResult] = useState(null)
   const enabled = draft.mode !== 'disabled'
 
-  function save() {
+  async function save() {
     const rateBps = ratePercentToBps(draft.rate)
     if (enabled && Number.isNaN(rateBps)) return setResult({ tone: 'error', text: 'راجع نسبة الضريبة' })
-    const r = dispatch({
+    const r = await dispatch({
       type: 'TAX_SETTING_SAVE', id: newId('tax'), mode: draft.mode,
       rateBps: enabled ? rateBps : (Number.isNaN(rateBps) ? current.rateBps : rateBps),
       vatNumber: draft.vatNumber, effectiveFrom: draft.effectiveFrom,
@@ -108,7 +111,7 @@ function TaxSettingsSection() {
           <Field label="نسبة الضريبة %" error={Number.isNaN(ratePercentToBps(draft.rate)) ? 'نسبة غير صحيحة' : ''}>
             <TextInput value={draft.rate} onChange={e => setDraft(d => ({ ...d, rate: e.target.value }))} inputMode="decimal" dir="ltr" className="text-left" placeholder="15" />
           </Field>
-          <Field label="الرقم الضريبي" hint="اختياري في النموذج التجريبي">
+          <Field label="الرقم الضريبي" hint={remote ? 'اختياري' : 'اختياري في النموذج التجريبي'}>
             <TextInput value={draft.vatNumber} onChange={e => setDraft(d => ({ ...d, vatNumber: e.target.value }))} inputMode="numeric" dir="ltr" className="text-left" />
           </Field>
         </div>
@@ -117,7 +120,7 @@ function TaxSettingsSection() {
         <Field label="يبدأ التطبيق على المستندات بتاريخ" hint="المستندات المعتمدة سابقاً لا تتغير">
           <TextInput type="date" value={draft.effectiveFrom} onChange={e => setDraft(d => ({ ...d, effectiveFrom: e.target.value }))} />
         </Field>
-        <Button onClick={save} disabled={!draft.effectiveFrom || (enabled && Number.isNaN(ratePercentToBps(draft.rate)))}>حفظ إعداد الضريبة</Button>
+        <Button onClick={save} disabled={busy || !draft.effectiveFrom || (enabled && Number.isNaN(ratePercentToBps(draft.rate)))}>حفظ إعداد الضريبة</Button>
       </div>
       {result && <Notice tone={result.tone} className="mt-3">{result.text}</Notice>}
 
@@ -163,13 +166,13 @@ function CustomersSection() {
 
 /** قائمة عناصر بنوعين قابلة للإضافة والتعديل والأرشفة */
 function EditableList({ title, subtitle, items, kinds, saveType, archiveType, idPrefix }) {
-  const { dispatch } = useStore()
+  const { dispatch, busy } = useStore()
   const [draft, setDraft] = useState(null)
   const [error, setError] = useState('')
   const [showArchived, setShowArchived] = useState(false)
 
-  function save() {
-    const r = dispatch({ type: saveType, ...draft })
+  async function save() {
+    const r = await dispatch({ type: saveType, ...draft })
     if (r.error) return setError(r.error)
     setDraft(null)
     setError('')
@@ -189,7 +192,7 @@ function EditableList({ title, subtitle, items, kinds, saveType, archiveType, id
           </div>
           {error && <Notice tone="error">{error}</Notice>}
           <div className="flex gap-2">
-            <Button onClick={save} className="!py-1.5">حفظ</Button>
+            <Button onClick={save} disabled={busy} className="!py-1.5">حفظ</Button>
             <Button variant="secondary" onClick={() => setDraft(null)} className="!py-1.5">إلغاء</Button>
           </div>
         </div>
@@ -223,7 +226,7 @@ function EditableList({ title, subtitle, items, kinds, saveType, archiveType, id
 
 /** مجموعات المصروفات وتصنيفاتها الفرعية — تُستخدم في مستند المصروفات والتقارير */
 function ExpenseGroupsSection() {
-  const { state, dispatch } = useStore()
+  const { state, dispatch, busy } = useStore()
   const [groupDraft, setGroupDraft] = useState(null)
   const [catDraft, setCatDraft] = useState(null)
   const [error, setError] = useState('')
@@ -234,13 +237,13 @@ function ExpenseGroupsSection() {
   const groups = state.expenseGroups.filter(g => showArchived || !g.archived)
   const activeGroups = state.expenseGroups.filter(g => !g.archived)
 
-  function saveGroup() {
-    const r = dispatch({ type: 'GROUP_SAVE', ...groupDraft })
+  async function saveGroup() {
+    const r = await dispatch({ type: 'GROUP_SAVE', ...groupDraft })
     if (r.error) return setError(r.error)
     setGroupDraft(null)
   }
-  function saveCategory() {
-    const r = dispatch({ type: 'CATEGORY_SAVE', ...catDraft })
+  async function saveCategory() {
+    const r = await dispatch({ type: 'CATEGORY_SAVE', ...catDraft })
     if (r.error) return setError(r.error)
     setOpen(prev => new Set(prev).add(catDraft.groupId))
     setCatDraft(null)
@@ -296,7 +299,7 @@ function ExpenseGroupsSection() {
       )}
 
       <Modal open={!!groupDraft} onClose={() => setGroupDraft(null)} title={original ? 'تعديل مجموعة' : 'إضافة مجموعة'}
-        footer={<><Button variant="secondary" onClick={() => setGroupDraft(null)}>إلغاء</Button><Button onClick={saveGroup}>حفظ</Button></>}>
+        footer={<><Button variant="secondary" disabled={busy} onClick={() => setGroupDraft(null)}>إلغاء</Button><Button disabled={busy} onClick={saveGroup}>حفظ</Button></>}>
         {groupDraft && (
           <div className="space-y-3">
             <Field label="اسم المجموعة"><TextInput value={groupDraft.name} onChange={e => setGroupDraft({ ...groupDraft, name: e.target.value })} placeholder="مثال: التسويق" autoFocus /></Field>
@@ -313,7 +316,7 @@ function ExpenseGroupsSection() {
       </Modal>
 
       <Modal open={!!catDraft} onClose={() => setCatDraft(null)} title={originalCat ? 'تعديل تصنيف' : 'إضافة تصنيف'}
-        footer={<><Button variant="secondary" onClick={() => setCatDraft(null)}>إلغاء</Button><Button onClick={saveCategory}>حفظ</Button></>}>
+        footer={<><Button variant="secondary" disabled={busy} onClick={() => setCatDraft(null)}>إلغاء</Button><Button disabled={busy} onClick={saveCategory}>حفظ</Button></>}>
         {catDraft && (
           <div className="space-y-3">
             <Field label="اسم التصنيف"><TextInput value={catDraft.name} onChange={e => setCatDraft({ ...catDraft, name: e.target.value })} placeholder="مثال: إعلانات" autoFocus /></Field>
@@ -332,14 +335,14 @@ function ExpenseGroupsSection() {
 }
 
 function EmployeesCard() {
-  const { state } = useStore()
+  const { state, remote } = useStore()
   const active = state.employees.filter(e => e.active)
   return (
-    <Section title="الموظفون والصلاحيات" subtitle="إضافة موظف وتحديد ما يرفعه وتعطيله — محاكاة بلا تسجيل دخول"
+    <Section title="الموظفون والصلاحيات" subtitle={remote ? 'حسابات فعلية برمز دخول وصلاحيات يفرضها الخادم' : 'إضافة موظف وتحديد ما يرفعه وتعطيله — محاكاة بلا تسجيل دخول'}
       action={<Link to="/settings/employees"><Button className="!py-1.5 !text-xs">إدارة</Button></Link>}>
       <div className="flex flex-wrap gap-1.5">
         {state.employees.map(e => (
-          <Badge key={e.id} tone={e.active ? 'neutral' : 'rejected'}>{e.name} — {ROLES[e.role]?.label}{e.active ? '' : ' (معطّل)'}</Badge>
+          <Badge key={e.id} tone={e.active ? 'neutral' : 'rejected'}>{e.name}{ROLES[e.role]?.label ? ` — ${ROLES[e.role].label}` : ''}{e.active ? '' : ' (معطّل)'}</Badge>
         ))}
       </div>
       <div className="text-[11px] mt-2" style={{ color: '#8FAAAA' }}>{active.length} موظف نشط</div>
@@ -348,7 +351,7 @@ function EmployeesCard() {
 }
 
 export default function Settings() {
-  const { state, reset } = useStore()
+  const { state, reset, remote } = useStore()
   const [resetDone, setResetDone] = useState(false)
 
   async function doReset() {
@@ -368,10 +371,10 @@ export default function Settings() {
         items={state.accounts} kinds={[['cash', 'نقد'], ['bank', 'بنك']]} saveType="ACCOUNT_SAVE" archiveType="ACCOUNT_ARCHIVE" idPrefix="acc" />
       <ExpenseGroupsSection />
 
-      <Section title="بيانات النموذج" subtitle="البيانات محفوظة في متصفح هذا الجهاز فقط">
+      {!remote && <Section title="بيانات النموذج" subtitle="البيانات محفوظة في متصفح هذا الجهاز فقط">
         <Button variant="danger" onClick={doReset}>إعادة ضبط النموذج</Button>
         {resetDone && <Notice tone="success" className="mt-2">أُعيد النموذج لبياناته التجريبية الأولى</Notice>}
-      </Section>
+      </Section>}
     </div>
   )
 }

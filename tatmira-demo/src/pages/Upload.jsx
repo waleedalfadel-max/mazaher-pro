@@ -11,10 +11,10 @@ const OPTIONS = [
   { kind: 'payment',  icon: '💸', label: DOC_KINDS.payment,         hint: label => `إيصال تحويل أو سند قبض من ${label}` },
   { kind: 'purchase', icon: '📑', label: 'إضافة مستند مصروفات',    hint: 'مشتريات، إيجار، رواتب، كهرباء، صيانة وغيرها' },
 ]
-const MAX_BYTES = 15 * 1024 * 1024
+const MAX_BYTES = 5 * 1024 * 1024
 
 export default function Upload() {
-  const { state, dispatch, actor } = useStore()
+  const { state, dispatch, actor, remote, uploadDocument, busy } = useStore()
   const navigate = useNavigate()
   const inputRef = useRef(null)
   const customerLabel = state.lab.customerLabel || 'عميل'
@@ -38,15 +38,15 @@ export default function Upload() {
 
   const needsCustomer = kind === 'sale' || kind === 'payment'
   // الموظف المحدود لا يعدّل المستند بعد رفعه، فاختيار العميل إلزامي عنده
-  const customerRequired = needsCustomer && !owner
+  const customerRequired = needsCustomer && (remote || !owner)
 
   function pick(e) {
     const f = e.target.files?.[0]
     e.target.value = ''
     if (!f) return
-    const ok = f.type.startsWith('image/') || f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
-    if (!ok) return setError('اختر صورة أو ملف PDF')
-    if (f.size > MAX_BYTES) return setError('الملف أكبر من 15 ميجابايت')
+    const ok = ['image/jpeg', 'image/png', 'application/pdf'].includes(f.type) || /\.pdf$/i.test(f.name)
+    if (!ok) return setError('اختر ملف PDF أو صورة JPG أو PNG')
+    if (f.size > MAX_BYTES) return setError('الملف أكبر من 5 ميجابايت')
     setError('')
     setFile(f)
   }
@@ -55,15 +55,20 @@ export default function Upload() {
     if (!kind) return setError('اختر نوع المستند')
     if (!file) return setError('اختر الملف')
     if (customerRequired && !customerId) return setError('اختر العميل')
-    const fileId = `file-${draftId.current}`
-    await putFile(fileId, file)
-    const r = dispatch({
-      type: 'DOC_ADD', id: draftId.current, kind,
-      file: { id: fileId, name: file.name, type: file.type || 'application/pdf', size: file.size },
-      fields: needsCustomer && customerId ? { customerId } : {},
-    })
+    let r
+    if (remote) {
+      r = await uploadDocument(kind, customerId, file)
+    } else {
+      const fileId = `file-${draftId.current}`
+      await putFile(fileId, file)
+      r = dispatch({
+        type: 'DOC_ADD', id: draftId.current, kind,
+        file: { id: fileId, name: file.name, type: file.type || 'application/pdf', size: file.size },
+        fields: needsCustomer && customerId ? { customerId } : {},
+      })
+    }
     if (r.error) return setError(r.error)
-    navigate(`/documents/${draftId.current}`, { state: { justUploaded: true } })
+    navigate(`/documents/${r.documentId || draftId.current}`, { state: { justUploaded: true } })
   }
 
   const isPdf = file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name))
@@ -102,7 +107,7 @@ export default function Upload() {
           </Field>
         )}
 
-        <input ref={inputRef} type="file" accept="image/*,application/pdf,.pdf" className="hidden" onChange={pick} />
+        <input ref={inputRef} type="file" accept="image/jpeg,image/png,application/pdf,.pdf" className="hidden" onChange={pick} />
         {!file ? (
           <button onClick={() => inputRef.current?.click()} className="w-full py-10 rounded-2xl border-2 border-dashed text-center"
             style={{ borderColor: '#D4E8E6', color: '#5A7A8A' }}>
@@ -125,12 +130,14 @@ export default function Upload() {
         )}
 
         <Notice tone="info" className="mt-3">
-          في هذا النموذج لا يُرسل الملف لأي خادم ولا يقرؤه الذكاء الاصطناعي. ستظهر بيانات تجريبية ثابتة، ويبقى المستند بانتظار مراجعة المالك.
+          {remote
+            ? 'يُحفظ الملف في مساحة المنشأة الخاصة ويبقى بانتظار المراجعة والاعتماد. لا يؤثر في الأرقام قبل اعتماده.'
+            : 'في هذا النموذج لا يُرسل الملف لأي خادم ولا يقرؤه الذكاء الاصطناعي. ستظهر بيانات تجريبية ثابتة، ويبقى المستند بانتظار مراجعة المالك.'}
         </Notice>
         {error && <Notice tone="error" className="mt-3">{error}</Notice>}
 
-        <Button className="w-full mt-3 !py-3" onClick={save} disabled={!kind || !file || (customerRequired && !customerId)}>
-          {owner ? 'حفظ ومتابعة للمراجعة' : 'إرسال للمراجعة'}
+        <Button className="w-full mt-3 !py-3" onClick={save} disabled={busy || !kind || !file || (customerRequired && !customerId)}>
+          {busy ? 'جارٍ الرفع…' : owner ? 'حفظ ومتابعة للمراجعة' : 'إرسال للمراجعة'}
         </Button>
       </Card>
     </div>

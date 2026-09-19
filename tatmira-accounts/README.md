@@ -1,6 +1,6 @@
 # Tatmira authenticated shared workspace
 
-This is the isolated Tatmira preview at `/accounts/`. It combines owner/employee accounts with a shared server-side financial workspace. It does not modify or replace the existing Tahseeb production application or its public financial tables.
+This is the isolated Tatmira preview served at the site root. It combines owner/employee accounts with a shared server-side financial workspace. It does not modify or replace the existing Tahseeb production application or its public financial tables.
 
 ## Implemented
 
@@ -20,11 +20,12 @@ This is the isolated Tatmira preview at `/accounts/`. It combines owner/employee
 
 ## Files and deployment
 
-1. Apply the three Tatmira migrations in order: `tatmira_accounts`, `tatmira_owner_provisioning`, then `tatmira_shared_finance`. They create only isolated private Tatmira tables, service-only RPCs and the private Tatmira documents bucket. Existing public financial tables remain untouched.
-2. Deploy `server/index.ts` and `server/handler.js` as the `tatmira-accounts` Supabase Edge Function. `verify_jwt=false` is required for PIN sign-in and custom tokens: the function implements its own authentication for every authenticated operation. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are Edge runtime secrets only.
-3. Deploy `server/finance-index.ts`, `server/finance-handler.js`, `server/finance-model.js` and its explicitly imported calculation modules as the `tatmira-finance` Edge Function. It also uses `verify_jwt=false` because employee bearer tokens are custom credentials, and it authenticates every request itself.
-4. `TATMIRA_ACCOUNT_ORIGINS` is a comma-separated exact-origin allowlist shared by both functions. It defaults only to `https://tatmira-preview.vercel.app`. CORS is not the authentication mechanism. Do not add wildcard origins.
-5. Build the portal with the **public** environment values below. Never use a service-role or secret key in the frontend.
+1. Apply the four Tatmira migrations in order: `20260918114709_tatmira_accounts.sql`, `20260918115721_tatmira_owner_provisioning.sql`, `20260918150034_tatmira_shared_finance.sql`, then `20260919090000_tatmira_account_mutations.sql`. They create only isolated private Tatmira tables, service-only RPCs and the private Tatmira documents bucket. Existing public financial tables remain untouched.
+2. Apply `20260919090000_tatmira_account_mutations.sql` before deploying either updated Edge Function. It adds version-checked, idempotent employee mutations without modifying the applied v1 migration.
+3. Deploy `server/index.ts` and `server/handler.js` as the `tatmira-accounts` Supabase Edge Function. `verify_jwt=false` is required for PIN sign-in and custom tokens: the function implements its own authentication for every authenticated operation. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are Edge runtime secrets only.
+4. Deploy `server/finance-index.ts`, `server/finance-handler.js`, `server/finance-model.js` and its explicitly imported calculation modules as the `tatmira-finance` Edge Function. It also uses `verify_jwt=false` because employee bearer tokens are custom credentials, and it authenticates every request itself.
+5. `TATMIRA_ACCOUNT_ORIGINS` is a comma-separated exact-origin allowlist shared by both functions. It defaults only to `https://tatmira-preview.vercel.app`. CORS is not the authentication mechanism. Do not add wildcard origins.
+6. Build the portal with the **public** environment values below. Never use a service-role or secret key in the frontend.
 
 ```text
 TATMIRA_PUBLIC_SUPABASE_URL=<selected project API URL>
@@ -34,13 +35,12 @@ TATMIRA_PUBLIC_TENANT=tatmira
 
 ```sh
 npm ci
-npm run build:tatmira
 npm test
-npm run build:tatmira-accounts
+npm run build:tatmira-preview
 npm run build
 ```
 
-`build:tatmira-preview` produces `dist-tatmira-preview`: `/accounts/` is the authenticated shared workspace and `/demo/` preserves the isolated offline prototype. Deploy this directory only to the separate `tatmira-preview` project, keep the noindex header, and do not deploy it to the live Tahseeb project.
+`build:tatmira-preview` produces `dist-tatmira-preview`: `/` is the authenticated integrated workspace, `/demo/` preserves the isolated offline prototype, and `/accounts/` is only a compatibility rewrite to the root app. Deploy this directory only to the separate `tatmira-preview` project, keep the noindex header, and do not deploy it to the live Tahseeb project.
 
 ## Owner setup
 
@@ -56,18 +56,18 @@ TATMIRA_SLUG=tatmira
 TATMIRA_NAME=<organization display name>
 ```
 
-The script checks Auth privately, then calls the service-only provisioning RPC. It will not create a password, change an existing user's password, transfer an existing organization or expose user records. Keep email/password login enabled. For future invite/recovery links, add the exact accounts page to Auth's permitted redirects without changing the existing application's Site URL. Recovery UI exists, but no invite/recovery message has been sent or tested end to end.
+The script checks Auth privately, then calls the service-only provisioning RPC. It will not create a password, change an existing user's password, transfer an existing organization or expose user records. Keep email/password login enabled. For future invite/recovery links, add the exact integrated root application URL to Auth's permitted redirects without changing the existing application's Site URL. Recovery UI exists, but no invite/recovery message has been sent or tested end to end.
 
 ## Verification record
 
-- 101 Node tests pass, including account gateway, authorization matrix, complete sale/collection/expense cycle, conflict/idempotency behavior, private attachment handling and migration guard tests. Main app, demo and accounts builds pass.
+- 114 Node tests pass, including account gateway, authorization matrix, complete sale/collection/expense cycle, conflict/idempotency behavior, private attachment handling and migration guard tests. Main app, demo and integrated preview builds pass.
 - `acceptance.sql` tests actual SQL with generated disposable PINs/tokens and rolls back the entire fixture. It covers owner scope, employee escalation, cross-tenant reads/mutations, duplicate PIN, hash storage, login, reset/disable/reactivation, permission changes, logout and both tenant rate limits.
 - This SQL suite passed in an isolated PGlite PostgreSQL database with pgcrypto and a minimal synthetic Auth schema. No real owner or production data was used. It is not a full Supabase Auth end-to-end test or a concurrent load test.
 - Running this write-and-rollback fixture through the live SQL connector was rejected because that connector uses a read-only transaction; no live fixture was created.
-- Supabase's RLS-without-policies notices for the five private tables are intentional: all browser access is denied; only the server role accesses them. See [Supabase's explanation](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy).
+- Supabase's RLS-without-policies notices for the private Tatmira tables are intentional: all browser access is denied; only the server role accesses them. See [Supabase's explanation](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy).
 - Browser visual testing remains outstanding: the available remote browser could not reach the local dev server.
 
-Before activation, test on the deployed accounts page: owner login; one sale upload; one collection; one expense upload; accountant review/approval; report totals; denied cross-role actions; then reset/disable one disposable employee and verify the next request is rejected. Never enter real credentials into automation logs.
+Before activation, test on the deployed root application: owner login; one sale upload; one collection; one expense upload; accountant review/approval; report totals; denied cross-role actions; then reset/disable one disposable employee and verify the next request is rejected. Never enter real credentials into automation logs.
 
 ## Preview limits
 

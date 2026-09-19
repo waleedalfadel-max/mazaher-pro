@@ -4,7 +4,7 @@ import { downloadBlob } from '../lib/files.js'
 import { Button } from './ui.jsx'
 
 export default function FilePreview({ file, compact }) {
-  const { url, blob, missing } = useFileUrl(file?.id)
+  const { url, blob, missing } = useFileUrl(file?.documentId || file?.id)
   if (!file) return null
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
   const isImage = file.type?.startsWith('image/')
@@ -20,7 +20,7 @@ export default function FilePreview({ file, compact }) {
           </div>
         )}
       </div>
-      {missing && <div className="p-4 text-sm text-center text-slate-500">الملف غير متاح على هذا الجهاز</div>}
+      {missing && <div className="p-4 text-sm text-center text-slate-500">تعذّر تحميل الملف</div>}
       {url && isImage && <img src={url} alt="معاينة المستند" className={`w-full object-contain bg-white ${compact ? 'max-h-60' : 'max-h-[70vh]'}`} />}
       {url && isPdf && (
         <object data={url} type="application/pdf" className={`w-full bg-white ${compact ? 'h-60' : 'h-[70vh]'}`}>

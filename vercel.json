@@ -12,7 +12,15 @@
         },
         {
           "key": "X-Tatmira-Build",
-          "value": "finance-v1-20260919"
+          "value": "integrated-v1-20260919"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'none'"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
         }
       ]
     }
@@ -20,7 +28,11 @@
   "rewrites": [
     {
       "source": "/accounts",
-      "destination": "/accounts/index.html"
+      "destination": "/index.html"
+    },
+    {
+      "source": "/accounts/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

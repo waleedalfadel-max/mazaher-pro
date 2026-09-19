@@ -5,9 +5,10 @@ import { elementToPdfBlob, safeFileName } from '../lib/pdf.js'
 import { displayWhatsapp, invoiceMessage, normalizeWhatsapp, whatsappUrl } from '../lib/whatsapp.js'
 import { Button, Field, Modal, Notice, TextInput } from './ui.jsx'
 import InvoiceSheet from './InvoiceSheet.jsx'
+import { can } from '../lib/permissions.js'
 
 export default function InvoiceActions({ invoice, customer }) {
-  const { state, dispatch } = useStore()
+  const { state, dispatch, remote, fetchFile, actor } = useStore()
   const sheetRef = useRef(null)
   const [waOpen, setWaOpen] = useState(false)
   const [phone, setPhone] = useState('')
@@ -26,10 +27,10 @@ export default function InvoiceActions({ invoice, customer }) {
     setWaOpen(true)
   }
 
-  function openWhatsapp() {
+  async function openWhatsapp() {
     if (!normalized) return setError('راجع رقم الواتساب قبل المتابعة')
-    if (normalized !== customer.whatsapp) {
-      const r = dispatch({ type: 'CUSTOMER_UPDATE', id: customer.id, whatsapp: normalized })
+    if (normalized !== customer.whatsapp && can(actor, 'manageCustomers')) {
+      const r = await dispatch({ type: 'CUSTOMER_UPDATE', id: customer.id, whatsapp: normalized })
       if (r.error) return setError(r.error)
     }
     window.open(whatsappUrl(normalized, message), '_blank', 'noopener')
@@ -37,8 +38,8 @@ export default function InvoiceActions({ invoice, customer }) {
   }
 
   async function downloadOriginal() {
-    const blob = doc?.file?.id ? await getFile(doc.file.id) : null
-    if (!blob) return alert('الملف الأصلي غير متاح على هذا الجهاز')
+    const blob = remote ? (doc ? await fetchFile(doc.id) : null) : (doc?.file?.id ? await getFile(doc.file.id) : null)
+    if (!blob) return alert('الملف الأصلي غير متاح')
     downloadBlob(blob, doc.file.name)
   }
 
@@ -47,7 +48,7 @@ export default function InvoiceActions({ invoice, customer }) {
     await new Promise(r => setTimeout(r, 120))
     try {
       const blob = await elementToPdfBlob(sheetRef.current)
-      downloadBlob(blob, safeFileName(`ملخص-فاتورة-${invoice.number}-نموذج-تجريبي.pdf`))
+      downloadBlob(blob, safeFileName(`ملخص-فاتورة-${invoice.number}${remote ? '' : '-نموذج-تجريبي'}.pdf`))
     } finally {
       setRenderSheet(false)
     }
@@ -63,7 +64,7 @@ export default function InvoiceActions({ invoice, customer }) {
 
       {renderSheet && (
         <div style={{ position: 'fixed', left: -10000, top: 0 }} aria-hidden="true">
-          <InvoiceSheet ref={sheetRef} lab={state.lab} customer={customer} invoice={invoice} />
+          <InvoiceSheet ref={sheetRef} lab={state.lab} customer={customer} invoice={invoice} demo={!remote} />
         </div>
       )}
 

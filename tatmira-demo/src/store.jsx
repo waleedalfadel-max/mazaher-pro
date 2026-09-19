@@ -6,7 +6,7 @@ import { OWNER_ID } from './lib/permissions.js'
 const STORAGE_KEY = 'tatmira-demo:v1'
 // الموظف المعروض حالياً في «معاينة الأدوار» — محاكاة، ليست جلسة دخول
 const ACTING_KEY = 'tatmira-demo:acting'
-const StoreContext = createContext(null)
+export const StoreContext = createContext(null)
 
 function load() {
   const today = todayISO()
@@ -66,7 +66,7 @@ export function StoreProvider({ children }) {
   const actor = state.employees.find(e => e.id === actingId) || state.employees.find(e => e.id === OWNER_ID)
 
   return (
-    <StoreContext.Provider value={{ state, dispatch, reset, storageOk, actor, setActing }}>
+    <StoreContext.Provider value={{ state, dispatch, reset, storageOk, actor, setActing, remote: false }}>
       {children}
     </StoreContext.Provider>
   )
@@ -78,22 +78,24 @@ export function useStore() {
 
 /** رابط محلي مؤقت (blob:) لملف محفوظ على الجهاز */
 export function useFileUrl(fileId) {
+  const store = useStore()
   const [info, setInfo] = useState({ url: null, blob: null, missing: false })
   useEffect(() => {
     let url = null
     let cancelled = false
     setInfo({ url: null, blob: null, missing: false })
     if (!fileId) return
-    getFile(fileId).then(blob => {
+    const loader = store?.fetchFile ? store.fetchFile : getFile
+    loader(fileId).then(blob => {
       if (cancelled) return
       if (!blob) return setInfo({ url: null, blob: null, missing: true })
       url = URL.createObjectURL(blob)
       setInfo({ url, blob, missing: false })
-    })
+    }).catch(() => { if (!cancelled) setInfo({ url: null, blob: null, missing: true }) })
     return () => {
       cancelled = true
       if (url) URL.revokeObjectURL(url)
     }
-  }, [fileId])
+  }, [fileId, store?.fetchFile])
   return info
 }

@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useStore } from '../store.jsx'
 import { DOC_KINDS, REVIEW_STATUS, purchaseTotals, saleTotals } from '../lib/ledger.js'
-import { documentsFor, findEmployee, isOwner } from '../lib/permissions.js'
+import { can, documentsFor, findEmployee, isOwner } from '../lib/permissions.js'
 import { Badge, Button, Card, Empty, Money, PageTitle, NAVY } from '../components/ui.jsx'
 
 const FILTERS = [['pending', 'بانتظار المراجعة'], ['approved', 'معتمدة'], ['rejected', 'مرفوضة']]
@@ -15,9 +15,13 @@ function docAmount(d) {
 }
 
 export default function Documents() {
-  const { state, actor } = useStore()
+  const { state, actor, remote } = useStore()
   const owner = isOwner(actor)
-  const [filter, setFilter] = useState('pending')
+  const reviewer = can(actor, 'review')
+  const financials = can(actor, 'viewFinancials')
+  const canUpload = ['sale', 'payment', 'purchase'].some(kind => can(actor, 'upload', kind))
+  const canSeeAmounts = owner || reviewer || financials
+  const [filter, setFilter] = useState(reviewer || !financials ? 'pending' : 'approved')
   const visible = documentsFor(state, actor)
   const docs = visible.filter(d => d.status === filter)
   const count = s => visible.filter(d => d.status === s).length
@@ -26,9 +30,9 @@ export default function Documents() {
   return (
     <div>
       <PageTitle
-        title={owner ? 'المستندات والمراجعة' : 'مستنداتي'}
-        subtitle={owner ? 'لا يدخل أي مستند في الأرقام قبل اعتماده' : 'حالة المستندات التي رفعتها — المالك يراجعها ويعتمدها'}
-        action={<Link to="/upload"><Button>+ رفع</Button></Link>} />
+        title={reviewer ? 'المستندات والمراجعة' : financials ? 'المستندات المعتمدة' : 'مستنداتي'}
+        subtitle={reviewer ? 'لا يدخل أي مستند في الأرقام قبل اعتماده' : financials ? 'مستندات معتمدة تدعم الأرقام والتقارير' : 'حالة المستندات التي رفعتها — يراجعها صاحب الصلاحية ويعتمدها'}
+        action={canUpload ? <Link to="/upload"><Button>+ رفع</Button></Link> : null} />
 
       <div className="grid grid-cols-3 gap-1 p-1 rounded-xl mb-3" style={{ background: '#EEF4F3' }}>
         {FILTERS.map(([k, label]) => (
@@ -48,16 +52,16 @@ export default function Documents() {
               <div className="font-bold flex flex-wrap items-center gap-1.5" style={{ color: NAVY }}>
                 {DOC_KINDS[d.kind]}
                 <Badge tone={d.status}>{REVIEW_STATUS[d.status]}</Badge>
-                {owner && d.sample && d.status === 'pending' && <Badge tone="sample">بيانات تجريبية</Badge>}
+                {!remote && owner && d.sample && d.status === 'pending' && <Badge tone="sample">بيانات تجريبية</Badge>}
               </div>
               <div className="text-xs truncate mt-0.5" style={{ color: '#8FAAAA' }}>
                 {d.kind === 'purchase' ? (d.fields.payee || 'بدون جهة') : (customerName(d.fields.customerId) || 'العميل غير محدد')}
-                {owner && d.fields.number ? ` — ${d.fields.number}` : ''} — {d.file.name}
-                {owner && d.uploadedBy && d.uploadedBy !== actor.id && ` — رفعه: ${findEmployee(state, d.uploadedBy)?.name || 'موظف'}`}
+                {canSeeAmounts && d.fields.number ? ` — ${d.fields.number}` : ''} — {d.file.name}
+                {reviewer && d.uploadedBy && d.uploadedBy !== actor.id && ` — رفعه: ${d.uploaderName || findEmployee(state, d.uploadedBy)?.name || 'موظف'}`}
               </div>
             </div>
             {/* الموظف المحدود لا يرى المبالغ */}
-            {owner && <Money value={docAmount(d)} strong className="text-sm" />}
+            {canSeeAmounts && <Money value={docAmount(d)} strong className="text-sm" />}
           </Link>
         ))}
       </Card>
