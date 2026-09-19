@@ -24,7 +24,7 @@ const recoveryAtBoot = /(?:^|[&#])type=(?:recovery|invite)(?:&|$)/.test(location
 const ERRORS = {
   AUTH_REQUIRED: 'سجّل الدخول أولاً',
   INVALID_SESSION: 'انتهت الجلسة أو تغيرت صلاحياتك. سجّل الدخول مجددًا',
-  INVALID_LOGIN: 'رمز الدخول غير صحيح أو الحساب معطّل',
+  INVALID_LOGIN: 'رمز الدخول غير صحيح أو تم تغييره. اطلب من المالك إعادة تعيينه',
   OWNER_ONLY: 'هذا الإجراء للمالك فقط',
   PIN_FORMAT: 'اكتب رمزًا من 6 أرقام',
   PIN_IN_USE: 'الرمز مستخدم لموظف آخر؛ اختر رمزًا مختلفًا',
@@ -110,12 +110,36 @@ function Login({ onLogin, recovery, finishRecovery }) {
   const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  async function requestRecovery() {
+    const ownerEmail = email.trim()
+    setError('')
+    setNotice('')
+    if (!ownerEmail) {
+      setError('اكتب بريد المالك أولًا')
+      return
+    }
+    setBusy(true)
+    try {
+      const { error: recoveryError } = await auth.auth.resetPasswordForEmail(ownerEmail, {
+        redirectTo: `${location.origin}${location.pathname}`,
+      })
+      if (recoveryError) throw recoveryError
+      setNotice('أرسلنا رابط إعداد كلمة مرور جديدة إلى البريد إن كان الحساب مسجلًا')
+    } catch {
+      setError('تعذر إرسال رابط الاستعادة الآن. حاول لاحقًا')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function submit(event) {
     event.preventDefault()
     if (busy) return
     setBusy(true)
     setError('')
+    setNotice('')
     try {
       if (recovery) {
         const { error: updateError } = await auth.auth.updateUser({ password })
@@ -147,7 +171,7 @@ function Login({ onLogin, recovery, finishRecovery }) {
       </div>
 
       {!recovery && <div className="grid grid-cols-2 gap-1 p-1 rounded-xl mb-4" style={{ background: '#EEF4F3' }}>
-        {[['employee', 'دخول الموظف'], ['owner', 'دخول المالك']].map(([id, label]) => <button key={id} type="button" onClick={() => { setMode(id); setError('') }}
+        {[['employee', 'دخول الموظف'], ['owner', 'دخول المالك']].map(([id, label]) => <button key={id} type="button" onClick={() => { setMode(id); setError(''); setNotice('') }}
           className="py-2.5 rounded-lg text-sm font-bold" style={mode === id ? { background: '#fff', color: NAVY, boxShadow: '0 1px 3px rgba(0,0,0,.08)' } : { color: '#5A7A8A' }}>{label}</button>)}
       </div>}
 
@@ -156,6 +180,8 @@ function Login({ onLogin, recovery, finishRecovery }) {
         {mode === 'owner' || recovery
           ? <Field label="كلمة المرور" hint={recovery ? '12 حرفًا على الأقل' : ''}><TextInput type="password" autoComplete={recovery ? 'new-password' : 'current-password'} required minLength={recovery ? 12 : undefined} value={password} onChange={e => setPassword(e.target.value)} dir="ltr" className="text-left" /></Field>
           : <Field label="رمز الدخول — 6 أرقام"><TextInput type="password" inputMode="numeric" autoComplete="off" required value={pin} onChange={e => setPin(pinDigits(e.target.value))} maxLength={6} dir="ltr" className="text-center tracking-[.35em] text-xl" /></Field>}
+        {mode === 'owner' && !recovery && <button type="button" disabled={busy} onClick={requestRecovery} className="text-sm font-bold disabled:opacity-50" style={{ color: TEAL }}>نسيت كلمة المرور؟</button>}
+        {notice && <Notice tone="success">{notice}</Notice>}
         {error && <Notice tone="error">{error}</Notice>}
         <Button className="w-full !py-3" disabled={busy || (!recovery && mode === 'employee' && pin.length !== 6)}>{busy ? 'جارٍ التحقق…' : recovery ? 'حفظ كلمة المرور' : 'دخول'}</Button>
       </form>

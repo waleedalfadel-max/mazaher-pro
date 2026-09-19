@@ -37,6 +37,14 @@ test('recovery hash is captured before HashRouter and cleared into a normal hash
   assert.match(main, /if \(!identity \|\| recovery\)[\s\S]+return <HashRouter>/)
 })
 
+test('owner can request a password reset back to the exact integrated root', () => {
+  const main = source('tatmira-accounts/src/main.jsx')
+  assert.match(main, /resetPasswordForEmail\(ownerEmail/)
+  assert.match(main, /redirectTo: `\$\{location\.origin\}\$\{location\.pathname\}`/)
+  assert.match(main, /نسيت كلمة المرور؟/)
+  assert.match(main, /إن كان الحساب مسجلًا/)
+})
+
 test('successful API responses must be valid JSON with the action-specific shape', async () => {
   const messages = { FINANCE_UNAVAILABLE: 'finance unavailable', AUTH_UNAVAILABLE: 'auth unavailable' }
   const finance = (body, operation = 'mutate', payload = { command: { type: 'LAB_UPDATE' } }) => resultOrError(
