@@ -1,0 +1,12 @@
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { createHash } from 'node:crypto';
+const root = 'dist-tatmira-preview';
+const walk = dir => readdirSync(dir).sort().flatMap(name => { const path = join(dir, name); return statSync(path).isDirectory() ? walk(path) : [path]; });
+const files = walk(root).map(path => ({ file: relative(root, path), data: readFileSync(path).toString('base64'), encoding: 'base64' }));
+const config = JSON.parse(readFileSync('vercel.json', 'utf8'));
+delete config.buildCommand; delete config.outputDirectory;
+files.push({ file: 'vercel.json', data: JSON.stringify(config) }, { file: 'package.json', data: JSON.stringify({ name: 'tatmira-preview', version: '1.1.0', private: true }) });
+const serialized = JSON.stringify(files);
+if (process.argv[2] === 'chunk') process.stdout.write(serialized.slice(Number(process.argv[3]), Number(process.argv[3]) + Number(process.argv[4])));
+else process.stdout.write(JSON.stringify({ length: serialized.length, sha256: createHash('sha256').update(serialized).digest('hex'), paths: files.map(f => f.file) }));

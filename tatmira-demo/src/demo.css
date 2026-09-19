@@ -1,0 +1,21 @@
+input, select, textarea, button { font-size: 16px; } /* يمنع تكبير iOS عند التركيز */
+@media (min-width: 640px) { input, select, textarea, button { font-size: 14px; } }
+
+.num { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+
+.print-only { display: none; }
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  body { background: #fff !important; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  .print-visible { overflow: visible !important; margin: 0 !important; }
+  .print-visible table { min-width: 0 !important; }
+  .print-area { box-shadow: none !important; border: none !important; padding: 0 !important; }
+  main { overflow: visible !important; }
+  html, body, #root, .print-root { height: auto !important; overflow: visible !important; }
+}
+
+/* حقول التاريخ: يمنع انعكاس ترتيب اليوم/الشهر/السنة داخل صفحة RTL */
+input[type="date"] { direction: ltr; text-align: right; }

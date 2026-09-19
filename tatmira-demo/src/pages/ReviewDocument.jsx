@@ -1,0 +1,461 @@
+import React, { useEffect, useState } from 'react'
+import { Link, useLocation, useParams } from 'react-router-dom'
+import { useStore } from '../store.jsx'
+import {
+  DOC_KINDS, REVIEW_STATUS, duplicateInvoiceNumber, invalidInputs, newId, openItems, purchaseTotals, saleTotals, suggestAllocations,
+} from '../lib/ledger.js'
+import { moneyOrZero, toQuantity, vatFor } from '../lib/money.js'
+import {
+  Badge, Button, Card, Field, InvalidInputsNotice, Money, MoneyInput, Notice, QuantityInput, Select, TextInput, NAVY,
+} from '../components/ui.jsx'
+import FilePreview from '../components/FilePreview.jsx'
+import { EXPENSE_KIND, categoryInfo, selectableCategories } from '../lib/expenses.js'
+import { can, documentsFor } from '../lib/permissions.js'
+import { expenseAmounts, rateBpsToPercent, taxEnabled, taxModeLabel, taxSettingForDate } from '../lib/tax.js'
+
+export default function ReviewDocument() {
+  const { id } = useParams()
+  const { state, dispatch, actor, remote, busy } = useStore()
+  const location = useLocation()
+  const [result, setResult] = useState(null)
+  const [needsDupConfirm, setNeedsDupConfirm] = useState(false)
+  const [dupConfirmed, setDupConfirmed] = useState(false)
+  const [remoteFields, setRemoteFields] = useState(null)
+
+  useEffect(() => { setResult(null); setNeedsDupConfirm(false); setDupConfirmed(false) }, [id])
+
+  const reviewer = can(actor, 'review')
+  const financialViewer = can(actor, 'viewFinancials')
+  // غير المالك يرى مستنداته فقط
+  const doc = documentsFor(state, actor).find(d => d.id === id)
+  useEffect(() => {
+    if (remote && doc) setRemoteFields(structuredClone(doc.fields))
+  }, [remote, doc?.id])
+  if (!doc) return <Card className="p-6 text-center">المستند غير موجود — <Link to="/documents" className="underline">العودة</Link></Card>
+  if (!reviewer && !financialViewer) return <DocumentStatus state={state} doc={doc} justUploaded={location.state?.justUploaded} />
+  const fromReports = location.state?.from === 'reports'
+
+  const editable = reviewer && doc.status === 'pending'
+  const f = remote ? (remoteFields || doc.fields) : doc.fields
+  const dirty = remote && JSON.stringify(f) !== JSON.stringify(doc.fields)
+  const invalid = editable ? invalidInputs(doc.kind, f) : []
+  const update = fields => {
+    if (remote) {
+      setRemoteFields(current => ({ ...(current || doc.fields), ...fields }))
+      if (result?.tone === 'error') setResult(null)
+      return
+    }
+    const r = dispatch({ type: 'DOC_UPDATE_FIELDS', id: doc.id, fields })
+    if (r.error) setResult({ tone: 'error', text: r.error })
+    else if (result?.tone === 'error') setResult(null)
+  }
+
+  async function saveFields() {
+    const r = await dispatch({ type: 'DOC_UPDATE_FIELDS', id: doc.id, fields: f })
+    if (r.error) return setResult({ tone: 'error', text: r.error })
+    setResult({ tone: 'success', text: 'حُفظت بيانات المراجعة' })
+  }
+
+  async function approve() {
+    if (dirty) return setResult({ tone: 'warning', text: 'احفظ بيانات المراجعة أولًا ثم اعتمد المستند' })
+    const r = await dispatch({ type: 'DOC_APPROVE', id: doc.id, confirmDuplicate: dupConfirmed })
+    if (r.code === 'DUPLICATE_NUMBER') { setNeedsDupConfirm(true); return setResult({ tone: 'warning', text: r.error }) }
+    if (r.error) return setResult({ tone: 'error', text: r.error })
+    if (r.code === 'ALREADY_APPROVED') return setResult({ tone: 'info', text: 'المستند معتمد مسبقاً — لم تُنشأ حركة جديدة' })
+    setResult({ tone: 'success', text: 'اعتُمد المستند' })
+  }
+
+  async function reject() {
+    if (!confirm('رفض المستند؟ لن يدخل في أي رقم.')) return
+    const r = await dispatch({ type: 'DOC_REJECT', id: doc.id })
+    if (r.error) return setResult({ tone: 'error', text: r.error })
+    setResult({ tone: 'info', text: 'رُفض المستند' })
+  }
+
+  const approvedEntity = doc.kind === 'sale' ? state.invoices.find(i => i.docId === doc.id)
+    : doc.kind === 'payment' ? state.payments.find(p => p.docId === doc.id)
+    : state.purchases.find(p => p.docId === doc.id)
+
+  return (
+    <div>
+      {fromReports
+        ? <Link to="/reports" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ التقارير</Link>
+        : <Link to="/documents" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ المستندات</Link>}
+      <div className="flex flex-wrap items-center gap-2 mt-2 mb-3">
+        <h1 className="text-xl font-extrabold" style={{ color: NAVY }}>{DOC_KINDS[doc.kind]}</h1>
+        <Badge tone={doc.status}>{REVIEW_STATUS[doc.status]}</Badge>
+      </div>
+
+      {doc.sample && editable && (
+        <Notice tone="warning" className="mb-3">
+          <b>بيانات تجريبية</b> — لم يقرأ الذكاء الاصطناعي هذا الملف. القيم أدناه أمثلة ثابتة؛ طابقها مع المستند وعدّلها قبل الاعتماد.
+        </Notice>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-3">
+        <div className="lg:order-2"><FilePreview file={doc.file} compact /></div>
+
+        <Card className="p-4 lg:order-1">
+          {doc.kind === 'sale' && <SaleForm state={state} doc={doc} f={f} editable={editable} update={update} />}
+          {doc.kind === 'payment' && <PaymentForm state={state} doc={doc} f={f} editable={editable} update={update} />}
+          {doc.kind === 'purchase' && <PurchaseForm state={state} doc={doc} f={f} editable={editable} update={update} />}
+
+          {result && <Notice tone={result.tone} className="mt-3">{result.text}</Notice>}
+
+          {editable && needsDupConfirm && (
+            <label className="flex items-start gap-2 mt-3 text-sm font-bold" style={{ color: '#92400E' }}>
+              <input type="checkbox" className="mt-1 w-4 h-4" checked={dupConfirmed} onChange={e => setDupConfirmed(e.target.checked)} />
+              تأكدت أنها فاتورة مختلفة رغم تكرار الرقم
+            </label>
+          )}
+
+          {editable && invalid.length > 0 && <div className="mt-3"><InvalidInputsNotice fields={invalid} /></div>}
+
+          {editable && (
+            <div className={`grid ${remote ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'} gap-2 mt-4`}>
+              <Button variant="danger" disabled={busy} onClick={reject}>رفض</Button>
+              {remote && <Button variant="secondary" className="sm:col-span-1" disabled={busy || !dirty} onClick={saveFields}>حفظ البيانات</Button>}
+              <Button className={`${remote ? 'col-span-2' : 'col-span-2'} !py-3`} onClick={approve}
+                disabled={busy || dirty || invalid.length > 0 || (needsDupConfirm && !dupConfirmed)}>اعتماد</Button>
+            </div>
+          )}
+
+          {doc.status === 'approved' && approvedEntity && (
+            <Notice tone="success" className="mt-4">
+              معتمد في <span className="num">{doc.reviewedAt?.slice(0, 10)}</span>.
+              {' '}{doc.kind !== 'purchase'
+                ? <Link to={`/customers/${approvedEntity.customerId}`} className="underline font-bold">عرض حساب العميل</Link>
+                : <Link to="/reports" className="underline font-bold">عرض في التقارير</Link>}
+            </Notice>
+          )}
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+const STATUS_TEXT = {
+  pending: 'بانتظار مراجعة المالك واعتماده',
+  approved: 'اعتمده المالك',
+  rejected: 'رفضه المالك',
+}
+
+/** متابعة حالة المستند للموظف المحدود: بلا مبالغ ولا أرصدة ولا تعديل ولا اعتماد */
+function DocumentStatus({ state, doc, justUploaded }) {
+  const customer = state.customers.find(c => c.id === doc.fields?.customerId)
+  return (
+    <div>
+      <Link to="/documents" className="text-sm font-bold" style={{ color: '#4A9E97' }}>→ مستنداتي</Link>
+      <div className="flex flex-wrap items-center gap-2 mt-2 mb-3">
+        <h1 className="text-xl font-extrabold" style={{ color: NAVY }}>{DOC_KINDS[doc.kind]}</h1>
+        <Badge tone={doc.status}>{REVIEW_STATUS[doc.status]}</Badge>
+      </div>
+      {justUploaded && <Notice tone="success" className="mb-3">أُرسل المستند للمراجعة. ستتغير حالته هنا بعد مراجعة المالك.</Notice>}
+      <div className="grid lg:grid-cols-2 gap-3">
+        <Card className="p-4 space-y-2 text-sm">
+          <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>الحالة</span><b>{STATUS_TEXT[doc.status]}</b></div>
+          {customer && <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>العميل</span><b>{customer.name}</b></div>}
+          <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>تاريخ الرفع</span><b className="num">{doc.uploadedAt?.slice(0, 10)}</b></div>
+          <div className="flex justify-between gap-2"><span style={{ color: '#5A7A8A' }}>الملف</span><b className="truncate">{doc.file.name}</b></div>
+          <div className="text-xs pt-2" style={{ color: '#8FAAAA' }}>مراجعة البيانات والمبالغ واعتمادها من صلاحية المالك.</div>
+        </Card>
+        <FilePreview file={doc.file} compact />
+      </div>
+    </div>
+  )
+}
+
+function CustomerSelect({ state, value, onChange, disabled }) {
+  const options = state.customers.filter(c => !c.archived || c.id === value)
+  return (
+    <Select value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
+      <option value="">— اختر العميل —</option>
+      {options.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </Select>
+  )
+}
+
+function AccountSelect({ state, value, onChange, disabled }) {
+  return (
+    <Select value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
+      <option value="">— اختر الحساب —</option>
+      {state.accounts.filter(a => !a.archived || a.id === value).map(a => (
+        <option key={a.id} value={a.id}>{a.kind === 'cash' ? '💵' : '🏦'} {a.name}</option>
+      ))}
+    </Select>
+  )
+}
+
+function SaleForm({ state, doc, f, editable, update }) {
+  const approved = doc.status === 'approved' ? state.invoices.find(i => i.docId === doc.id) : null
+  const tax = approved?.taxProfile || taxSettingForDate(state, f.date)
+  const totals = approved || saleTotals(f, tax)
+  const dup = editable ? duplicateInvoiceNumber(state, f.number, { excludeDocId: doc.id }) : null
+
+  function setLines(lines) {
+    update({ lines })
+  }
+  const setLine = (i, p) => setLines(f.lines.map((l, j) => j === i ? { ...l, ...p } : l))
+
+  return (
+    <div className="space-y-3">
+      <Field label="العميل"><CustomerSelect state={state} value={f.customerId} onChange={v => update({ customerId: v })} disabled={!editable} /></Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="رقم الفاتورة">
+          <TextInput value={f.number} onChange={e => update({ number: e.target.value })} disabled={!editable} dir="ltr" className="text-left" />
+        </Field>
+        <Field label="التاريخ">
+          <TextInput type="date" value={f.date} onChange={e => update({ date: e.target.value })} disabled={!editable} />
+        </Field>
+      </div>
+      {dup && (
+        <Notice tone="warning">
+          ⚠️ رقم الفاتورة مكرر: {dup.where === 'approved' ? 'توجد فاتورة معتمدة بنفس الرقم' : 'يوجد مستند آخر بانتظار المراجعة بنفس الرقم'}
+        </Notice>
+      )}
+
+      <Notice tone={taxEnabled(tax) ? 'info' : 'warning'}>
+        إعداد المنشأة لهذه الفاتورة: <b>{taxModeLabel(tax)}</b>
+        {taxEnabled(tax) && <> — نسبة <span className="num">{rateBpsToPercent(tax.rateBps)}%</span></>}.
+        {' '}الإعداد يُحدد من تاريخ الفاتورة، ولا يغيّره الذكاء الاصطناعي.
+      </Notice>
+
+      <div>
+        <div className="text-xs font-bold mb-1" style={{ color: '#5A7A8A' }}>البنود</div>
+        <div className="space-y-2">
+          {f.lines.map((l, i) => (
+            <div key={l.id || i} className="rounded-xl border border-border p-2 bg-surface">
+              <div className="flex gap-2">
+                <TextInput value={l.desc} onChange={e => setLine(i, { desc: e.target.value })} disabled={!editable} placeholder="الوصف" />
+                {editable && f.lines.length > 1 && (
+                  <button onClick={() => setLines(f.lines.filter((_, j) => j !== i))} className="px-3 rounded-xl text-red-600 bg-white border border-border" aria-label="حذف البند">×</button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-2 items-end">
+                <Field label="الكمية">
+                  <QuantityInput value={l.qty} onChange={v => setLine(i, { qty: v })} disabled={!editable} aria-label="الكمية" />
+                </Field>
+                <Field label={tax.mode === 'inclusive' ? 'سعر الوحدة (شامل الضريبة)' : tax.mode === 'exclusive' ? 'سعر الوحدة (قبل الضريبة)' : 'سعر الوحدة'}>
+                  <MoneyInput value={l.price} onChange={v => setLine(i, { price: v })} disabled={!editable} />
+                </Field>
+                <div className="text-xs pb-3 text-left" style={{ color: '#5A7A8A' }}><Money value={Math.round((toQuantity(l.qty ?? '') || 0) * moneyOrZero(l.price))} /></div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {editable && (
+          <Button variant="secondary" className="mt-2 !py-1.5 !text-xs"
+            onClick={() => setLines([...f.lines, { id: newId('line'), desc: '', qty: 1, price: 0 }])}>+ بند</Button>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-border p-3 space-y-2">
+        {taxEnabled(tax) && <Row label="الصافي" value={totals.net} />}
+        {taxEnabled(tax) && <Row label="الضريبة" value={totals.vat} />}
+        <Row label="الإجمالي" value={totals.total} strong />
+      </div>
+    </div>
+  )
+}
+
+function PaymentForm({ state, doc, f, editable, update }) {
+  const items = f.customerId ? openItems(state, f.customerId) : []
+  const allocations = f.allocations || []
+  const allocOf = target => allocations.find(a => a.target === target)?.amount || 0
+  const allocated = allocations.reduce((s, a) => s + moneyOrZero(a.amount), 0)
+  const unallocated = moneyOrZero(f.amount) - allocated
+  const approved = doc.status === 'approved' ? state.payments.find(p => p.docId === doc.id) : null
+
+  const suggest = (customerId, amount) => suggestAllocations(state, customerId, amount)
+  function setAlloc(target, amount) {
+    const rest = allocations.filter(a => a.target !== target)
+    const keep = typeof amount === 'string' || amount > 0 // النص غير الصالح يبقى ظاهراً حتى يُصحَّح
+    update({ allocAuto: false, allocations: keep ? [...rest, { target, amount }] : rest })
+  }
+
+  return (
+    <div className="space-y-3">
+      <Notice tone="info">صورة الإيصال لا تثبت وصول المبلغ. اعتمد بعد التأكد من دخوله للحساب.</Notice>
+      <Field label="العميل">
+        <CustomerSelect state={state} value={f.customerId} disabled={!editable}
+          onChange={v => update({ customerId: v, allocAuto: true, allocations: v ? suggest(v, moneyOrZero(f.amount)) : [] })} />
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="المبلغ">
+          <MoneyInput value={f.amount} disabled={!editable}
+            onChange={v => update(typeof v === 'number' && f.allocAuto !== false && f.customerId ? { amount: v, allocations: suggest(f.customerId, v) } : { amount: v })} />
+        </Field>
+        <Field label="التاريخ"><TextInput type="date" value={f.date} onChange={e => update({ date: e.target.value })} disabled={!editable} /></Field>
+      </div>
+      <Field label="الحساب المستلم"><AccountSelect state={state} value={f.accountId} onChange={v => update({ accountId: v })} disabled={!editable} /></Field>
+      <Field label="مرجع التحويل (اختياري)">
+        <TextInput value={f.reference} onChange={e => update({ reference: e.target.value })} disabled={!editable} dir="ltr" className="text-left" />
+      </Field>
+
+      {editable && f.customerId && (
+        <div className="rounded-xl border border-border p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-extrabold" style={{ color: NAVY }}>توزيع الدفعة</span>
+            <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => update({ allocAuto: true, allocations: suggest(f.customerId, moneyOrZero(f.amount)) })}>
+              اقترح على الأقدم
+            </Button>
+          </div>
+          {items.length === 0 && <div className="text-xs" style={{ color: '#8FAAAA' }}>لا فواتير مفتوحة لهذا العميل — المبلغ كله رصيد دائن</div>}
+          <div className="space-y-2">
+            {items.map(it => (
+              <div key={it.target} className="grid grid-cols-5 gap-2 items-center">
+                <div className="col-span-3 text-xs">
+                  <div className="font-bold">{it.label}</div>
+                  <div style={{ color: '#8FAAAA' }}><span className="num">{it.date}</span> — المتبقي <Money value={it.remaining} /></div>
+                </div>
+                <div className="col-span-2"><MoneyInput value={allocOf(it.target)} onChange={v => setAlloc(it.target, v)} /></div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 pt-2 border-t border-border space-y-1">
+            <Row label="الموزع" value={allocated} />
+            {unallocated >= 0
+              ? <Row label="غير موزع (يبقى رصيداً دائناً للعميل)" value={unallocated} />
+              : <div className="text-xs font-bold text-red-600">التوزيع أكبر من مبلغ الدفعة بـ <Money value={-unallocated} /></div>}
+          </div>
+        </div>
+      )}
+
+      {approved && (
+        <div className="rounded-xl border border-border p-3 text-sm space-y-1">
+          <div className="font-extrabold" style={{ color: NAVY }}>التوزيع المعتمد</div>
+          {approved.allocations.map(a => (
+            <Row key={a.target} label={a.target === 'opening' ? 'رصيد افتتاحي' : `فاتورة ${state.invoices.find(i => i.id === a.target)?.number}`} value={a.amount} />
+          ))}
+          {approved.unallocated > 0 && <Row label="رصيد دائن للعميل" value={approved.unallocated} />}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const KIND_LABEL = EXPENSE_KIND
+
+function PurchaseForm({ state, doc, f, editable, update }) {
+  const lines = f.lines || []
+  const totals = purchaseTotals(f)
+  const approved = doc.status === 'approved' ? state.purchases.find(p => p.docId === doc.id) : null
+  const tax = approved?.taxProfile || taxSettingForDate(state, f.date)
+  const setLines = next => update({ lines: next })
+  const setLine = (i, p) => setLines(lines.map((l, j) => j === i ? { ...l, ...p } : l))
+  const kindOf = id => categoryInfo(state, id).kind
+
+  const byKind = kind => lines.filter(l => kindOf(l.categoryId) === kind).reduce((s, l) => {
+    const { expenseAmount } = expenseAmounts(moneyOrZero(l.net), moneyOrZero(l.vat), tax)
+    return s + expenseAmount
+  }, 0)
+  const recognizedTotal = lines.reduce((s, l) => s + expenseAmounts(moneyOrZero(l.net), moneyOrZero(l.vat), tax).expenseAmount, 0)
+
+  return (
+    <div className="space-y-3">
+      <Notice tone="info">
+        مستند المصروفات يشمل المشتريات والإيجار والرواتب والكهرباء والصيانة وغيرها. لكل بند تصنيفه، والضريبة اختيارية لكل بند.
+        الاعتماد يخصم الإجمالي من مصدر الدفع.
+      </Notice>
+      <Notice tone={taxEnabled(tax) ? 'info' : 'warning'}>
+        إعداد المنشأة بتاريخ المستند: <b>{taxModeLabel(tax)}</b>.
+        {' '}{taxEnabled(tax)
+          ? 'ضريبة المورد تُفصل عن تكلفة المصروف في هذا النموذج.'
+          : 'ضريبة المورد — إن ظهرت في المستند — تدخل كاملةً ضمن تكلفة المصروف.'}
+      </Notice>
+      <Field label="الجهة / المستفيد (اختياري)">
+        <TextInput value={f.payee || ''} onChange={e => update({ payee: e.target.value })} disabled={!editable} placeholder="مثال: مورد التمور، المؤجر، شركة الكهرباء" />
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="رقم المستند (اختياري)"><TextInput value={f.number || ''} onChange={e => update({ number: e.target.value })} disabled={!editable} dir="ltr" className="text-left" /></Field>
+        <Field label="التاريخ"><TextInput type="date" value={f.date} onChange={e => update({ date: e.target.value })} disabled={!editable} /></Field>
+      </div>
+
+      {!approved && (
+        <div>
+          <div className="text-xs font-bold mb-1" style={{ color: '#5A7A8A' }}>البنود</div>
+          <div className="space-y-2">
+            {lines.map((l, i) => (
+              <div key={l.id || i} className="rounded-xl border border-border p-2 bg-surface space-y-2">
+                <div className="flex gap-2">
+                  <TextInput value={l.desc} onChange={e => setLine(i, { desc: e.target.value })} disabled={!editable} placeholder="الوصف" />
+                  {editable && lines.length > 1 && (
+                    <button onClick={() => setLines(lines.filter((_, j) => j !== i))} className="px-3 rounded-xl text-red-600 bg-white border border-border" aria-label="حذف البند">×</button>
+                  )}
+                </div>
+                <Select value={l.categoryId} onChange={e => setLine(i, { categoryId: e.target.value })} disabled={!editable} aria-label="تصنيف البند">
+                  <option value="">— اختر التصنيف —</option>
+                  {selectableCategories(state, l.categoryId).map(({ group, categories }) => (
+                    <optgroup key={group.id} label={`${group.name} — ${KIND_LABEL[group.kind]}`}>
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
+                  ))}
+                </Select>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="قبل الضريبة"><MoneyInput value={l.net} onChange={v => setLine(i, { net: v })} disabled={!editable} /></Field>
+                  <Field label="الضريبة"><MoneyInput value={l.vat} onChange={v => setLine(i, { vat: v })} disabled={!editable} /></Field>
+                </div>
+                {editable && (
+                  <div className="flex gap-1.5">
+                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs"
+                      onClick={() => setLine(i, { vat: vatFor(moneyOrZero(l.net), tax.rateBps / 10000) })}>
+                      ضريبة {rateBpsToPercent(tax.rateBps)}%
+                    </Button>
+                    <Button variant="secondary" className="!py-1 !px-2.5 !text-xs" onClick={() => setLine(i, { vat: 0 })}>بلا ضريبة</Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {editable && (
+            <Button variant="secondary" className="mt-2 !py-1.5 !text-xs"
+              onClick={() => setLines([...lines, { id: newId('pline'), desc: '', categoryId: '', net: 0, vat: 0 }])}>+ بند</Button>
+          )}
+        </div>
+      )}
+
+      {approved && (
+        <div className="rounded-xl border border-border p-3 text-sm space-y-2">
+          <div className="font-extrabold" style={{ color: NAVY }}>البنود المعتمدة</div>
+          <div className="text-[11px]" style={{ color: '#8FAAAA' }}>المجموعة والتصنيف ونوعه مثبّتة كما كانت وقت الاعتماد</div>
+          {approved.lines.map((l, i) => (
+            <div key={i} className="flex items-start justify-between gap-2">
+              <div>
+                <div>{l.desc}</div>
+                <div className="text-[11px]" style={{ color: '#5A7A8A' }}>{l.groupName} ← {l.categoryName} — {KIND_LABEL[l.categoryKind]}</div>
+              </div>
+              <div className="text-left">
+                <Money value={l.expenseAmount ?? l.net} />
+                {l.vat > 0 && <div className="text-[11px]" style={{ color: '#8FAAAA' }}>
+                  ضريبة المورد <Money value={l.vat} /> — {(l.separatedVat ?? l.vat) > 0 ? 'مفصولة' : 'ضمن التكلفة'}
+                </div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border p-3 space-y-1">
+        {!approved && <>
+          <Row label="مواد مباشرة" value={byKind('direct')} />
+          <Row label="مصروفات تشغيلية" value={byKind('operating')} />
+        </>}
+        <Row label="قبل الضريبة" value={approved ? approved.net : totals.net} />
+        <Row label="ضريبة المورد في المستند" value={approved ? approved.vat : totals.vat} />
+        <Row label="الإجمالي" value={approved ? approved.total : totals.total} strong />
+        <Row label="المحتسب في المصروفات" value={approved
+          ? approved.lines.reduce((s, l) => s + (l.expenseAmount ?? l.net), 0)
+          : recognizedTotal} />
+      </div>
+      <Field label="مصدر الدفع"><AccountSelect state={state} value={f.accountId} onChange={v => update({ accountId: v })} disabled={!editable} /></Field>
+    </div>
+  )
+}
+
+function Row({ label, value, strong }) {
+  return (
+    <div className={`flex items-center justify-between text-sm ${strong ? 'font-extrabold' : ''}`}>
+      <span>{label}</span><Money value={value} strong={strong} />
+    </div>
+  )
+}

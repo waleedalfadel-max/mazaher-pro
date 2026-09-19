@@ -1,0 +1,10 @@
+.auth-screen {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(110, 183, 176, .22), transparent 30%),
+    radial-gradient(circle at 88% 82%, rgba(233, 216, 187, .28), transparent 32%),
+    #f4f8f7;
+}
+.auth-card {
+  border-color: rgba(110, 183, 176, .45);
+  box-shadow: 0 22px 60px rgba(27, 58, 92, .12);
+}
