@@ -1,22 +1,26 @@
 {
-  "alias": ["tahseeb-pro.vercel.app"],
-  "functions": {
-    "api/analyze.js": {
-      "maxDuration": 30
-    },
-    "api/chat.js": {
-      "maxDuration": 30
-    }
-  },
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "version": 2,
+  "buildCommand": "npm run build:tatmira-preview",
+  "outputDirectory": "dist-tatmira-preview",
   "headers": [
     {
-      "source": "/manifest.json",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
-    },
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        },
+        {
+          "key": "X-Tatmira-Build",
+          "value": "finance-v1-20260919"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
     {
-      "source": "/sw.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+      "source": "/accounts",
+      "destination": "/accounts/index.html"
     }
   ]
 }
