@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { createStaff, setStaffPin } from '../lib/staffCredentials'
 
 const ROLE_LABELS = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
 const ROLE_ICONS  = { owner: '👑', accountant: '📊', purchasing: '🛒', cashier: '💰' }
@@ -12,6 +13,9 @@ const ROLE_COLORS = {
 }
 
 const EMPTY_FORM = { name: '', role: 'cashier', pin: '', pinConfirm: '' }
+// حساب المالك يُدار من المالك أو مزوّد الخدمة، لا من هنا (الخادم يمنع ذلك أيضًا). التعطيل من إعدادات المالك.
+const ADDABLE_ROLES = ['accountant', 'purchasing', 'cashier']
+const isProtected = u => !ADDABLE_ROLES.includes(u.role)
 
 export default function UsersManagement() {
   const { projectId, userName } = useAuth()
@@ -22,17 +26,23 @@ export default function UsersManagement() {
   const [editPin, setEditPin] = useState({ pin: '', pinConfirm: '' })
   const [err,     setErr]     = useState('')
   const [success, setSuccess] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => { if (projectId) load() }, [projectId])
 
+  // الأعمدة المسموح بها وحدها (عمود الرمز لا يُقرأ من التطبيق). الفشل رسالة، لا قائمة فارغة.
   async function load() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('app_users')
-      .select('id,name,role,created_at')
-      .eq('project_id', projectId)
-      .order('created_at')
-    setUsers(data || [])
+    setLoading(true); setLoadError(false)
+    let data = null, error = null
+    try {
+      ;({ data, error } = await supabase
+        .from('app_users')
+        .select('id,name,role,created_at,is_active')
+        .eq('project_id', projectId)
+        .order('created_at'))
+    } catch (e) { error = e }
+    if (error) { setUsers([]); setLoadError(true) } else setUsers(data || [])
     setLoading(false)
   }
 
@@ -40,58 +50,42 @@ export default function UsersManagement() {
   function clearErr()  { setErr('') }
 
   async function addUser() {
+    if (saving) return
     setErr('')
     if (!form.name.trim())          return setErr('أدخل اسم المستخدم')
-    if (!/^\d{4,8}$/.test(form.pin)) return setErr('رمز الدخول يجب أن يكون 4-8 أرقام')
+    if (!/^\d{5}$/.test(form.pin)) return setErr('رمز الدخول 5 أرقام بالضبط')
     if (form.pin !== form.pinConfirm) return setErr('رمزا الدخول غير متطابقين')
 
-    // check pin uniqueness
-    const { data: dup } = await supabase
-      .from('app_users').select('id').eq('project_id', projectId).eq('pin', form.pin).maybeSingle()
-    if (dup) return setErr('هذا الرمز مستخدم بالفعل')
-
-    const { error } = await supabase.from('app_users').insert({
-      project_id: projectId,
-      name: form.name.trim(),
-      role: form.role,
-      pin:  form.pin,
-    })
-    if (error) return setErr(error.message)
+    setSaving(true)
+    const result = await createStaff(supabase, form)
+    setSaving(false)
+    if (!result.ok) return setErr(result.message)
     setForm(EMPTY_FORM)
     flash(`تم إضافة ${form.name.trim()} بنجاح`)
     load()
   }
 
   async function savePin(user) {
+    if (saving) return
     setErr('')
-    if (!/^\d{4,8}$/.test(editPin.pin))       return setErr('رمز الدخول يجب أن يكون 4-8 أرقام')
+    if (!/^\d{5}$/.test(editPin.pin))       return setErr('رمز الدخول 5 أرقام بالضبط')
     if (editPin.pin !== editPin.pinConfirm)    return setErr('رمزا الدخول غير متطابقين')
 
-    const { data: dup } = await supabase
-      .from('app_users').select('id').eq('project_id', projectId).eq('pin', editPin.pin).neq('id', user.id).maybeSingle()
-    if (dup) return setErr('هذا الرمز مستخدم بالفعل')
-
-    const { error } = await supabase.from('app_users').update({ pin: editPin.pin }).eq('id', user.id)
-    if (error) return setErr(error.message)
+    setSaving(true)
+    const result = await setStaffPin(supabase, user.id, editPin.pin)
+    setSaving(false)
+    if (!result.ok) return setErr(result.message)
     setEditing(null)
     setEditPin({ pin: '', pinConfirm: '' })
     flash(`تم تحديث رمز ${user.name}`)
   }
 
-  async function deleteUser(user) {
-    if (user.name === userName) return setErr('لا يمكنك حذف حسابك الحالي')
-    if (!confirm(`حذف المستخدم "${user.name}"؟`)) return
-    const { error } = await supabase.from('app_users').delete().eq('id', user.id)
-    if (error) return setErr(error.message)
-    flash(`تم حذف ${user.name}`)
-    load()
-  }
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold text-slate-800">إدارة المستخدمين</h1>
-        <p className="text-slate-500 text-sm mt-1">إضافة وتعديل وحذف مستخدمي النظام</p>
+        <p className="text-slate-500 text-sm mt-1">إضافة المستخدمين وتغيير رموزهم. لإيقاف موظف يعطّله المالك من الإعدادات ← الموظفون؛ لا تُحذف الحسابات حفاظًا على سجلاتها.</p>
       </div>
 
       {success && (
@@ -125,17 +119,17 @@ export default function UsersManagement() {
               onChange={e => { setForm(f => ({ ...f, role: e.target.value })); clearErr() }}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
             >
-              {Object.entries(ROLE_LABELS).map(([k, v]) => (
+              {Object.entries(ROLE_LABELS).filter(([k]) => ADDABLE_ROLES.includes(k)).map(([k, v]) => (
                 <option key={k} value={k}>{ROLE_ICONS[k]} {v}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="text-xs text-slate-500 block mb-1">رمز الدخول (4-8 أرقام)</label>
+            <label className="text-xs text-slate-500 block mb-1">رمز الدخول (5 أرقام)</label>
             <input
-              type="password" inputMode="numeric" maxLength={8}
+              type="password" inputMode="numeric" maxLength={5}
               value={form.pin}
-              onChange={e => { setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g,'').slice(0,8) })); clearErr() }}
+              onChange={e => { setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g,'').slice(0,5) })); clearErr() }}
               placeholder="••••"
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
@@ -143,15 +137,15 @@ export default function UsersManagement() {
           <div>
             <label className="text-xs text-slate-500 block mb-1">تأكيد رمز الدخول</label>
             <input
-              type="password" inputMode="numeric" maxLength={8}
+              type="password" inputMode="numeric" maxLength={5}
               value={form.pinConfirm}
-              onChange={e => { setForm(f => ({ ...f, pinConfirm: e.target.value.replace(/\D/g,'').slice(0,8) })); clearErr() }}
+              onChange={e => { setForm(f => ({ ...f, pinConfirm: e.target.value.replace(/\D/g,'').slice(0,5) })); clearErr() }}
               placeholder="••••"
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
           </div>
         </div>
-        <button onClick={addUser}
+        <button onClick={addUser} disabled={saving}
           className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
           إضافة المستخدم
         </button>
@@ -159,11 +153,16 @@ export default function UsersManagement() {
 
       {/* Users list */}
       <div className="space-y-3">
-        <h2 className="font-bold text-slate-700">المستخدمون ({users.length})</h2>
+        <h2 className="font-bold text-slate-700">المستخدمون ({loading || loadError ? '—' : users.length})</h2>
 
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="w-7 h-7 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/>
+          </div>
+        ) : loadError ? (
+          <div className="bg-red-50 border border-red-200 rounded-2xl py-8 text-center text-red-700 text-sm space-y-3" role="alert" data-users-load-error>
+            <p>تعذّر تحميل المستخدمين. تحقق من الاتصال.</p>
+            <button onClick={load} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-semibold">إعادة المحاولة</button>
           </div>
         ) : users.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-100 py-12 text-center text-slate-400">
@@ -185,20 +184,17 @@ export default function UsersManagement() {
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[user.role]}`}>
                     {ROLE_LABELS[user.role]}
                   </span>
+                  {user.is_active === false && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600 ms-1">معطّل من المالك</span>
+                  )}
                 </div>
               </div>
-              {editing !== user.id && (
+              {editing !== user.id && !isProtected(user) && (
                 <div className="flex gap-2">
-                  <button onClick={() => { setEditing(user.id); setEditPin({ pin:'', pinConfirm:'' }); clearErr() }}
+                  <button disabled={saving} onClick={() => { setEditing(user.id); setEditPin({ pin:'', pinConfirm:'' }); clearErr() }}
                     className="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition-colors font-medium">
                     تغيير الرمز
                   </button>
-                  {user.name !== userName && (
-                    <button onClick={() => deleteUser(user)}
-                      className="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-600 hover:text-white transition-colors font-medium">
-                      حذف
-                    </button>
-                  )}
                 </div>
               )}
             </div>
@@ -209,9 +205,9 @@ export default function UsersManagement() {
                   <div>
                     <label className="text-xs text-slate-500 block mb-1">الرمز الجديد</label>
                     <input
-                      type="password" inputMode="numeric" maxLength={8}
+                      type="password" inputMode="numeric" maxLength={5}
                       value={editPin.pin}
-                      onChange={e => { setEditPin(p => ({ ...p, pin: e.target.value.replace(/\D/g,'').slice(0,8) })); clearErr() }}
+                      onChange={e => { setEditPin(p => ({ ...p, pin: e.target.value.replace(/\D/g,'').slice(0,5) })); clearErr() }}
                       placeholder="••••"
                       autoFocus
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -220,20 +216,20 @@ export default function UsersManagement() {
                   <div>
                     <label className="text-xs text-slate-500 block mb-1">تأكيد الرمز</label>
                     <input
-                      type="password" inputMode="numeric" maxLength={8}
+                      type="password" inputMode="numeric" maxLength={5}
                       value={editPin.pinConfirm}
-                      onChange={e => { setEditPin(p => ({ ...p, pinConfirm: e.target.value.replace(/\D/g,'').slice(0,8) })); clearErr() }}
+                      onChange={e => { setEditPin(p => ({ ...p, pinConfirm: e.target.value.replace(/\D/g,'').slice(0,5) })); clearErr() }}
                       placeholder="••••"
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => savePin(user)}
+                  <button disabled={saving} onClick={() => savePin(user)}
                     className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors">
                     حفظ
                   </button>
-                  <button onClick={() => { setEditing(null); clearErr() }}
+                  <button disabled={saving} onClick={() => { setEditing(null); setEditPin({ pin: '', pinConfirm: '' }); clearErr() }}
                     className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
                     إلغاء
                   </button>

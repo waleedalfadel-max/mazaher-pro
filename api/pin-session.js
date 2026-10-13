@@ -1,149 +1,39 @@
 import { getSupabaseAdmin } from './_supabaseAdmin.js'
 import { checkOrigin } from './_guard.js'
+import { PIN_RE, defaultSource, verifyPinAndMint } from './_pinAuth.js'
 
 /**
- * المرحلة 2-أ — يمنح جلسة Supabase حقيقية (auth.uid()) بعد دخول PIN ناجح،
- * بلا أي تغيير على شاشة الدخول. يُستدعى إضافياً من AuthContext.login() بعد
- * مطابقة PIN محلياً — ويعيد التحقق من PIN هنا بنفسه (لا يثق بمطابقة العميل).
- *
- * الآلية: حساب Supabase Auth حقيقي لكل صف app_users (بريد اصطناعي لا يُستخدم
- * فعلياً)، رابط سحري (admin.generateLink) يبادله العميل بجلسة حقيقية عبر
- * auth.verifyOtp — بلا أي "كلمة مرور" مخترَعة أو مخزَّنة.
+ * جلسة Supabase حقيقية لمستخدم معروف المعرّف: { userId, pin } ← tokenHash للرابط السحري.
+ * كان يُستدعى بعد login_with_pin من المتصفح؛ شاشة الدخول الجديدة تستعمل /api/pin-login. يبقى للتوافق، ويمر بالتحقق نفسه:
+ * الحد المشترك في القاعدة (public.pin_login_attempt) قبل فحص الرمز، بلا عدّاد في الذاكرة، والرد عام.
  */
-
 export const config = {
   api: { bodyParser: { sizeLimit: '10kb' } },
 }
 
-const SYNTHETIC_DOMAIN = 'pin.internal.tahseeb.app'
-const PIN_RE = /^\d{4,8}$/
-
-// ── حدّان مستقلان ──────────────────────────────────────────────────────────
-// أساسي، لكل userId: يطابق قفل الواجهة بـLogin.jsx (3 محاولات/5 دقائق) —
-// المقياس الصحيح، لأن userId يصل بالطلب نفسه (العميل طابق PIN محلياً أولاً)،
-// فلا حاجة لمعرفة صحة PIN لتحديد أي حساب يُستهدَف. يعزل اختبار كل دور عن غيره.
-// ثانوي خفيف، لكل IP: يمنع الرش عبر حسابات (userId) متعددة من نفس المصدر —
-// نمط لا يصدّه الحدّ الأول لأنه يعزل كل حساب بمعزل عن البقية.
-const USER_RATE_WINDOW_MS = 5 * 60 * 1000
-const USER_RATE_MAX = 3
-const userAttempts = new Map()
-
-const IP_RATE_WINDOW_MS = 5 * 60 * 1000
-const IP_RATE_MAX = 20
-const ipAttempts = new Map()
-
-// يُحتسَب على المحاولات الفاشلة فقط (عدم تطابق PIN) — التخمين هو ما نحمي منه.
-// احتساب الدخول الناجح أيضاً كان يخنق الاستخدام العادي: كل تسجيل دخول سليم
-// يستدعي هذي النقطة مرة، فثلاث دخلات خلال خمس دقائق (أمر طبيعي تماماً، خصوصاً
-// بحساب عرض يتناوب عليه فريق) كانت تُرجع 429، فيبقى العميل بلا جلسة حقيقية
-// وتظهر كل الأرقام أصفاراً بلا أي رسالة تفسّر السبب.
-function isRateLimited(map, key, max, windowMs) {
-  const rec = map.get(key)
-  if (!rec) return false
-  if (Date.now() - rec.start > windowMs) { map.delete(key); return false }
-  return rec.count >= max
-}
-
-function recordFailure(map, key, windowMs) {
-  const now = Date.now()
-  const rec = map.get(key)
-  if (!rec || now - rec.start > windowMs) {
-    map.set(key, { start: now, count: 1 })
-  } else {
-    rec.count++
-  }
-  if (map.size > 500) {
-    for (const [k, v] of map) if (now - v.start > windowMs) map.delete(k)
+export function createPinSessionHandler({ getAdmin = getSupabaseAdmin, getSource = defaultSource } = {}) {
+  return async function handler(req, res) {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+    if (checkOrigin(req, res)) return
+    const { userId, pin } = req.body || {}
+    if (typeof userId !== 'string' || !/^[0-9a-f-]{36}$/i.test(userId) || typeof pin !== 'string' || !PIN_RE.test(pin)) {
+      return res.status(400).json({ error: 'INVALID_REQUEST' })
+    }
+    let admin
+    try { admin = getAdmin() } catch {
+      console.error('[pin-session] غير مضبوط على الخادم')
+      return res.status(500).json({ error: 'SERVER_NOT_CONFIGURED' })
+    }
+    try {
+      const r = await verifyPinAndMint(admin, { source: getSource(req), userId, pin })
+      if (r.status === 429) res.setHeader?.('retry-after', String(r.body.retryAfter))
+      // الرد القديم كان { email, tokenHash }؛ tokenHash وحده يكفي العميل
+      return res.status(r.status).json(r.status === 200 ? { tokenHash: r.body.tokenHash } : r.body)
+    } catch {
+      console.error('[pin-session] خطأ غير متوقع')
+      return res.status(500).json({ error: 'INTERNAL_ERROR' })
+    }
   }
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
-  if (checkOrigin(req, res)) return
-
-  const { userId, pin } = req.body || {}
-  if (typeof userId !== 'string' || !userId || typeof pin !== 'string' || !PIN_RE.test(pin)) {
-    return res.status(400).json({ error: 'INVALID_REQUEST' })
-  }
-
-  const ip = (req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown'
-  if (isRateLimited(ipAttempts, ip, IP_RATE_MAX, IP_RATE_WINDOW_MS)) {
-    console.warn('[pin-session] تجاوز الحدّ الثانوي (IP):', ip)
-    return res.status(429).json({ error: 'RATE_LIMITED' })
-  }
-  if (isRateLimited(userAttempts, userId, USER_RATE_MAX, USER_RATE_WINDOW_MS)) {
-    console.warn('[pin-session] تجاوز الحدّ الأساسي (userId):', userId)
-    return res.status(429).json({ error: 'RATE_LIMITED' })
-  }
-
-  let admin
-  try {
-    admin = getSupabaseAdmin()
-  } catch (e) {
-    console.error('[pin-session] غير مضبوط على الخادم:', e.message)
-    return res.status(500).json({ error: 'SERVER_NOT_CONFIGURED' })
-  }
-
-  try {
-    // إعادة التحقق من PIN بنفسه — لا نثق بمطابقة العميل وحدها
-    const { data: row, error: rowErr } = await admin
-      .from('app_users')
-      .select('id, pin, auth_id')
-      .eq('id', userId)
-      .maybeSingle()
-
-    if (rowErr || !row || row.pin !== pin) {
-      console.warn('[pin-session] رفض — عدم تطابق PIN')
-      recordFailure(userAttempts, userId, USER_RATE_WINDOW_MS)
-      recordFailure(ipAttempts, ip, IP_RATE_WINDOW_MS)
-      return res.status(403).json({ error: 'PIN_MISMATCH' })
-    }
-
-    let email
-
-    if (row.auth_id) {
-      const { data: existing, error: getErr } = await admin.auth.admin.getUserById(row.auth_id)
-      if (getErr || !existing?.user) {
-        console.error('[pin-session] auth_id مربوط لكن الحساب غير موجود:', getErr?.message)
-        return res.status(500).json({ error: 'AUTH_ACCOUNT_MISSING' })
-      }
-      email = existing.user.email
-    } else {
-      // أول جلسة لهذا الصف — إنشاء حساب اصطناعي وربطه
-      email = `u-${row.id}@${SYNTHETIC_DOMAIN}`
-      const { data: created, error: createErr } = await admin.auth.admin.createUser({
-        email,
-        email_confirm: true,
-      })
-      if (createErr || !created?.user) {
-        console.error('[pin-session] فشل إنشاء الحساب:', createErr?.message)
-        return res.status(500).json({ error: 'ACCOUNT_CREATE_FAILED' })
-      }
-      const { error: updErr } = await admin
-        .from('app_users')
-        .update({ auth_id: created.user.id })
-        .eq('id', row.id)
-      if (updErr) {
-        console.error('[pin-session] فشل ربط auth_id:', updErr.message)
-        return res.status(500).json({ error: 'LINK_FAILED' })
-      }
-    }
-
-    const { data: link, error: linkErr } = await admin.auth.admin.generateLink({
-      type: 'magiclink',
-      email,
-    })
-    const hashedToken = link?.properties?.hashed_token
-    if (linkErr || !hashedToken) {
-      console.error('[pin-session] فشل توليد الرابط:', linkErr?.message)
-      return res.status(500).json({ error: 'LINK_GENERATE_FAILED' })
-    }
-
-    return res.status(200).json({ email, tokenHash: hashedToken })
-  } catch (e) {
-    console.error('[pin-session] خطأ غير متوقع:', e.message)
-    return res.status(500).json({ error: 'INTERNAL_ERROR' })
-  }
-}
+export default createPinSessionHandler()

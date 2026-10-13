@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
-import { supabase, fetchAllRows } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { fetchEveryRow } from '../lib/fetchAll.js'
 import { useAuth } from '../contexts/AuthContext'
+import { Link } from 'react-router-dom'
+import { ChevronDown, ClipboardList, FileText, Hourglass, Info, Receipt, RefreshCw, ShoppingBasket, Upload, Wallet } from 'lucide-react'
+import { Metric, Money, Panel, Segment } from '../ui/components.jsx'
 import { getFinancialSummary, isSales, salesAmountNet, expenseAmountNet } from '../lib/financialEngine'
+import { uncountedText } from '../lib/financeRules.js'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -80,39 +85,35 @@ function BalanceCard({ label, icon, value, color }) {
   )
 }
 
-function KpiCard({ label, value, accent, bg, negative, cmpValue, cmpLabel }) {
+function KpiCard({ label, value, negative, cmpValue, cmpLabel, foot }) {
   const isNeg  = negative ?? value < 0
-  const color  = isNeg ? '#dc2626' : accent
-  const border = isNeg ? '#fecaca' : (accent + '40')
-
   // فرق الفترة المقارَنة — يظهر فقط عند تفعيل المقارنة واختيار فترة
   const hasCmp = cmpValue !== null && cmpValue !== undefined
   const delta  = hasCmp ? value - cmpValue : 0
   const pct    = hasCmp && cmpValue !== 0 ? ((delta / Math.abs(cmpValue)) * 100).toFixed(1) : null
   const up     = delta >= 0
-
   return (
-    <div className="rounded-xl text-center shadow-sm" style={{ background: isNeg ? '#fef2f2' : bg, border: `1.5px solid ${border}`, padding: '10px 8px' }}>
-      <div className="mb-1" style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>{label}</div>
-      <div className="font-bold font-mono tabular-nums" style={{ fontSize: 16, color, lineHeight: 1.2 }}>{fmt(value)}</div>
+    <div className={`ts-metric${isNeg ? ' ts-metric--bad' : ''}`}>
+      <div className="ts-metric-top"><span className="ts-metric-label">{label}</span></div>
+      <div className="ts-metric-value"><Money value={value} /></div>
       {hasCmp && (
-        <div className="mt-1 leading-tight">
-          <div style={{ fontSize: 10, fontWeight: 700, color: up ? '#16a34a' : '#dc2626' }}>
-            {up ? '▲' : '▼'} {pct !== null ? `${Math.abs(pct)}%` : '—'}
-          </div>
-          <div style={{ fontSize: 9, color: '#94a3b8' }} title={cmpLabel || ''}>{fmt(cmpValue)}</div>
+        <div className="ts-metric-foot" title={cmpLabel || ''}>
+          <span style={{ color: up ? 'var(--ts-success)' : 'var(--ts-danger)', fontWeight: 600 }}>{up ? '▲' : '▼'} {pct !== null ? `${Math.abs(pct)}%` : '—'}</span>
+          {' '}مقابل <span className="ts-num">{fmt(cmpValue)}</span>
         </div>
       )}
+      {foot && !hasCmp && <div className="ts-metric-foot">{foot}</div>}
+      {isNeg && <div className="ts-metric-foot" style={{ color: 'var(--ts-danger)' }}>رصيد سالب</div>}
     </div>
   )
 }
 
 function ChartCard({ title, children }) {
   return (
-    <div className="bg-white rounded-2xl shadow-sm p-4" style={{ border: '1px solid #e8e5dc' }}>
-      <h2 className="font-bold text-sm mb-4" style={{ color: NAVY }}>{title}</h2>
+    <section className="ts-panel ts-panel-pad">
+      <h2 className="rp-chart-title">{title}</h2>
       {children}
-    </div>
+    </section>
   )
 }
 
@@ -185,7 +186,14 @@ function getRange(type) {
 // ── المكوّن الرئيسي ──────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { roleLabel, projectId: pid, projectName, sessionEpoch } = useAuth()
+  const { roleLabel, role, userName, projectId: pid, projectName, sessionEpoch } = useAuth()
+  const [pendingDocs, setPendingDocs] = useState(null)
+  const [pendingError, setPendingError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [cmpError, setCmpError] = useState('')
+  const mainRequest = useRef(0)
+  const pendingRequest = useRef(0)
+  const compareRequest = useRef(0)
 
   // بيانات رئيسية
   const [stats,        setStats]        = useState(null)
@@ -215,7 +223,7 @@ export default function Dashboard() {
   const cmpRef         = useRef(null)
   const mainPickerRef  = useRef()
 
-  useEffect(() => { liveRef.current = { pid, range } }, [pid, range])
+  useEffect(() => { liveRef.current = { pid, range, cmpRange, cmpMode } }, [pid, range, cmpRange, cmpMode])
 
   // إغلاق dropdown عند الضغط خارجه
   useEffect(() => {
@@ -238,18 +246,19 @@ export default function Dashboard() {
   }, [showMainPicker])
 
   useEffect(() => {
-    if (!pid) { setBalances({ cash:0, bank:0, custody:0 }); setLoading(false); return }
-    const initRange = getRange('month')
-    Promise.all([loadBalances(pid, initRange.to), loadStats(initRange, pid)]).catch(e => {
-      console.error(e); setBalances({ cash:0, bank:0, custody:0 }); setLoading(false)
-    })
+    if (pid) {
+      loadMain(range, pid)
+      loadPending(pid)
+      if (cmpMode && cmpRange) loadCmpStats(cmpRange, pid)
+    }
+    return () => { mainRequest.current++; pendingRequest.current++; compareRequest.current++ }
   }, [pid, sessionEpoch])
 
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
-      const { pid: p, range: r } = liveRef.current
-      if (p) Promise.all([loadBalances(p, r.to), loadStats(r, p)]).catch(console.error)
+      const { pid: p, range: r, cmpRange: cr, cmpMode: mode } = liveRef.current
+      if (p) { loadMain(r, p); loadPending(p); if (mode && cr) loadCmpStats(cr, p) }
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
@@ -257,61 +266,74 @@ export default function Dashboard() {
 
   // ── دوال التحميل ───────────────────────────────────────────────────
 
-  async function loadBalances(projectId, toDate) {
+  async function loadPending(projectId) {
+    const request = ++pendingRequest.current
+    setPendingDocs(null); setPendingError('')
     try {
-      const { data, error } = await fetchAllRows(() => {
-        let q = supabase.from('ledger_entries')
-          .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
-          .eq('project_id', projectId).neq('status','cancelled')
-        if (toDate) q = q.lte('date', toDate)
-        return q
-      })
-      if (error) throw error
-      const rows = data || []
-      setBalances({
-        cash:    rows.reduce((s,r) => s + (r.cash_in   ||0) - (r.cash_out   ||0), 0),
-        bank:    rows.reduce((s,r) => s + (r.bank_in   ||0) - (r.bank_out   ||0), 0),
-        custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
-      })
-      // ذمم تطبيقات التوصيل من حقلَي receivable_in/out المنفصلَين عن العهدة
-      const sumRcvIn  = (t) => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_in ||0), 0)
-      const sumRcvOut = (t) => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_out||0), 0)
-      const rcv = {
-        hunger:  sumRcvIn('هنقر')   - sumRcvOut('هنقر'),
-        jahez:   sumRcvIn('جاهز')   - sumRcvOut('جاهز'),
-        keeta:   sumRcvIn('كيتا')   - sumRcvOut('كيتا'),
-        mrsool:  sumRcvIn('مرسول')  - sumRcvOut('مرسول'),
-        ninja:   sumRcvIn('نينجا')  - sumRcvOut('نينجا'),
-      }
-      setReceivables(rcv.hunger > 0 || rcv.jahez > 0 || rcv.keeta > 0 || rcv.mrsool > 0 || rcv.ninja > 0 ? rcv : null)
-    } catch(e) { console.error(e); setBalances({ cash:0, bank:0, custody:0 }) }
+      const result = await fetchEveryRow(() => supabase.from('documents').select('id,uploaded_at')
+        .eq('project_id', projectId).in('status', ['uploaded', 'analyzed']).order('uploaded_at').order('id'))
+      if (result.error) throw result.error
+      if (request === pendingRequest.current) setPendingDocs(result.data)
+    } catch {
+      if (request === pendingRequest.current) setPendingError('تعذّر تحميل المستندات بانتظار المراجعة')
+    }
   }
 
-  async function loadStats(r, projectId) {
-    setLoading(true)
+  async function loadMain(r, projectId) {
+    const request = ++mainRequest.current
+    setLoading(true); setLoadError(''); setStats(null); setChartEntries([]); setBalances(null); setReceivables(null)
     try {
-      const p = projectId || pid
-      if (!p) return
-      const summary = await getFinancialSummary(p, r.from, r.to)
-      if (summary) {
-        setStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit, grossProfit: summary.grossProfit, cogs: summary.cogs || 0, operatingExpenses: summary.operatingExpenses || 0, grossSales: summary.grossSales || 0, outputVat: summary.outputVat || 0 })
-        setChartEntries(summary.entries || [])
-      }
-    } catch(e) { console.error(e) }
-    finally { setLoading(false) }
+      if (!projectId || !r.from || !r.to || r.from > r.to) throw new Error('invalid_range')
+      const [summary, result] = await Promise.all([
+        getFinancialSummary(projectId, r.from, r.to),
+        fetchEveryRow(() => supabase.from('ledger_entries')
+          .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
+          .eq('project_id', projectId).neq('status','cancelled').lte('date', r.to).order('id')),
+      ])
+      if (!summary || result.error) throw new Error('load_failed')
+      if (request !== mainRequest.current) return
+      const rows = result.data
+      setBalances({
+        cash: rows.reduce((s,r) => s + (r.cash_in ||0) - (r.cash_out ||0), 0),
+        bank: rows.reduce((s,r) => s + (r.bank_in ||0) - (r.bank_out ||0), 0),
+        custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
+      })
+      const sumRcvIn = t => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_in||0), 0)
+      const sumRcvOut = t => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_out||0), 0)
+      const rcv = { hunger:sumRcvIn('هنقر')-sumRcvOut('هنقر'), jahez:sumRcvIn('جاهز')-sumRcvOut('جاهز'),
+        keeta:sumRcvIn('كيتا')-sumRcvOut('كيتا'), mrsool:sumRcvIn('مرسول')-sumRcvOut('مرسول'), ninja:sumRcvIn('نينجا')-sumRcvOut('نينجا') }
+      setReceivables(Object.values(rcv).some(v => v > 0) ? rcv : null)
+      setStats({ totalSales:summary.totalSales, totalExpenses:summary.totalExpenses, profit:summary.netProfit,
+        grossProfit:summary.grossProfit, cogs:summary.cogs||0, operatingExpenses:summary.operatingExpenses||0,
+        grossSales:summary.grossSales||0, outputVat:summary.outputVat||0, uncounted: uncountedText(summary.uncounted) })
+      setChartEntries(summary.entries || [])
+    } catch {
+      if (request === mainRequest.current) setLoadError(!r.from || !r.to || r.from > r.to
+        ? 'اختر فترة صحيحة لعرض الأرقام' : 'تعذّر تحميل أرقام لوحة التحكم. أعد المحاولة لعرض الأرقام كاملة.')
+    } finally { if (request === mainRequest.current) setLoading(false) }
   }
 
   async function loadCmpStats(r, projectId) {
-    if (!r || !projectId) return
+    const request = ++compareRequest.current
+    setCmpStats(null); setCmpEntries([]); setCmpError('')
+    if (!r || !projectId) { setCmpLoading(false); return }
     setCmpLoading(true)
     try {
       const summary = await getFinancialSummary(projectId, r.from, r.to)
-      if (summary) {
-        setCmpStats({ totalSales: summary.totalSales, totalExpenses: summary.totalExpenses, profit: summary.netProfit, grossProfit: summary.grossProfit, cogs: summary.cogs || 0, operatingExpenses: summary.operatingExpenses || 0 })
-        setCmpEntries(summary.entries || [])
-      }
-    } catch(e) { console.error(e) }
-    finally { setCmpLoading(false) }
+      if (!summary) throw new Error('load_failed')
+      if (request !== compareRequest.current) return
+      setCmpStats({ totalSales:summary.totalSales, totalExpenses:summary.totalExpenses, profit:summary.netProfit,
+        grossProfit:summary.grossProfit, cogs:summary.cogs||0, operatingExpenses:summary.operatingExpenses||0 })
+      setCmpEntries(summary.entries || [])
+    } catch {
+      if (request === compareRequest.current) setCmpError('تعذّر تحميل أرقام المقارنة')
+    } finally { if (request === compareRequest.current) setCmpLoading(false) }
+  }
+
+  function refreshDashboard() {
+    if (!pid) return
+    loadMain(range, pid); loadPending(pid)
+    if (cmpMode && cmpRange) loadCmpStats(cmpRange, pid)
   }
 
   // ── معالجات الفترة ─────────────────────────────────────────────────
@@ -322,8 +344,7 @@ export default function Dashboard() {
     const r = getRange(key)
     setRange(r)
     if (pid) {
-      loadBalances(pid, r.to)
-      loadStats(r, pid)
+      loadMain(r, pid)
       if (cmpMode === 'prev') {
         const cr = getPrevMonthRange(r)
         setCmpRange(cr)
@@ -339,7 +360,7 @@ export default function Dashboard() {
     setRange({ from, to })
     setActivePeriod('month-picker')
     setShowMainPicker(false)
-    if (pid) { loadBalances(pid, to); loadStats({ from, to }, pid) }
+    if (pid) { loadMain({ from, to }, pid) }
   }
 
   function handleCustom(field, val) {
@@ -373,6 +394,7 @@ export default function Dashboard() {
   }
 
   function cancelCompare() {
+    compareRequest.current++; setCmpLoading(false); setCmpError('')
     setCmpMode(null)
     setCmpRange(null)
     setCmpStats(null)
@@ -482,43 +504,34 @@ export default function Dashboard() {
   const totalChannelSales = channelPieData.reduce((s,d)=>s+d.value, 0)
   const totalExpensePie   = expensePieData.reduce((s,d)=>s+d.value, 0)
   const hasCharts   = !loading && chartEntries.length > 0
-  const hasCompare  = !!cmpMode && !!cmpStats
+  const hasCompare  = !!cmpMode && !!cmpStats && !cmpLoading && !cmpError
   const thisYear    = new Date().getFullYear()
 
   const COMPARE_ENABLED = true
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 rp-dash">
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="ts-heading">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: NAVY }}>لوحة التحكم</h1>
-          <p className="text-slate-500 text-sm mt-0.5">مرحباً — {roleLabel}{projectName ? ` | ${projectName}` : ''}</p>
+          <h1>أهلًا {userName || ''}</h1>
+          <p>{roleLabel}{projectName ? ` · ${projectName}` : ''}</p>
         </div>
         <button
-          onClick={() => { if (pid) Promise.all([loadBalances(pid, range.to), loadStats(range, pid)]).catch(console.error) }}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all shrink-0"
-          style={{ background: '#f5f4f0', color: NAVY, border: '1px solid #e8e5dc' }}
-        >
-          <span className={loading ? 'animate-spin inline-block' : ''}>🔄</span>
-          <span className="hidden sm:inline">تحديث</span>
+          onClick={refreshDashboard} aria-label="تحديث"
+          disabled={loading} className="ts-btn">
+          <RefreshCw className={`ts-icon${loading ? ' ts-spin' : ''}`} aria-hidden="true" />
+          <span className="ts-desktop-only">تحديث</span>
         </button>
       </div>
 
       {/* فلتر التاريخ + زر المقارنة */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={{ border: '1px solid #e8e5dc' }}>
-        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
-        <div className="flex flex-wrap gap-2 justify-center">
-          {QUICK_PERIODS.map(p => (
-            <button key={p.key} onClick={() => handlePeriod(p.key)}
-              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
-              style={activePeriod === p.key ? { background: GOLD, color: NAVY } : { background: '#f5f4f0', color: '#4b5563' }}>
-              {p.label}
-            </button>
-          ))}
+      <div className="ts-panel ts-panel-pad rp-dash-period">
+        <div className="rp-dash-period-row">
+          <Segment label="الفترة" value={QUICK_PERIODS.some(p => p.key === activePeriod) ? activePeriod : ''}
+            onChange={handlePeriod} options={QUICK_PERIODS.map(p => ({ value: p.key, label: p.label }))} />
 
           {/* زر شهر محدد */}
           <div className="relative" ref={mainPickerRef}>
@@ -634,7 +647,7 @@ export default function Dashboard() {
               className="border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2" style={{ borderColor: '#d1c9b8' }}/>
           </div>
           {activePeriod === 'custom' && (
-            <button onClick={() => { loadBalances(pid, range.to); loadStats(range, pid) }}
+            <button onClick={refreshDashboard}
               className="px-4 py-2 rounded-xl text-sm font-bold" style={{ background: NAVY, color: '#fff' }}>
               تحديث
             </button>
@@ -642,57 +655,107 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* الكروت الرئيسية — صفّان من 3 */}
-      <div className="grid grid-cols-3 gap-2">
-        {/* الصف الأول: أرقام الفترة */}
-        {loading || !stats ? (
-          [0,1,2].map(i => <div key={i} className="rounded-xl h-16 animate-pulse" style={{ background: '#e8e5dc' }}/>)
-        ) : (
+      {cmpError && <div className="ts-note ts-note--error" role="alert">
+        <span>{cmpError}</span><button className="ts-btn" onClick={() => loadCmpStats(cmpRange, pid)}>إعادة المحاولة</button>
+      </div>}
+      {cmpLoading && <div className="ts-note" role="status">جارٍ تحميل المقارنة…</div>}
+      {loadError ? <div className="ts-note ts-note--error" role="alert">
+        <span>{loadError}</span><button className="ts-btn" onClick={refreshDashboard}>إعادة المحاولة</button>
+      </div> : <>
+      {/* الأرقام الأربعة المعتمدة في التصميم — من getFinancialSummary نفسه بلا تغيير في الحساب */}
+      {stats?.uncounted && !loading && <div className="ts-note ts-note--warning" data-k="uncounted"><div className="ts-note-body">{stats.uncounted}</div></div>}
+      <div className="ts-metrics">
+        {loading || !stats ? [0, 1, 2, 3].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
-            <KpiCard label="المبيعات"
-              value={stats.totalSales} accent="#0284c7" bg="#f0f9ff"
-              cmpValue={hasCompare ? cmpStats.totalSales : undefined} cmpLabel={cmpLabel} />
-            <KpiCard label="المصروفات"
-              value={stats.totalExpenses} accent="#dc2626" bg="#fef2f2"
-              cmpValue={hasCompare ? cmpStats.totalExpenses : undefined} cmpLabel={cmpLabel} />
-            <KpiCard label="الربح"
-              value={stats.profit} accent={stats.profit >= 0 ? '#15803d' : '#dc2626'}
-              bg={stats.profit >= 0 ? '#f0fdf4' : '#fef2f2'} negative={stats.profit < 0}
-              cmpValue={hasCompare ? cmpStats.profit : undefined} cmpLabel={cmpLabel} />
-          </>
-        )}
-
-        {/* الصف الثاني: الأرصدة */}
-        {!balances ? (
-          [0,1,2].map(i => <div key={i} className="rounded-xl h-16 animate-pulse" style={{ background: '#e8e5dc' }}/>)
-        ) : (
-          <>
-            <KpiCard label="البنك"
-              value={balances.bank}    accent="#1d4ed8" bg="#eff6ff" negative={balances.bank < 0} />
-            <KpiCard label="الصندوق"
-              value={balances.cash}    accent="#16a34a" bg="#f0fdf4" negative={balances.cash < 0} />
-            <KpiCard label="العهدة"
-              value={balances.custody} accent="#b45309" bg="#fffbeb" negative={balances.custody < 0} />
+            <Metric label="المبيعات" icon={Wallet} tag="قبل الضريبة"
+              foot={hasCompare ? <>مقابل <span className="ts-num">{fmt(cmpStats.totalSales)}</span> ({cmpLabel})</> : <>شاملة الضريبة <span className="ts-num">{fmt(stats.grossSales)}</span></>}>
+              <Money value={stats.totalSales} />
+            </Metric>
+            <Metric label="المشتريات" icon={ShoppingBasket} tag="قبل الضريبة"
+              foot={hasCompare ? <>مقابل <span className="ts-num">{fmt(cmpStats.cogs)}</span> ({cmpLabel})</> : 'تكلفة البضاعة والتغليف'}>
+              <Money value={stats.cogs} />
+            </Metric>
+            <Metric label="المصروفات التشغيلية" icon={Receipt} tag="قبل الضريبة"
+              foot={hasCompare ? <>مقابل <span className="ts-num">{fmt(cmpStats.operatingExpenses)}</span> ({cmpLabel})</> : 'لا تشمل المشتريات'}>
+              <Money value={stats.operatingExpenses} />
+            </Metric>
+            <Metric as={role === 'accountant' ? Link : 'div'} to={role === 'accountant' ? '/pending' : undefined}
+              label="بانتظار المراجعة" icon={Hourglass} tag="كل الفترات" tone={(pendingDocs || []).length ? 'attention' : undefined}
+              foot={pendingError || (pendingDocs == null ? '…' : (pendingDocs || []).length ? 'مرفوعة ولم تُعتمد بعد' : 'لا شيء ينتظر')}>
+              <span className="ts-num">{pendingDocs == null ? '—' : (pendingDocs || []).length}</span>
+            </Metric>
           </>
         )}
       </div>
 
-      {/* مبيعات شاملة الضريبة — بطاقة مرجعية منفصلة عمداً بلون وشكل مختلفَين،
-          حتى لا تُقرأ كبديل عن "المبيعات" الصافية التي يُبنى عليها الربح */}
+      <details className="rp-scope">
+        <summary><Info className="ts-icon--sm" aria-hidden="true" />ما الذي يشمله كل رقم؟<ChevronDown className="ts-icon--sm" aria-hidden="true" /></summary>
+        <div className="rp-scope-list">
+          <div><strong>المبيعات: </strong>قيود أنواعها «مبيعات» أو «تحصيل جملة» في الفترة (نقدي وبنك وذمم التطبيقات)، مقسومة على 1.15 لاستبعاد ضريبة المخرجات. التحويلات الداخلية وتحصيل الذمم مستثناة.</div>
+          <div><strong>المشتريات: </strong>قيود تكلفة البضاعة المباعة ومشتريات المواد ومواد التعبئة والتغليف، بعد طرح ضريبة المدخلات المسجلة عليها.</div>
+          <div><strong>المصروفات التشغيلية: </strong>بقية المصروفات بعد طرح ضريبتها، بلا المشتريات ولا المسحوبات ولا الأقساط ولا الضريبة. لا تكرار بين الرقمين.</div>
+          <div><strong>بانتظار المراجعة: </strong>مستندات مرفوعة أو مقروءة لم تُعتمد ولم تُرفض، من كل التواريخ، ولا تدخل الأرقام قبل اعتمادها.</div>
+          <div className="rp-scope-wide">«الربح» أدناه هو رقم التطبيق الحالي نفسه: المبيعات − المشتريات − المصروفات التشغيلية، بلا حساب للمخزون. بقي كما هو ولم يُعدَّل حسابه.</div>
+        </div>
+      </details>
+
+      <div className="rp-home-mid">
+        <div className="rp-shortcuts">
+          <Link to="/invoice" className="rp-shortcut rp-shortcut--primary rp-desktop-only">
+            <span className="rp-shortcut-icon"><Upload className="ts-icon" aria-hidden="true" /></span>
+            <span><strong>رفع مستند</strong><small>فاتورة مورد أو مصروف أو تقرير إغلاق</small></span>
+          </Link>
+          {role === 'accountant' && (
+            <Link to="/pending" className="rp-shortcut rp-shortcut--compact">
+              <span className="rp-shortcut-icon"><FileText className="ts-icon" aria-hidden="true" /></span>
+              <span><strong>مستندات جديدة</strong><small>مراجعة واعتماد</small></span>
+            </Link>
+          )}
+        </div>
+        <Panel className="rp-actions-panel" clip title="يحتاج إجراء" icon={ClipboardList}>
+          {pendingError ? <div className="ts-note ts-note--error" role="alert">
+            <span>{pendingError}</span><button className="ts-btn" onClick={() => loadPending(pid)}>إعادة المحاولة</button>
+          </div> : pendingDocs == null ? <div className="rp-todo-clear" role="status">جارٍ تحميل المستندات…</div> : (pendingDocs || []).length > 0 ? (
+            <ul className="rp-todo"><li>
+              {role === 'accountant' ? (
+                <Link to="/pending">
+                  <span className="rp-todo-mark"><Hourglass className="ts-icon" aria-hidden="true" /></span>
+                  <span><strong><span className="ts-num">{(pendingDocs || []).length}</span> مستند بانتظار المراجعة</strong><small>أقدمها رُفع {pendingDocs[0] ? new Date(pendingDocs[0].uploaded_at).toLocaleDateString('ar-SA-u-ca-gregory-nu-latn', { day: 'numeric', month: 'long' }) : ''}</small></span>
+                  <span className="rp-todo-go">راجعها</span>
+                </Link>
+              ) : (
+                <div className="rp-todo-static">
+                  <span className="rp-todo-mark"><Hourglass className="ts-icon" aria-hidden="true" /></span>
+                  <span><strong><span className="ts-num">{(pendingDocs || []).length}</span> مستند بانتظار مراجعة المحاسب</strong><small>تظهر في الأرقام بعد اعتمادها</small></span>
+                </div>
+              )}
+            </li></ul>
+          ) : <div className="rp-todo-clear">لا شيء يحتاج إجراء الآن.</div>}
+        </Panel>
+      </div>
+
+      {/* الربح والأرصدة كما في التطبيق الحالي */}
+      <h2 className="rp-subhead">الربح والأرصدة</h2>
+      <div className="ts-metrics rp-metrics-secondary">
+        {loading || !stats ? <div className="ts-metric rp-skeleton-card" /> : (
+          <KpiCard label="الربح (حسب التطبيق الحالي)" value={stats.profit} negative={stats.profit < 0}
+            cmpValue={hasCompare ? cmpStats.profit : undefined} cmpLabel={cmpLabel} foot="بلا حساب للمخزون" />
+        )}
+        {!balances ? [0, 1, 2].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
+          <>
+            <KpiCard label="البنك" value={balances.bank} negative={balances.bank < 0} />
+            <KpiCard label="الصندوق" value={balances.cash} negative={balances.cash < 0} />
+            <KpiCard label="العهدة" value={balances.custody} negative={balances.custody < 0} />
+          </>
+        )}
+      </div>
+
       {!loading && stats && (
-        <div className="rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap"
-          style={{ background: '#faf5ff', border: '1.5px dashed #d8b4fe' }}>
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-lg shrink-0">🧾</span>
-            <div className="min-w-0">
-              <div className="text-xs font-bold" style={{ color: '#7e22ce' }}>مبيعات شاملة الضريبة</div>
-              <div className="text-xs mt-0.5" style={{ color: '#a78bda' }}>
-                المقبوض فعلياً — منه {fmt(stats.outputVat)} ضريبة مخرجات مستحقة للهيئة
-              </div>
-            </div>
-          </div>
-          <div className="font-bold font-mono tabular-nums shrink-0" style={{ fontSize: 18, color: '#7e22ce' }}>
-            {fmt(stats.grossSales)}
+        <div className="ts-note ts-note--info">
+          <Receipt className="ts-icon" aria-hidden="true" />
+          <div className="ts-note-body">
+            <strong>مبيعات شاملة الضريبة: <span className="ts-num">{fmt(stats.grossSales)}</span></strong>
+            المقبوض فعليًا، ومنه <span className="ts-num">{fmt(stats.outputVat)}</span> ضريبة مخرجات مستحقة للهيئة.
           </div>
         </div>
       )}
@@ -828,12 +891,13 @@ export default function Dashboard() {
       )}
 
       {/* حالة فارغة */}
-      {!loading && chartEntries.length === 0 && (
+      {!loading && stats && chartEntries.length === 0 && (
         <div className="bg-white rounded-2xl shadow-sm p-10 text-center" style={{ border: '1px solid #e8e5dc' }}>
           <p className="text-slate-400 text-sm">لا توجد بيانات في هذه الفترة</p>
         </div>
       )}
 
+      </>}
     </div>
   )
 }

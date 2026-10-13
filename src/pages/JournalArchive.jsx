@@ -1,10 +1,18 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Archive, CalendarDays, ChevronDown, Download, FileText, Info, RefreshCw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getSignedUrl } from '../lib/storage'
+import { loadPeriodEntries } from '../lib/journalEntries.js'
+import { exportDayPdf } from '../lib/dayPdf.js'
+import { Button, DateInput, EmptyState, Field, IconButton, Panel, SearchBox, Segment } from '../ui/components.jsx'
+import { formatDate, formatNumber } from '../ui/format.js'
 
-const NAVY = '#1B3A5C'
-const GOLD = '#6EB7B0'
+// أرشيف الحركات اليومية بالهوية الجديدة. الحسابات كما كانت حرفيًا: القيود غير الملغاة في الفترة (الأحدث يومًا أولًا، وداخل اليوم بترتيب
+// الإنشاء)، مجمّعة يومًا يومًا بعنوان أول رقم قيد فيه، وطرفا كل حركة (getEntryAccounts) ومبلغها، ومجموع المدين والدائن والميزان لليوم
+// (يشمل الذمم)، والبحث في التاريخ ورقم الحركة والبيان والنوع، وفتح المستند، وتصدير اليوم PDF (بعد 06455b4: صفحات متعددة، src/lib/dayPdf.js).
+// التغيير: التحميل كامل بترتيب ثابت (src/lib/journalEntries.js) وفشل أي جزء رسالة بإعادة محاولة بلا أيام؛ والفلاتر ظاهرة أثناء التحميل؛
+// وجدول القيد بصفّين على الكمبيوتر وقائمة على الجوال. المقارنة قبل وبعد: local-test/journals-figures.mjs.
 
 // اسم الحساب النقدي المرتبط بالحركة
 function getCashAccount(r) {
@@ -34,119 +42,18 @@ function getEntryAccounts(r) {
   }
 }
 
-// ── توليد PDF لقيد يومي ──────────────────────────────────────────
+// ── تصدير اليوم PDF: صفحات A4 متعددة عند الحاجة (src/lib/dayPdf.js) بالحسابات نفسها، وباسم الملف نفسه ─────────
 async function exportGroupPdf(group, fmt) {
-  const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-    import('jspdf'), import('html2canvas'),
-  ])
-
-  const { rows, date, journalNumber } = group
-  const totalDebit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0), 0)
-  const totalCredit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0), 0)
-  const balance     = totalDebit - totalCredit
-
-  const el = document.createElement('div')
-  el.style.cssText = `
-    position:fixed; left:-9999px; top:0;
-    width:794px; padding:36px; background:#fff;
-    font-family:Cairo,Arial,sans-serif; direction:rtl; color:#1e293b;
-  `
-
-  el.innerHTML = `
-    <div style="border-bottom:4px solid ${GOLD};padding-bottom:14px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-end">
-      <div>
-        <div style="font-size:22px;font-weight:bold;color:${NAVY}">تحسيب</div>
-        <div style="font-size:13px;color:#6b7280;margin-top:2px">حركة مالية يومية</div>
-      </div>
-      <div style="text-align:left">
-        <div style="font-size:14px;font-weight:bold;color:${GOLD}">${journalNumber || date}</div>
-        <div style="font-size:12px;color:#6b7280;margin-top:2px">التاريخ: ${date}</div>
-        <div style="font-size:11px;color:#9ca3af">طُبع: ${new Date().toLocaleDateString('en-GB')}</div>
-      </div>
-    </div>
-
-    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px">
-      <thead>
-        <tr style="background:${NAVY}">
-          <th style="padding:8px 10px;text-align:right;color:#fff;font-weight:bold;width:26px">#</th>
-          <th style="padding:8px 10px;text-align:right;color:#fff;font-weight:bold">البيان</th>
-          <th style="padding:8px 10px;text-align:right;color:#86efac;font-weight:bold">مدين</th>
-          <th style="padding:8px 10px;text-align:right;color:#fca5a5;font-weight:bold">دائن</th>
-          <th style="padding:8px 10px;text-align:center;color:${GOLD};font-weight:bold">مستند</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((r, i) => {
-          const { amount, debitAccount, creditAccount } = getEntryAccounts(r)
-          const desc = r.description && r.description !== r.type ? r.description : ''
-          return `
-            <tr style="border-bottom:1px solid #f1f5f9">
-              <td rowspan="2" style="padding:7px 10px;color:#9ca3af;font-size:10px;vertical-align:middle;text-align:center">${i+1}</td>
-              <td style="padding:6px 10px 2px;font-weight:700;color:${NAVY}">من ح/ ${debitAccount}</td>
-              <td style="padding:6px 10px 2px;text-align:right;font-weight:bold;color:#16a34a;font-family:monospace">${fmt(amount)}</td>
-              <td style="padding:6px 10px 2px;text-align:right;color:#d1d5db">—</td>
-              <td rowspan="2" style="padding:7px 10px;text-align:center;vertical-align:middle">
-                ${r.file_url ? `<span style="color:#6b7280;font-size:10px">📎 مستند (اُنظر التطبيق)</span>` : '<span style="color:#d1d5db">—</span>'}
-              </td>
-            </tr>
-            <tr style="border-bottom:3px solid #f5f4f0">
-              <td style="padding:2px 10px 8px;padding-right:28px;color:#6b7280;font-style:italic">
-                إلى ح/ ${creditAccount}
-                ${desc ? `<span style="display:block;font-size:10px;color:#9ca3af;margin-top:2px">${desc}</span>` : ''}
-              </td>
-              <td style="padding:2px 10px 8px;text-align:right;color:#d1d5db">—</td>
-              <td style="padding:2px 10px 8px;text-align:right;font-weight:bold;color:#dc2626;font-family:monospace">${fmt(amount)}</td>
-            </tr>`
-        }).join('')}
-      </tbody>
-      <tfoot>
-        <tr style="background:${NAVY}">
-          <td colspan="2" style="padding:9px 10px;font-weight:bold;color:#fff;font-size:11px">الإجمالي (${rows.length} حركة)</td>
-          <td style="padding:9px 10px;text-align:right;font-weight:bold;color:#86efac;font-family:monospace">${fmt(totalDebit)}</td>
-          <td style="padding:9px 10px;text-align:right;font-weight:bold;color:#fca5a5;font-family:monospace">${fmt(totalCredit)}</td>
-          <td/>
-        </tr>
-      </tfoot>
-    </table>
-
-    <div style="display:flex;gap:10px;margin-bottom:20px">
-      <div style="flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:10px;color:#6b7280;margin-bottom:4px">إجمالي المدين</div>
-        <div style="font-size:16px;font-weight:bold;color:#16a34a;font-family:monospace">${fmt(totalDebit)}</div>
-      </div>
-      <div style="flex:1;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:10px;color:#6b7280;margin-bottom:4px">إجمالي الدائن</div>
-        <div style="font-size:16px;font-weight:bold;color:#dc2626;font-family:monospace">${fmt(totalCredit)}</div>
-      </div>
-      <div style="flex:1;background:${balance>=0?'#eff6ff':'#fef2f2'};border:1px solid ${balance>=0?'#bfdbfe':'#fecaca'};border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:10px;color:#6b7280;margin-bottom:4px">الميزان</div>
-        <div style="font-size:16px;font-weight:bold;color:${balance>=0?'#1d4ed8':'#dc2626'};font-family:monospace">${fmt(Math.abs(balance))} ${balance>=0?'(مدين)':balance<0?'(دائن)':''}</div>
-      </div>
-    </div>
-
-    <div style="border-top:2px solid ${GOLD};padding-top:10px;text-align:center;color:#9ca3af;font-size:10px">
-      تحسيب — ${new Date().toLocaleString('en-US')}
-    </div>
-  `
-
-  document.body.appendChild(el)
-  await new Promise(r => setTimeout(r, 100))
-
-  const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
-  document.body.removeChild(el)
-
-  const pdf   = new jsPDF('p', 'mm', 'a4')
-  const pageW = pdf.internal.pageSize.getWidth()
-  const imgH  = (canvas.height * pageW) / canvas.width
-  pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, pageW, imgH)
-  pdf.save(`قيد-${journalNumber || date}.pdf`)
+  await exportDayPdf(group, fmt, getEntryAccounts)
 }
 
 const QUICK_PERIODS = [
-  { key: 'month',     label: 'الشهر الحالي' },
-  { key: 'lastMonth', label: 'الشهر الماضي' },
-  { key: 'year',      label: 'السنة الحالية' },
+  { value: 'month',     label: 'الشهر الحالي' },
+  { value: 'lastMonth', label: 'الشهر الماضي' },
+  { value: 'year',      label: 'السنة الحالية' },
+  { value: 'custom',    label: 'فترة أخرى' },
 ]
+const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_in,receivable_out,total_amount,status,journal_number,file_url,created_at'
 
 function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -166,61 +73,52 @@ function getRange(type) {
   return { from, to }
 }
 
-// ── الصفحة الرئيسية ──────────────────────────────────────────────
+const reason = error => (/failed to fetch|network|load failed/i.test(error?.message || '') ? 'تعذّر الاتصال بالخادم؛ تحقق من الاتصال ثم أعد المحاولة.' : (error?.message || 'خطأ غير معروف'))
+const cleanLabel = s => String(s || '').replace(/^[^\p{L}\p{N}]+/u, '').trim() || String(s || '')
+
+async function openFile(fileUrl) {
+  const win = window.open('', '_blank')
+  const url = await getSignedUrl(fileUrl)
+  if (win) { if (url) win.location.href = url; else win.close() }
+}
+
+// ── الصفحة ──────────────────────────────────────────────────────────
 export default function JournalArchive() {
   const { projectId } = useAuth()
   const [entries,      setEntries]      = useState([])
   const [loading,      setLoading]      = useState(true)
+  const [loadError,    setLoadError]    = useState('')
   const [openDates,    setOpenDates]    = useState({})
   const [search,       setSearch]       = useState('')
   const [exporting,    setExporting]    = useState({})
+  const [exportError,  setExportError]  = useState('')
   const [activePeriod, setActivePeriod] = useState('month')
   const [filter,       setFilter]       = useState(getRange('month'))
+  const loadSeq = useRef(0)
 
   useEffect(() => { if (projectId) init(projectId, filter) }, [projectId])
 
+  // القيود وروابط المستندات كاملة؛ أي فشل ← رسالة بلا أيام. نتيجة أقدم من آخر طلب تُهمل.
   async function init(pid, f) {
-    setLoading(true)
-    let q = supabase
-      .from('ledger_entries')
-      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_in,receivable_out,total_amount,status,journal_number,file_url,created_at')
-      .eq('project_id', pid)
-      .not('status', 'eq', 'cancelled')
-      .order('date', { ascending: false })
-      .order('created_at', { ascending: true })
-      .limit(2000)
-    if (f?.from) q = q.gte('date', f.from)
-    if (f?.to)   q = q.lte('date', f.to)
-    const { data } = await q
-
-    const all = data || []
-
-    const missing = all.filter(r => !r.file_url && r.journal_number).map(r => r.journal_number)
-    if (missing.length) {
-      const { data: docs } = await supabase
-        .from('documents').select('journal_number,file_url,file_name')
-        .in('journal_number', [...new Set(missing)]).not('file_url', 'is', null)
-      if (docs) {
-        const docMap = {}
-        docs.forEach(d => { if (d.file_url) docMap[d.journal_number] = d })
-        all.forEach(r => {
-          if (!r.file_url && docMap[r.journal_number]) {
-            r.file_url  = docMap[r.journal_number].file_url
-            r._doc_name = docMap[r.journal_number].file_name
-          }
-        })
-      }
-    }
-
-    setEntries(all)
+    const seq = ++loadSeq.current
+    setLoading(true); setLoadError('')
+    const res = await loadPeriodEntries(supabase, { projectId: pid, from: f?.from, to: f?.to, columns: COLUMNS, dateAscending: false })
+    if (seq !== loadSeq.current) return
+    if (res.error) { setEntries([]); setLoadError(`${res.part}: ${reason(res.error)}`) }
+    else setEntries(res.data)
     setLoading(false)
   }
 
-  function setQuick(type) {
+  function choosePeriod(type) {
     setActivePeriod(type)
+    if (type === 'custom') return
     const f = getRange(type)
     setFilter(f)
     if (projectId) init(projectId, f)
+  }
+  function setDate(key, iso) {
+    setActivePeriod('custom')
+    const f = { ...filter, [key]: iso }; setFilter(f); init(projectId, f)
   }
 
   const groups = useMemo(() => {
@@ -251,7 +149,9 @@ export default function JournalArchive() {
     setOpenDates(prev => ({ ...prev, [date]: !prev[date] }))
   }
 
-  const fmt = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
+  // تنسيق PDF كما كان (حتى 3 منازل)؛ والشاشة بمنزلتين كبقية الهوية
+  const fmtPdf = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
+  const fmt = v => (v ? formatNumber(v, 2) : '—')
 
   function dayTotals(rows) {
     const debit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0), 0)
@@ -259,248 +159,167 @@ export default function JournalArchive() {
     return { debit, credit, balance: debit - credit }
   }
 
-  async function handleExport(e, group) {
-    e.stopPropagation()
-    setExporting(p => ({ ...p, [group.date]: true }))
-    try { await exportGroupPdf(group, fmt) } catch(err) { console.error(err) }
+  async function handleExport(group) {
+    setExporting(p => ({ ...p, [group.date]: true })); setExportError('')
+    try { await exportGroupPdf(group, fmtPdf) } catch (err) { console.error(err); setExportError(`تعذّر إنشاء ملف PDF ليوم ${group.date}.`) }
     setExporting(p => ({ ...p, [group.date]: false }))
   }
 
-  if (loading) return (
-    <div className="flex justify-center h-64 items-center">
-      <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin"
-        style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
-    </div>
-  )
+  const refYear = Number((filter.to || fmtDate(new Date())).slice(0, 4))
+  const rangeText = filter.from && filter.to
+    ? (filter.from === filter.to ? formatDate(filter.from, { year: true }) : `${formatDate(filter.from, { year: filter.from.slice(0, 4) !== filter.to.slice(0, 4) })} – ${formatDate(filter.to, { year: true })}`)
+    : 'كل التواريخ'
+  const dayText = iso => (/^\d{4}-\d{2}-\d{2}$/.test(iso) ? formatDate(iso, { refYear, day: true }) : iso)
 
   return (
-    <div className="space-y-4">
-
-      {/* رأس */}
-      <div>
-        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>أرشيف الحركات اليومية</h1>
-        <p className="text-sm text-slate-500 mt-0.5">{filteredGroups.length} يوم — {entries.length} حركة</p>
-      </div>
-
-      {/* فلتر التاريخ والبحث */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={{ border: '1px solid #e8e5dc' }}>
-        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
-        <div className="flex flex-wrap gap-2 justify-center">
-          {QUICK_PERIODS.map(p => (
-            <button key={p.key} onClick={() => setQuick(p.key)}
-              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
-              style={activePeriod === p.key
-                ? { background: GOLD, color: NAVY }
-                : { background: '#f5f4f0', color: '#4b5563' }}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-3 items-end justify-center">
-          <div className="flex-1 min-w-[8rem]">
-            <label className="text-xs text-slate-500 block mb-1 text-center">من</label>
-            <input type="date" value={filter.from}
-              onChange={e => { setActivePeriod('custom'); const f = { ...filter, from: e.target.value }; setFilter(f); init(projectId, f) }}
-              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
-          <div className="flex-1 min-w-[8rem]">
-            <label className="text-xs text-slate-500 block mb-1 text-center">إلى</label>
-            <input type="date" value={filter.to}
-              onChange={e => { setActivePeriod('custom'); const f = { ...filter, to: e.target.value }; setFilter(f); init(projectId, f) }}
-              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
-          <div className="flex-1 min-w-[10rem]">
-            <label className="text-xs text-slate-500 block mb-1">بحث بالتاريخ أو رقم الحركة أو البيان</label>
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="فاتورة كهرباء أو QD-..."
-              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
-          <div className="flex-1 min-w-[8rem]">
-            <div className="mb-1 h-4" />
-            <button onClick={() => init(projectId, filter)}
-              className="w-full px-4 py-1.5 rounded-xl text-sm font-bold transition-all text-center"
-              style={{ background: NAVY, color: '#fff' }}>
-              بحث
-            </button>
-          </div>
+    <div className="ldg-page jar-page">
+      <div className="ts-heading">
+        <div>
+          <h1>أرشيف الحركات اليومية</h1>
+          <p className="ldg-showing">
+            <CalendarDays className="ts-icon--sm" aria-hidden="true" />
+            <span>{rangeText}</span>
+            <span aria-hidden="true">·</span>
+            <span data-k="ja.count">{loading || loadError ? '—' : `${filteredGroups.length} يوم — ${entries.length} حركة`}</span>
+          </p>
         </div>
       </div>
 
-      {filteredGroups.length === 0 && (
-        <div className="bg-white rounded-2xl shadow-sm flex flex-col items-center py-16 text-slate-400"
-          style={{ border: '1px solid #e8e5dc' }}>
-          <span className="text-4xl mb-3">📂</span>
-          <p className="font-medium">{search ? 'لا توجد نتائج' : 'لا توجد قيود'}</p>
+      <Panel className="ldg-filters jx-filters" title="الفترة والبحث" icon={CalendarDays}>
+        <div className="ts-panel-body ldg-filter-body">
+          <Segment label="الفترة" value={activePeriod} onChange={choosePeriod} options={QUICK_PERIODS} />
+          <div className="ldg-filter-row jx-filter-row">
+            <Field label="من"><DateInput value={filter.from} onChange={iso => setDate('from', iso)} /></Field>
+            <Field label="إلى"><DateInput value={filter.to} onChange={iso => setDate('to', iso)} /></Field>
+            <div className="ts-field jx-search">
+              <span className="ts-field-label">بحث بالتاريخ أو رقم الحركة أو البيان</span>
+              <SearchBox label="بحث بالتاريخ أو رقم الحركة أو البيان" value={search} onChange={setSearch} placeholder="فاتورة كهرباء أو QD-..." />
+            </div>
+            <Button icon={RefreshCw} onClick={() => init(projectId, filter)} disabled={loading}>تحديث</Button>
+          </div>
         </div>
-      )}
+      </Panel>
 
-      <div className="space-y-2">
-        {filteredGroups.map(g => {
-          const { debit, credit, balance } = dayTotals(g.rows)
-          const isOpen   = !!openDates[g.date]
-          const label    = g.journalNumber || g.date
-          const isPdfing = !!exporting[g.date]
+      {exportError && <p className="ts-field-error" role="alert">{exportError}</p>}
 
-          return (
-            <div key={g.date} className="bg-white rounded-2xl shadow-sm overflow-hidden"
-              style={{ border: '1px solid #e8e5dc' }}>
+      {loading ? (
+        <Panel><div className="ldg-loading" aria-busy="true">جارٍ تحميل الحركات…</div></Panel>
+      ) : loadError ? (
+        <div className="ts-note ts-note--error ldg-load-error" data-k="ja.loadError" role="alert">
+          <Info className="ts-icon" aria-hidden="true" />
+          <div className="ts-note-body">
+            <strong>تعذّر تحميل حركات هذه الفترة كاملة، فلم تُعرض الأيام ولا مجاميعها.</strong>
+            عرض جزء منها كأنه كامل يعطي مجاميع وموازين خاطئة. {loadError}
+            <div className="ts-note-action"><Button size="sm" variant="primary" icon={RefreshCw} onClick={() => init(projectId, filter)}>إعادة المحاولة</Button></div>
+          </div>
+        </div>
+      ) : filteredGroups.length === 0 ? (
+        <Panel><EmptyState icon={Archive}>{search ? 'لا توجد نتائج.' : 'لا توجد قيود في هذه الفترة.'}</EmptyState></Panel>
+      ) : (
+        <div className="jar-days">
+          {filteredGroups.map(g => {
+            const { debit, credit, balance } = dayTotals(g.rows)
+            const isOpen   = !!openDates[g.date]
+            const label    = g.journalNumber || g.date
+            const isPdfing = !!exporting[g.date]
+            const bodyId   = `jar-day-${g.date}`
+            return (
+              <section key={g.date} className={`jar-day${isOpen ? ' is-open' : ''}`} data-group={g.date}>
+                <div className="jar-day-head">
+                  <button type="button" className="jar-toggle" data-k="toggle" aria-expanded={isOpen} aria-controls={bodyId} onClick={() => toggleDate(g.date)}>
+                    <ChevronDown className="ts-icon jar-chev" aria-hidden="true" />
+                    <span className="jar-day-title">
+                      <strong className="ts-num" data-k="label">{label}</strong>
+                      <span data-k="date" data-iso={g.date}>{dayText(g.date)}</span>
+                    </span>
+                    <span className="jar-day-count" data-k="count">{g.rows.length} حركة</span>
+                    <span className="jar-day-sums">
+                      {debit  > 0 && <span className="is-in"><small>مدين</small> <span className="ts-num" data-k="debit">{fmt(debit)}</span></span>}
+                      {credit > 0 && <span className="is-out"><small>دائن</small> <span className="ts-num" data-k="credit">{fmt(credit)}</span></span>}
+                    </span>
+                  </button>
+                  <Button size="sm" icon={isPdfing ? RefreshCw : Download} data-k="pdf" disabled={isPdfing} onClick={() => handleExport(g)}>{isPdfing ? 'جارٍ…' : 'PDF'}</Button>
+                </div>
 
-              {/* رأس القيد */}
-              <div className="flex items-center gap-2 px-4 py-3"
-                style={{ borderBottom: isOpen ? `1px solid #e8e5dc` : 'none' }}>
-
-                <button onClick={() => toggleDate(g.date)}
-                  className="flex-1 flex items-center gap-3 text-right min-w-0"
-                  onMouseEnter={e => e.currentTarget.parentElement.style.background = '#fafaf8'}
-                  onMouseLeave={e => e.currentTarget.parentElement.style.background = ''}>
-                  <span className="text-xl shrink-0">{isOpen ? '📂' : '📁'}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-sm" style={{ color: NAVY }}>{label}</span>
-                      <span className="text-xs text-slate-400 font-mono">{g.date}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ background: '#f5f4f0', color: '#8a7a5a' }}>{g.rows.length} حركة</span>
+                {isOpen && (
+                  <div id={bodyId} className="jar-day-body">
+                    {/* الكمبيوتر: القيد بالطريقة المحاسبية، صفّان لكل حركة */}
+                    <div className="jar-table-wrap">
+                      <table className="ts-table jar-table" data-table="ja.rows">
+                        <thead>
+                          <tr><th className="jar-n">#</th><th>البيان</th><th className="ts-end">مدين</th><th className="ts-end">دائن</th><th className="jrl-c">مستند</th></tr>
+                        </thead>
+                        {g.rows.map((r, i) => {
+                          const { amount, debitAccount, creditAccount } = getEntryAccounts(r)
+                          const desc = r.description && r.description !== r.type ? r.description : null
+                          return (
+                            <tbody key={r.id} data-id={r.id}>
+                              <tr className="jar-dr">
+                                <td className="jar-n ts-num" rowSpan={2} data-k="n">{i + 1}</td>
+                                <td><span className="jar-from">من ح/ <span data-k="debitAcc">{cleanLabel(debitAccount)}</span></span></td>
+                                <td className="ts-end"><span className="ts-num is-in" data-k="dAmt">{fmt(amount)}</span></td>
+                                <td className="ts-end"><span className="ldg-nil">—</span></td>
+                                <td className="jrl-c" rowSpan={2} data-k="doc">
+                                  {r.file_url ? <IconButton bare label={r._doc_name ? `فتح المستند: ${r._doc_name}` : 'فتح المستند'} icon={FileText} className="jrl-doc" onClick={() => openFile(r.file_url)} /> : <span className="ldg-nil">—</span>}
+                                </td>
+                              </tr>
+                              <tr className="jar-cr">
+                                <td>
+                                  <span className="jar-to">إلى ح/ <span data-k="creditAcc">{cleanLabel(creditAccount)}</span></span>
+                                  {desc && <span className="jar-desc" data-k="desc">{desc}</span>}
+                                </td>
+                                <td className="ts-end"><span className="ldg-nil">—</span></td>
+                                <td className="ts-end"><span className="ts-num is-out" data-k="cAmt">{fmt(amount)}</span></td>
+                              </tr>
+                            </tbody>
+                          )
+                        })}
+                        <tfoot>
+                          <tr className="jar-total">
+                            <td colSpan={2}>الإجمالي — <span data-k="footCount">{g.rows.length}</span> حركة</td>
+                            <td className="ts-end ts-num is-in" data-k="debitTotal">{debit > 0 ? fmt(debit) : '—'}</td>
+                            <td className="ts-end ts-num is-out" data-k="creditTotal">{credit > 0 ? fmt(credit) : '—'}</td>
+                            <td />
+                          </tr>
+                          <tr className={`jar-balance${balance === 0 ? ' is-even' : ''}`}>
+                            <td colSpan={2}>الميزان</td>
+                            <td colSpan={2} className="ts-end">
+                              <span className="ts-num" data-k="balance">{fmt(Math.abs(balance))}</span>{' '}
+                              <span className="jar-side" data-k="balanceSide">{balance > 0 ? '(مدين)' : balance < 0 ? '(دائن)' : '✓ متوازن'}</span>
+                            </td>
+                            <td />
+                          </tr>
+                        </tfoot>
+                      </table>
                     </div>
-                  </div>
-                  <div className="flex gap-3 items-center shrink-0 text-xs">
-                    {debit  > 0 && <span className="font-semibold tabular-nums text-green-600">↑ {fmt(debit)}</span>}
-                    {credit > 0 && <span className="font-semibold tabular-nums text-red-500">↓ {fmt(credit)}</span>}
-                    <span className="text-base" style={{ color: GOLD }}>{isOpen ? '▲' : '▼'}</span>
-                  </div>
-                </button>
 
-                {/* زر تحميل PDF */}
-                <button onClick={e => handleExport(e, g)} disabled={isPdfing}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 disabled:opacity-50"
-                  style={{ background: NAVY, color: '#fff' }}>
-                  {isPdfing
-                    ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/>جارٍ...</>
-                    : <>⬇️ PDF</>
-                  }
-                </button>
-              </div>
-
-              {/* ── جدول القيد بالطريقة المحاسبية (صفّان لكل حركة) ── */}
-              {isOpen && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse">
-
-                    {/* رأس الجدول */}
-                    <thead>
-                      <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
-                        <th className="px-3 py-2.5 text-center text-xs font-bold text-slate-400 w-8">#</th>
-                        <th className="px-3 py-2.5 text-right text-xs font-bold" style={{ color: NAVY }}>البيان</th>
-                        <th className="px-3 py-2.5 text-right text-xs font-bold w-28 text-green-700">مدين</th>
-                        <th className="px-3 py-2.5 text-right text-xs font-bold w-28 text-red-600">دائن</th>
-                        <th className="px-3 py-2.5 text-center text-xs font-bold w-14" style={{ color: NAVY }}>مستند</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
+                    {/* الجوال: قائمة الحركات بطرفيها */}
+                    <ol className="jar-moves" data-cards="ja.rows">
                       {g.rows.map((r, i) => {
                         const { amount, debitAccount, creditAccount } = getEntryAccounts(r)
-                        const desc = r.description && r.description !== r.type
-                          ? r.description : null
-
+                        const desc = r.description && r.description !== r.type ? r.description : null
                         return (
-                          <React.Fragment key={r.id}>
-                            {/* صف المدين — من ح/ */}
-                            <tr style={{ borderTop: i > 0 ? '6px solid #f5f4f0' : 'none' }}>
-                              <td className="px-2 py-1.5 text-center text-xs text-slate-300"
-                                rowSpan={2} style={{ verticalAlign: 'middle' }}>
-                                {i + 1}
-                              </td>
-                              <td className="px-3 pt-2 pb-0.5">
-                                <span className="text-xs font-bold" style={{ color: NAVY }}>
-                                  من ح/ {debitAccount}
-                                </span>
-                              </td>
-                              <td className="px-3 pt-2 pb-0.5 text-right tabular-nums">
-                                <span className="text-xs font-bold text-green-700">{fmt(amount)}</span>
-                              </td>
-                              <td className="px-3 pt-2 pb-0.5 text-right">
-                                <span className="text-xs text-slate-200">—</span>
-                              </td>
-                              <td className="px-3 text-center" rowSpan={2} style={{ verticalAlign: 'middle' }}>
-                                {r.file_url
-                                  ? <button onClick={async () => {
-                                        const win = window.open('', '_blank')
-                                        const url = await getSignedUrl(r.file_url)
-                                        if (win) { if (url) win.location.href = url; else win.close() }
-                                      }}
-                                      title={r._doc_name || 'فتح المستند'}
-                                      className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-sm transition-colors"
-                                      style={{ background: '#fef9ec', color: GOLD }}
-                                      onMouseEnter={e => e.currentTarget.style.background = '#fef3c7'}
-                                      onMouseLeave={e => e.currentTarget.style.background = '#fef9ec'}>
-                                      📎
-                                    </button>
-                                  : <span className="text-slate-200 text-xs">—</span>
-                                }
-                              </td>
-                            </tr>
-
-                            {/* صف الدائن — إلى ح/ */}
-                            <tr>
-                              <td className="px-3 pt-0.5 pb-2" style={{ paddingRight: '28px' }}>
-                                <span className="text-xs text-slate-500 italic">
-                                  إلى ح/ {creditAccount}
-                                </span>
-                                {desc && (
-                                  <span className="block text-xs text-slate-400 mt-0.5 not-italic">
-                                    {desc}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 pt-0.5 pb-2 text-right">
-                                <span className="text-xs text-slate-200">—</span>
-                              </td>
-                              <td className="px-3 pt-0.5 pb-2 text-right tabular-nums">
-                                <span className="text-xs font-bold text-red-600">{fmt(amount)}</span>
-                              </td>
-                            </tr>
-                          </React.Fragment>
+                          <li key={r.id} data-id={r.id}>
+                            <div className="jar-move-line"><span>من ح/ {cleanLabel(debitAccount)}</span><span className="ts-num is-in">{fmt(amount)}</span></div>
+                            <div className="jar-move-line is-to"><span>إلى ح/ {cleanLabel(creditAccount)}</span><span className="ts-num is-out">{fmt(amount)}</span></div>
+                            {desc && <div className="jar-desc">{desc}</div>}
+                            {r.file_url && <Button size="sm" variant="quiet" icon={FileText} onClick={() => openFile(r.file_url)}>المستند</Button>}
+                          </li>
                         )
                       })}
-                    </tbody>
-
-                    {/* مجاميع القيد */}
-                    <tfoot>
-                      <tr style={{ background: '#f5f4f0', borderTop: `2px solid ${GOLD}` }}>
-                        <td colSpan={2} className="px-3 py-2 text-xs font-bold" style={{ color: NAVY }}>
-                          الإجمالي — {g.rows.length} حركة
-                        </td>
-                        <td className="px-3 py-2 text-right text-xs font-bold tabular-nums text-green-700">
-                          {debit > 0 ? fmt(debit) : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-right text-xs font-bold tabular-nums text-red-600">
-                          {credit > 0 ? fmt(credit) : '—'}
-                        </td>
-                        <td/>
-                      </tr>
-                      <tr style={{ background: NAVY }}>
-                        <td colSpan={2} className="px-3 py-2.5 text-xs font-bold text-white">الميزان</td>
-                        <td colSpan={2} className="px-3 py-2.5 text-right text-xs font-bold tabular-nums"
-                          style={{ color: balance === 0 ? '#fde68a' : balance > 0 ? '#86efac' : '#fca5a5' }}>
-                          {fmt(Math.abs(balance))}
-                          <span className="mr-1.5 opacity-70 font-normal">
-                            {balance > 0 ? '(مدين)' : balance < 0 ? '(دائن)' : '✓ متوازن'}
-                          </span>
-                        </td>
-                        <td/>
-                      </tr>
-                    </tfoot>
-
-                  </table>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+                      <li className="jar-move-total">
+                        <div className="jar-move-line"><span>مدين</span><span className="ts-num is-in">{debit > 0 ? fmt(debit) : '—'}</span></div>
+                        <div className="jar-move-line"><span>دائن</span><span className="ts-num is-out">{credit > 0 ? fmt(credit) : '—'}</span></div>
+                        <div className="jar-move-line"><span>الميزان</span><span className="ts-num">{fmt(Math.abs(balance))} {balance > 0 ? '(مدين)' : balance < 0 ? '(دائن)' : '✓ متوازن'}</span></div>
+                      </li>
+                    </ol>
+                  </div>
+                )}
+              </section>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

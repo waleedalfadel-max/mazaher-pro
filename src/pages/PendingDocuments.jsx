@@ -1,4 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useLayoutEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowRight, Ban, Check, CircleAlert, FileSearch, FileText, FlaskConical, Inbox, Info, Layers, ListChecks, LoaderCircle, Maximize2, Plus, RefreshCw, Save, ScanText, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Button, Chip, DateInput, Dialog, EmptyState, Field, GrowInput, IconButton, Input, Money, Note, Panel, SearchBox, Segment, Select, Status, Tabs, Textarea } from '../ui/components.jsx'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { analyzeDocument } from '../lib/claude'
@@ -7,6 +10,12 @@ import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
 import { compressImageBase64 } from '../lib/imageCompress'
 import { matchSupplier } from '../lib/supplierMatching'
+import { compareItemsToTotal } from '../lib/documentTotals'
+import { acceptAmount } from '../lib/amountInput'
+import { plural } from '../ui/format.js'
+import { approvalMessage, buildInvoicePayload, exactTotals, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
+import { setUnsaved } from '../lib/unsavedChanges'
+import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
 
 function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -34,12 +43,19 @@ const ROLE_COLOR = {
 }
 
 // مقارنة مرنة — تبقي العربية فقط، تحذف الإيموجي والرموز والمسافات الزائدة
-const normCat = s => (s || '').replace(/[^؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim()
+// مطابقة الاسم كما في الخادم (approval_private.norm_cat): تُحذف الرموز والإيموجي، وتُوحَّد الأرقام والمسافات وحالة
+// الحروف اللاتينية؛ تبقى الحروف العربية واللاتينية والأرقام فلا يتطابق اسمان مختلفان.
+const normCat = s => String(s || '').replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0))
+  .replace(/[^A-Za-z0-9؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
 
 // يشتق category_main الصحيح لبند: الأب الفعلي الذي يحتوي category_sub بجدول categories —
 // يبقى صحيحاً سواء كان category_sub من الذكاء الاصطناعي أو مُعدَّلاً يدوياً بالواجهة
 function resolveItemCategoryMain(categories, item, fallbackTransType) {
-  const sub = (categories || []).find(c => c.parent_id && normCat(c.name) === normCat(item.category_sub || ''))
+  const cats = categories || [], subName = normCat(item.category_sub || '')
+  const chosen = item.category_main ? cats.find(p => !p.parent_id && normCat(p.name) === normCat(item.category_main)) : null
+  if (chosen && (!subName || cats.some(c => c.parent_id === chosen.id && normCat(c.name) === subName))) return normCat(chosen.name)
+  const subs = subName ? cats.filter(c => c.parent_id && normCat(c.name) === subName) : []
+  const sub = subs.length === 1 ? subs[0] : null
   if (sub) {
     const parent = categories.find(p => p.id === sub.parent_id)
     if (parent) return parent.name
@@ -74,6 +90,27 @@ function getDefaultPaySource(projName, uploadedBy) {
   return null
 }
 
+// مسودة المراجعة: تُحفظ بزر «حفظ مسودة» في هذه النافذة فقط (sessionStorage)، معزولة حسب المنشأة
+// والمستخدم والمستند، ولا تُطبَّق إن تغيّرت حالة المستند أو قراءته (src/lib/reviewDraft.js).
+// الحفظ في القاعدة ما زال عند الاعتماد وحده، كما في التطبيق قبل التصميم الجديد.
+const draftStore = () => { try { return window.sessionStorage } catch { return null } }
+const DRAFT_EXTRAS = ['branch', '_supplierId', '_supplierName', '_supplierResolution', '_matchedSupplierId']
+
+// ملخص يُعرض في القائمة من نتيجة القراءة (شامل الضريبة كما في المستند)
+function docSummary(doc) {
+  const r = doc._edit || doc.analysis_result
+  const inv = r?.invoices?.length ? r.invoices : r ? [r] : []
+  const total = inv.reduce((t, x) => t + (Number(x.type === 'sales' ? x.totalSales : (x.totalAmount ?? x.amount)) || 0), 0)
+  const kinds = [...new Set(inv.map(x => x.type))]
+  const KIND = { expense: 'مصروف', sales: 'مبيعات', transfer: 'تحويل' }
+  return {
+    total: inv.length ? total : null,
+    kind: inv.length > 1 ? plural(inv.length, 'فاتورة', 'فاتورتان', 'فواتير', 'فاتورة') : KIND[kinds[0]] || (doc.status === 'uploaded' ? '—' : 'غير محدد'),
+    date: inv[0]?.date || null,
+    name: readableName(doc, inv[0]),
+  }
+}
+
 export default function PendingDocuments() {
   const { projectId, projectName, isSuperAdmin } = useAuth()
   const [docs, setDocs]               = useState([])
@@ -90,6 +127,18 @@ export default function PendingDocuments() {
   const [projMap,    setProjMap]      = useState({})
   const [filterProjId, setFilterProjId] = useState('')
   const pidRef                        = useRef(null)
+  const [modes, setModes]             = useState({})   // وضع الاعتماد لكل منشأة: legacy | v2 | paused
+  const [listNotice, setListNotice]   = useState('')
+  const modeOf = doc => (isSuperAdmin ? 'legacy' : modes[doc?.project_id || projectId] || 'legacy')
+  const uidRef                        = useRef(undefined)   // هوية الجلسة الفعلية — لعزل المسودات
+  async function sessionUid() {
+    if (uidRef.current === undefined) {
+      const { data } = await supabase.auth.getSession()
+      uidRef.current = data?.session?.user?.id || null
+    }
+    return uidRef.current
+  }
+  const scopeOf = (d, uid = uidRef.current) => ({ projectId: d.project_id || projectId || null, userId: uid })
 
   useEffect(() => {
     pidRef.current = projectId
@@ -101,13 +150,15 @@ export default function PendingDocuments() {
         list.forEach(p => { m[p.id] = p.name })
         setProjMap(m)
       })
-      loadDocs(null).then(() => setLoading(false))
+      // عرض منشأة لمدير المنصة: مستندات المنشأة المختارة وحدها (الخادم لا يعيد غيرها أصلًا)
+      loadDocs(projectId || null).then(() => setLoading(false))
     } else if (projectId) {
       getTransactionTypes(projectId).then(setTransTypes)
+      supabase.rpc('approval_mode', { p_project_id: projectId }).then(({ data }) => setModes(m => ({ ...m, [projectId]: data || 'legacy' })))
       getProjectSettings(projectId).then(s => setBranches(s?.settings?.branches || []))
       loadDocs(projectId).then(() => setLoading(false))
       supabase.from('categories')
-        .select('id,name,parent_id,type,sort_order')
+        .select('id,name,parent_id,type,sort_order,financial_class,ledger_type,is_active')
         .eq('project_id', projectId)
         .order('sort_order')
         .then(({ data }) => setCategories(data || []))
@@ -128,6 +179,7 @@ export default function PendingDocuments() {
   // إعادة تحميل عند تغيير فلتر المشروع (superadmin فقط)
   useEffect(() => {
     if (!isSuperAdmin) return
+    if (projectId) return   // عرض منشأة واحدة: لا فلتر مشاريع
     setLoading(true)
     loadDocs(filterProjId || null).then(() => setLoading(false))
   }, [filterProjId])
@@ -152,7 +204,7 @@ export default function PendingDocuments() {
     pids.forEach(pid => {
       if (!categoriesMap[pid]) {
         supabase.from('categories')
-          .select('id,name,parent_id,type,sort_order')
+          .select('id,name,parent_id,type,sort_order,financial_class,ledger_type,is_active')
           .eq('project_id', pid)
           .order('sort_order')
           .then(({ data }) => setCategoriesMap(m => ({ ...m, [pid]: data || [] })))
@@ -182,16 +234,55 @@ export default function PendingDocuments() {
       .order('uploaded_at', { ascending: false })
     if (pid) q = q.eq('project_id', pid)
     const { data } = await q
-    setDocs((data || []).map(d => ({
-      ...d,
-      _state: 'idle', _error: '', _edit: d.analysis_result || null,
-      _imageData: null, _showImage: false, _isUrl: false,
-    })))
+    const uid = await sessionUid()
+    const store = draftStore()
+    setDocs((data || []).map(d => {
+      const saved = store && uid ? loadDraft(store, scopeOf(d, uid), d) : null
+      const ok = saved && !saved.stale
+      const extras = ok ? Object.fromEntries(DRAFT_EXTRAS.filter(k => k in saved.extras).map(k => [k, saved.extras[k]])) : {}
+      return {
+        ...d, ...extras,
+        _state: 'idle', _error: '', _edit: ok ? saved.edit : (d.analysis_result || null),
+        _dirty: false, _draftSavedAt: ok ? saved.savedAt : null, _draftStale: !!saved?.stale,
+        _origBranch: d.branch, _branchEditable: !d.branch,
+        _imageData: null, _showImage: false, _isUrl: false,
+      }
+    }))
   }
 
   function updateDoc(id, patch) {
+    // تعديل من المستخدم (لا نتيجة قراءة جديدة ولا حالة بعد اعتماد جزئي): «تعديلات لم تُحفظ» حتى «حفظ مسودة» أو الاعتماد
+    if (patch._edit && patch._state === undefined) patch = { ...patch, _dirty: true, _v2Error: null }
     setDocs(ds => ds.map(d => d.id === id ? { ...d, ...patch } : d))
   }
+  // يعيد true إذا حُفظت المسودة فعلًا، وfalse إن فشل التخزين (ممتلئ أو معطّل) فيبقى المستند «معدّلًا غير محفوظ»
+  function saveDraftFor(doc) {
+    const store = draftStore()
+    const extras = Object.fromEntries(DRAFT_EXTRAS.filter(k => doc[k] !== undefined).map(k => [k, doc[k]]))
+    const now = Date.now()
+    if (store && storeDraft(store, scopeOf(doc), doc, doc._edit, extras, now)) { updateDoc(doc.id, { _dirty: false, _draftSavedAt: now, _draftStale: false }); return true }
+    updateDoc(doc.id, { _error: 'تعذّر حفظ المسودة في هذا المتصفح (التخزين معطّل أو ممتلئ، أو لم تُعرف هوية الجلسة).' })
+    return false
+  }
+  function discardDraft(doc) {
+    const store = draftStore()
+    if (store) dropDraft(store, scopeOf(doc), doc.id)
+    updateDoc(doc.id, {
+      _state: doc._state, _edit: doc.analysis_result || null, _dirty: false, _draftSavedAt: null, _validationError: null,
+      branch: doc._origBranch, _supplierId: undefined, _supplierName: undefined, _supplierResolution: undefined, _matchedSupplierId: undefined,
+    })
+  }
+  function clearDraftOf(doc) { const store = draftStore(); if (store) dropDraft(store, scopeOf(doc), doc.id) }
+  // مسودات هذا المستخدم لمستندات خرجت من القائمة (اعتُمدت أو رُفضت) تُحذف؛ ومسودات النسخة السابقة غير المعزولة كذلك
+  useEffect(() => {
+    const store = draftStore(), uid = uidRef.current
+    if (loading || !store || !uid) return
+    dropLegacyDrafts(store)
+    const pidOf = d => d.project_id || projectId || null
+    const pids = new Set(docs.map(pidOf))
+    if (!isSuperAdmin) pids.add(projectId || null)
+    pids.forEach(pid => purgeDrafts(store, { projectId: pid, userId: uid }, docs.filter(d => pidOf(d) === pid).map(d => d.id)))
+  }, [docs, loading])
 
   async function loadImage(doc) {
     if (doc._showImage) { updateDoc(doc.id, { _showImage: false }); return }
@@ -219,7 +310,7 @@ export default function PendingDocuments() {
       let docTransTypes = transTypes
       if (isSuperAdmin && docPid) {
         const { data: cats } = await supabase.from('categories')
-          .select('id,name,parent_id,type,sort_order')
+          .select('id,name,parent_id,type,sort_order,financial_class,ledger_type,is_active')
           .eq('project_id', docPid).order('sort_order')
         docCategories = cats || []
         docTransTypes = transTypesMap[docPid] || await getTransactionTypes(docPid)
@@ -316,6 +407,10 @@ export default function PendingDocuments() {
     const docTransTypes = isSuperAdmin ? (transTypesMap[pid] || FALLBACK_TRANS_TYPES) : transTypes
 
     if (res.type === 'sales') {
+      // ثبّت الفرع المختار في المستند قبل أي كتابة مالية؛ الربط القديم يتطلب تطابقه مع القيود والمبيعات.
+      const { error: branchError } = await supabase.from('documents')
+        .update({ branch: doc.branch || null }).eq('id', doc.id).eq('project_id', pid).select('id').single()
+      if (branchError) throw new Error(branchError.message)
       const cash     = Number(res.cashSales)     || 0
       const network  = Number(res.networkSales)  || 0
       const transfer = Number(res.transferSales) || 0
@@ -507,6 +602,7 @@ export default function PendingDocuments() {
   }
 
   async function approve(doc, forceNew = false) {
+    if (modeOf(doc) !== 'legacy') return approveV2(doc)
     const rawRes = doc._edit || doc.analysis_result
     if (doc.purchase_category && rawRes) rawRes.transType = doc.purchase_category
 
@@ -537,7 +633,7 @@ export default function PendingDocuments() {
         await supabase.from('documents').update({
           status: 'approved', file_name: newName, category_main: null, category_sub: null,
         }).eq('id', doc.id)
-        setDocs(ds => ds.filter(d => d.id !== doc.id))
+        clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id))
       } catch(e) {
         const msg = e?.needsSupplierConfirm ? 'يرجى تأكيد هوية المورد أولاً — راجع بطاقة "يشبه مورد موجود" أعلاه' : e.message
         updateDoc(doc.id, { _state: 'analyzed', _error: msg })
@@ -574,7 +670,7 @@ export default function PendingDocuments() {
       await supabase.from('documents').update({
         status: 'approved', file_name: newName, category_main: null, category_sub: null,
       }).eq('id', doc.id)
-      setDocs(ds => ds.filter(d => d.id !== doc.id))
+      clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id))
     } catch(e) {
       if (e?.isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
       if (e?.needsSupplierConfirm) { updateDoc(doc.id, { _state: 'analyzed', _error: 'يرجى تأكيد هوية المورد أولاً — راجع بطاقة "يشبه مورد موجود" أعلاه' }); return }
@@ -585,13 +681,16 @@ export default function PendingDocuments() {
   async function reject(doc) {
     updateDoc(doc.id, { _state: 'rejecting' })
     try {
-      await supabase.from('documents').update({ status: 'rejected' }).eq('id', doc.id)
-      setDocs(ds => ds.filter(d => d.id !== doc.id))
+      // الرد يُفحص: كان الفشل يُخفي المستند من القائمة وهو باقٍ في القاعدة
+      const { error } = await supabase.from('documents').update({ status: 'rejected' }).eq('id', doc.id)
+      if (error) throw new Error(error.message)
+      clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id))
     } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
   }
 
   // اعتماد فاتورة واحدة من مستند متعدد الفواتير
   async function approveInvoice(doc, invIdx) {
+    if (modeOf(doc) !== 'legacy') return approveV2(doc, invIdOf(doc, invIdx))
     const rawRes  = doc._edit || doc.analysis_result
     const invList = rawRes?.invoices || []
     const inv     = invList[invIdx]
@@ -616,9 +715,11 @@ export default function PendingDocuments() {
       if (remaining.length === 0) {
         const newName = readableName(doc, inv)
         await supabase.from('documents').update({ status: 'approved', file_name: newName, category_main: null, category_sub: null }).eq('id', doc.id)
-        setDocs(ds => ds.filter(d => d.id !== doc.id))
+        clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id))
       } else {
-        updateDoc(doc.id, { _state: 'analyzed', _edit: { ...rawRes, invoices: remaining } })
+        // اعتُمد جزء من الفواتير: المسودة السابقة تحوي فاتورة صارت مسجّلة، فتُحذف
+        clearDraftOf(doc)
+        updateDoc(doc.id, { _state: 'analyzed', _edit: { ...rawRes, invoices: remaining }, _dirty: false, _draftSavedAt: null })
       }
     } catch(e) {
       if (e?.isDup) { updateDoc(doc.id, { _state: 'analyzed', _dupCheck: true }); return }
@@ -628,6 +729,7 @@ export default function PendingDocuments() {
 
   // رفض فاتورة واحدة من مستند متعدد الفواتير
   function rejectInvoice(doc, invIdx) {
+    if (modeOf(doc) !== 'legacy') return excludeV2(doc, invIdOf(doc, invIdx))
     const rawRes    = doc._edit || doc.analysis_result
     const invList   = rawRes?.invoices || []
     const remaining = invList.filter((_, i) => i !== invIdx)
@@ -638,58 +740,329 @@ export default function PendingDocuments() {
     }
   }
 
-  const timeAgo = t => {
-    const m = (Date.now() - new Date(t)) / 60000
-    if (m < 60)   return `${Math.round(m)}د`
-    if (m < 1440) return `${Math.round(m / 60)}س`
-    return `${Math.round(m / 1440)}ي`
+  // ── الاعتماد الجديد (v2): كل الكتابة في الخادم، في معاملة واحدة (supabase/migrations/20260928000000_approval_v2.sql) ──
+  const invIdOf = (doc, idx) => ((doc._edit || doc.analysis_result)?.invoices || [])[idx]?._id
+
+  async function prepareV2(doc) {
+    const { data, error } = await supabase.rpc('approval_prepare', { p_document_id: doc.id })
+    if (error || !data) { updateDoc(doc.id, { _state: 'analyzed', _v2Error: callError(error) }); return }
+    if (!data.ok) { updateDoc(doc.id, { _state: doc._state === 'approving' ? 'analyzed' : doc._state, _v2Error: data }); return }
+    if (!['uploaded', 'analyzed'].includes(data.status)) { clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
+    setDocs(ds => ds.map(d => {
+      if (d.id !== doc.id) return d
+      const ar = data.analysis_result
+      const src = d._edit || ar
+      let edit = ar
+      if (src && ar?.invoices) {   // معرّفات الفواتير من الخادم تُنقل إلى نسخة المراجعة دون فقد التعديلات
+        const list = src.invoices?.length ? src.invoices : [src]
+        edit = { ...(ar._localStub ? { _localStub: true } : {}), invoices: list.map((x, i) => ({ ...x, _id: x._id || ar.invoices[i]?._id })) }
+      }
+      const next = { ...d, status: data.status, analysis_result: ar, _edit: edit, _v2: { version: data.version, invoices: data.invoices, mode: data.mode } }
+      if (d._draftSavedAt) { const store = draftStore(); if (store) storeDraft(store, scopeOf(next), next, next._edit, {}, d._draftSavedAt) }
+      return next
+    }))
   }
 
-  if (loading) return (
-    <div className="flex justify-center h-64 items-center">
-      <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"/>
-    </div>
+  async function approveV2(doc, target = 'all') {
+    if (modeOf(doc) === 'paused') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'paused' } }); return }
+    if (!doc._v2) { await prepareV2(doc); return }
+    const pid = doc.project_id || pidRef.current
+    const docCategories = isSuperAdmin ? (categoriesMap[pid] || []) : categories
+    const docTransTypes = isSuperAdmin ? (transTypesMap[pid] || FALLBACK_TRANS_TYPES) : transTypes
+    const docPayable    = isSuperAdmin ? (payableSuppliersMap[pid] || []) : payableSuppliers
+    const raw = doc._edit || doc.analysis_result
+    const list = (raw?.invoices?.length ? raw.invoices : [raw]).map(x => (x._id ? x : { ...x, _id: newRequestId() }))
+    const known = new Set(doc._v2.invoices.map(i => i.id))
+    const pending = new Set(doc._v2.invoices.filter(i => i.status === 'pending').map(i => i.id))
+    let invs = list.filter(x => pending.has(x._id) || !known.has(x._id))
+    if (target !== 'all') invs = invs.filter(x => x._id === target)
+    if (!invs.length) return
+    for (const inv of invs) {
+      if (inv.type === 'expense' && inv.items?.length) {
+        const t = exactTotals(inv)
+        if (t.status !== 'match') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: t.status === 'invalid' ? 'invalid_amount' : 'amounts_mismatch', difference: t.diff / 100, invoice_id: inv._id } }); return }
+      }
+    }
+    const originals = Object.fromEntries((doc.analysis_result?.invoices || []).map(x => [x._id, x]))
+    const decisions = { suppliers: {}, duplicates: { ...(doc._dupDecisions || {}) } }
+    const payload = invs.map(inv => {
+      const pl = buildInvoicePayload(inv, { original: originals[inv._id], categories: docCategories, transTypes: docTransTypes,
+        purchaseCategory: doc.purchase_category, supplierId: doc._supplierId })
+      if (pl.paySource === 'payable') {
+        const name = (doc._supplierName ?? inv.supplier_name ?? inv.description ?? '').trim()
+        const m = matchSupplier(name, docPayable)
+        pl.supplier_name = name
+        const decision = m.matchType === 'exact' ? { resolution: 'existing', supplier_id: m.supplier.id }
+          : doc._supplierResolution === 'existing' ? { resolution: 'existing', supplier_id: doc._matchedSupplierId }
+          : m.matchType === 'fuzzy' && !doc._supplierResolution ? null : { resolution: 'new' }
+        if (decision) decisions.suppliers[inv._id] = decision
+      }
+      return pl
+    })
+    const document = { branch: doc.branch || null, file_name: readableName(doc, payload[0]), supplier_id: doc._supplierId || null }
+    const fp = JSON.stringify([payload, decisions, document])
+    const requestId = doc._req?.fp === fp ? doc._req.id : newRequestId()   // إعادة المحاولة نفسها بالمعرّف نفسه
+    updateDoc(doc.id, { _state: 'approving', _v2Error: null, _notice: '', _req: { id: requestId, fp },
+      _edit: raw?.invoices ? { ...raw, invoices: list } : { invoices: list } })
+    let data = null, error = null
+    try {
+      ({ data, error } = await supabase.rpc('approval_approve', { p_document_id: doc.id, p_request_id: requestId,
+        p_expected_version: doc._v2.version, p_invoices: payload, p_decisions: decisions, p_document: document }))
+    } catch (e) { error = e }
+    if (error || !data) { updateDoc(doc.id, { _state: 'analyzed', _v2Error: callError(error) }); return }
+    if (!data.ok) return v2Failed(doc, data)
+    v2Done(doc, data)
+  }
+
+  function v2Failed(doc, data) {
+    if (data.code === 'already_approved') { clearDraftOf(doc); setListNotice(approvalMessage(data)); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
+    updateDoc(doc.id, { _state: 'analyzed', _v2Error: data, ...(['stale', 'invoice_already_decided'].includes(data.code) ? { _req: null } : {}) })
+    if (['stale', 'invoice_already_decided'].includes(data.code)) prepareV2(doc)
+  }
+
+  function v2Done(doc, data) {
+    clearDraftOf(doc)
+    const jns = (data.journals || []).map(j => j.journal_number)
+    if (data.document_status === 'approved' || data.document_status === 'rejected') {
+      if (jns.length) setListNotice(`اعتُمد «${docSummary(doc).name}» بالقيد ${jns.join('، ')}.`)
+      setDocs(ds => ds.filter(d => d.id !== doc.id)); return
+    }
+    const done = Object.fromEntries((data.journals || []).map(j => [j.invoice_id, j.journal_number]))
+    const invoices = doc._v2.invoices.map(i => (done[i.id] ? { ...i, status: 'approved', journal_number: done[i.id] } : i))
+    for (const id of Object.keys(done)) if (!invoices.some(i => i.id === id)) invoices.push({ id, status: 'approved', journal_number: done[id] })
+    updateDoc(doc.id, { _state: 'analyzed', _req: null, _v2Error: null, _draftSavedAt: null,
+      _v2: { ...doc._v2, version: data.version, invoices },
+      _notice: jns.length ? `اعتُمدت بالقيد ${jns.join('، ')}. الباقي بانتظار المراجعة.` : 'حُدّثت حالة الفواتير.' })
+  }
+
+  async function excludeV2(doc, invoiceId, reason = null) {
+    if (!doc._v2) return prepareV2(doc)
+    const { data, error } = await supabase.rpc('approval_exclude_invoice', { p_document_id: doc.id, p_invoice_id: invoiceId,
+      p_expected_version: doc._v2.version, p_reason: reason })
+    if (error || !data) { updateDoc(doc.id, { _state: doc._state, _v2Error: callError(error) }); return }
+    if (!data.ok) return v2Failed(doc, data)
+    if (data.document_status !== 'analyzed') { clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
+    updateDoc(doc.id, { _state: doc._state, _v2: { ...doc._v2, version: data.version,
+      invoices: doc._v2.invoices.map(i => (i.id === invoiceId ? { ...i, status: 'excluded', excluded_reason: reason } : i)) }, _notice: 'استُبعدت الفاتورة ولن تُسجَّل.' })
+  }
+
+  async function rejectV2(doc, reason) {
+    if (!doc._v2 && doc.status === 'analyzed') { await prepareV2(doc); return }
+    const { data, error } = await supabase.rpc('approval_reject_document', { p_document_id: doc.id,
+      p_expected_version: doc._v2?.version ?? doc.version ?? 0, p_reason: reason || null })
+    if (error || !data) { updateDoc(doc.id, { _state: 'idle', _v2Error: callError(error) }); return }
+    if (!data.ok) return v2Failed(doc, data)
+    clearDraftOf(doc); setDocs(ds => ds.filter(d => d.id !== doc.id))
+  }
+
+  async function correctSalesV2(doc, reason) {
+    const raw = doc._edit || doc.analysis_result
+    const inv = (raw?.invoices || [raw])[0]
+    const payload = buildInvoicePayload(inv, { original: (doc.analysis_result?.invoices || [])[0], categories: [], transTypes: [] })
+    const document = { branch: doc.branch || null }
+    // التصحيح مبني على نسخة التقرير التي عُرضت في التنبيه؛ تُحفظ لإعادة المحاولة بعد انقطاع
+    const linked = doc._v2Error?.linked || doc._salesLinked || {}
+    const revision = linked.revision ?? null
+    const fp = JSON.stringify(['correct', payload, reason, document, revision])
+    const requestId = doc._req?.fp === fp ? doc._req.id : newRequestId()
+    updateDoc(doc.id, { _state: 'approving', _v2Error: null, _salesLinked: linked, _req: { id: requestId, fp } })
+    const { data, error } = await supabase.rpc('approval_correct_sales_report', { p_document_id: doc.id, p_request_id: requestId,
+      p_expected_version: doc._v2.version, p_invoice: payload, p_reason: reason, p_expected_revision: revision, p_document: document })
+    if (error || !data) { updateDoc(doc.id, { _state: 'analyzed', _v2Error: callError(error) }); return }
+    if (data.code === 'report_changed') {
+      // صحّحه غيرك بعد عرضه: التنبيه نفسه بالأرقام الحالية ونسختها، ليراجع المستخدم قبل أن يصحّح
+      const fresh = { ...linked, current: data.current, revision: data.revision }
+      updateDoc(doc.id, { _state: 'analyzed', _req: null, _salesLinked: fresh, _v2Error: { code: 'sales_report_exists', changed: true, linked: fresh } })
+      return
+    }
+    if (!data.ok) return v2Failed(doc, data)
+    clearDraftOf(doc)
+    const changes = salesCorrectionChanges(data.previous, data.corrected)
+    setListNotice(`صُحّح تقرير مبيعات ${inv.date || ''} بالقيد ${data.journal_number}: ${changes.join('، ')} ر.س.`)
+    setDocs(ds => ds.filter(d => d.id !== doc.id))
+  }
+
+  const timeAgo = t => {
+    const m = (Date.now() - new Date(t)) / 60000
+    if (m < 1)    return 'لحظات'
+    if (m < 60)   return `${Math.round(m)} دقيقة`
+    if (m < 1440) return `${Math.round(m / 60)} ساعة`
+    return `${Math.round(m / 1440)} يوم`
+  }
+
+  // ── العرض: قائمة، أو تفاصيل مستند واحد عبر ?doc= (نفس الصفحة، فلا تضيع حالة المراجعة) ──
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const openId = params.get('doc')
+  const [rejecting, setRejecting] = useState(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [view, setView] = useState('fields')
+  const listScroll = useRef(0)
+  const scroller = () => document.querySelector('.ts-scroll')
+  // الرجوع من التفاصيل يعيد موضع القائمة
+  useLayoutEffect(() => {
+    const el = scroller(); if (!el) return
+    if (openId) el.scrollTo(0, 0)
+    else requestAnimationFrame(() => el.scrollTo(0, listScroll.current))
+  }, [openId])
+  function openDoc(id) {
+    listScroll.current = scroller()?.scrollTop || 0
+    const next = new URLSearchParams(params); next.set('doc', id); setParams(next)
+  }
+  function closeDoc() { if (window.history.state?.idx > 0) navigate(-1); else { const next = new URLSearchParams(params); next.delete('doc'); setParams(next, { replace: true }) } }
+  function askReject(doc) { setRejectReason(''); setRejecting(doc) }
+  async function confirmReject() {
+    const doc = rejecting; setRejecting(null)
+    if (modeOf(doc) !== 'legacy') { await rejectV2(doc, rejectReason.trim()); if (openId === doc.id) closeDoc(); return }
+    await reject(doc)
+    if (openId === doc.id) closeDoc()
+  }
+  // الصورة تُحمَّل عند فتح المستند
+  const opened = docs.find(d => d.id === openId)
+  useEffect(() => { if (opened && !opened._showImage && !opened._loadingImg && (opened.file_url || opened.file_type)) loadImage(opened) }, [openId, !!opened])
+  useEffect(() => { if (opened && modeOf(opened) !== 'legacy' && opened.status === 'analyzed' && !opened._v2) prepareV2(opened) }, [openId, !!opened, opened?.status, modes])
+  // اعتماد المستند المفتوح يخرجه من القائمة: نعود إليها ونمسح مسودته
+  useEffect(() => { if (openId && !loading && !opened) closeDoc() }, [openId, loading, !!opened])
+
+  // مغادرة الصفحة وفيها تعديلات لم تُحفظ: روابط التطبيق تمر بحوار، وإعادة التحميل أو الإغلاق بتنبيه المتصفح.
+  // (BrowserRouter لا يوفّر useBlocker؛ زر الرجوع في المتصفح إلى صفحة أخرى لا يُعترض.)
+  const [leaving, setLeaving] = useState(null)
+  const [typing, setTyping] = useState(false)
+  const dirtyDocs = docs.filter(d => d._dirty)
+  const hasDirty = dirtyDocs.length > 0
+  useEffect(() => {
+    if (!hasDirty) return
+    const warn = e => { e.preventDefault(); e.returnValue = '' }
+    const onClick = e => {
+      const a = e.target.closest?.('a[href]')
+      if (!a || a.target === '_blank' || e.ctrlKey || e.metaKey || e.shiftKey) return
+      const url = new URL(a.href, window.location.href)
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return
+      e.preventDefault(); e.stopPropagation()
+      setLeaving({ to: url.pathname + url.search })
+    }
+    window.addEventListener('beforeunload', warn)
+    document.addEventListener('click', onClick, true)
+    return () => { window.removeEventListener('beforeunload', warn); document.removeEventListener('click', onClick, true) }
+  }, [hasDirty])
+  // رسالة «صدر تحديث» تعرض الحفظ قبل إعادة التحميل ما دامت هنا تعديلات (src/components/VersionNotice.jsx)
+  useEffect(() => {
+    if (!hasDirty) { setUnsaved(null); return undefined }
+    // save: يحاول حفظ كل المستندات المعدّلة (لا يتوقف عند أول فشل) ويعيد true فقط إن نجحت كلها
+    setUnsaved({ count: dirtyDocs.length, save: () => dirtyDocs.map(saveDraftFor).every(Boolean), discard: () => setDocs(ds => ds.map(d => ({ ...d, _dirty: false }))) })
+    return () => setUnsaved(null)
+  }, [hasDirty, dirtyDocs.length, docs])
+  // «حفظ مسودة ومغادرة»: لا مغادرة إلا بعد نجاح حفظ مسودات كل المستندات المعدّلة؛ عند الفشل يبقى الحوار والتعديلات مع «إعادة المحاولة»
+  function leave(save) {
+    const to = leaving.to
+    if (save) {
+      if (!dirtyDocs.map(saveDraftFor).every(Boolean)) { setLeaving({ to, failed: true }); return }
+    } else setDocs(ds => ds.map(d => ({ ...d, _dirty: false })))
+    setLeaving(null)
+    setTimeout(() => navigate(to))
+  }
+  const leaveDialog = (
+    <Dialog open={!!leaving} onClose={() => setLeaving(null)} title="تعديلات لم تُحفظ"
+      description={`في ${dirtyDocs.length === 1 ? 'مستند واحد' : `${dirtyDocs.length} مستندات`} تعديلات لم تُحفظ ولم تُعتمد.`}
+      footer={<>
+        <Button variant="primary" icon={Save} disabled={!uidRef.current} onClick={() => leave(true)}>
+          {leaving?.failed ? 'إعادة المحاولة: حفظ مسودة ومغادرة' : 'حفظ مسودة ومغادرة'}
+        </Button>
+        <Button onClick={() => leave(false)}>تجاهل التعديلات</Button>
+        <Button variant="quiet" onClick={() => setLeaving(null)}>البقاء</Button>
+      </>}>
+      <p className="ts-field-hint">المسودة تُحفظ في هذه النافذة فقط، لا في قاعدة البيانات.</p>
+      {leaving?.failed && (
+        <p className="ts-version-notice__error" role="alert">
+          تعذّر حفظ المسودة في هذا المتصفح (مساحة التخزين ممتلئة أو غير متاحة)، فلم تُغادَر الصفحة وتعديلاتك باقية فيها.
+          أعد المحاولة؛ وإن استمر الفشل فابقَ في الصفحة ولا تغادرها قبل تدوين تعديلاتك.
+        </p>
+      )}
+    </Dialog>
   )
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">مستندات بانتظار المراجعة</h1>
-          <p className="text-sm text-slate-500 mt-1">{docs.length} مستند</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {isSuperAdmin && (
-            <select
-              value={filterProjId}
-              onChange={e => setFilterProjId(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
-            >
-              <option value="">كل المشاريع</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          )}
-          <button onClick={() => { setLoading(true); loadDocs(isSuperAdmin ? (filterProjId || null) : pidRef.current).then(() => setLoading(false)) }}
-            className="text-sm text-blue-600 hover:text-blue-800 font-medium">↻ تحديث</button>
-        </div>
-      </div>
+  const q = params.get('q') || '', statusFilter = params.get('status') || 'all', roleFilter = params.get('by') || 'all'
+  const setFilter = (k, v) => { const next = new URLSearchParams(params); if (!v || v === 'all') next.delete(k); else next.set(k, v); setParams(next, { replace: true }) }
+  const rows = docs.map(d => ({ doc: d, sum: docSummary(d) })).filter(({ doc, sum }) =>
+    (statusFilter === 'all' || doc.status === statusFilter) && (roleFilter === 'all' || doc.uploaded_by === roleFilter) &&
+    (!q.trim() || [sum.name, doc.file_name, sum.kind, String(sum.total ?? '')].join(' ').toLowerCase().includes(q.trim().toLowerCase())))
+  const counts = { all: docs.length, uploaded: docs.filter(d => d.status === 'uploaded').length, analyzed: docs.filter(d => d.status === 'analyzed').length }
+  const STATUS = { uploaded: { label: 'جديد — لم يُقرأ', tone: 'neutral' }, analyzed: { label: 'مقروء — بانتظار المراجعة', tone: 'warning' } }
+  const refresh = () => { setLoading(true); loadDocs(isSuperAdmin ? (projectId || filterProjId || null) : pidRef.current).then(() => setLoading(false)) }
 
-      {docs.length === 0 ? (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center py-16 text-slate-400">
-          <span className="text-4xl mb-3">📭</span>
-          <p className="font-medium">لا توجد مستندات جديدة</p>
+  const rejectDialog = (
+    <Dialog open={!!rejecting} onClose={() => setRejecting(null)} title="رفض المستند؟"
+      description={rejecting ? docSummary(rejecting).name : ''}
+      footer={<><Button variant="danger-solid" icon={Ban} onClick={confirmReject}>رفض المستند</Button><Button onClick={() => setRejecting(null)}>إلغاء</Button></>}>
+      {rejecting && modeOf(rejecting) !== 'legacy' ? (
+        <Field label="سبب الرفض (اختياري)" hint="يُحفظ مع المستند.">
+          <Textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="مثال: صورة مكررة لفاتورة معتمدة" />
+        </Field>
+      ) : (
+        <Note tone="info">يُخرج من القائمة بحالة «مرفوض» كما في التطبيق الحالي. <strong>تسجيل سبب الرفض</strong> يحتاج عمودًا وتنفيذًا خلفيًا في الحزمة التشغيلية التالية، فلا يُطلب هنا.</Note>
+      )}
+    </Dialog>
+  )
+
+  if (loading) return (
+    <div className="ts-empty"><div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--ts-petrol)', borderTopColor: 'transparent' }} /></div>
+  )
+
+  if (openId && opened) {
+    const doc = opened   // خصائص DocCard المنقولة كما هي تستعمل اسم doc
+    const sum = docSummary(opened)
+    const isImage = opened.file_type?.startsWith('image/')
+    return (
+      <div className={`rp-review-page${typing ? ' is-typing' : ''}`}>
+        <button type="button" className="ts-back" onClick={closeDoc}><ArrowRight className="ts-icon--sm" aria-hidden="true" />مستندات جديدة</button>
+        <div className="rp-review-head">
+          <div>
+            <h1>{sum.name} <Status tone={STATUS[opened.status]?.tone || 'neutral'}>{STATUS[opened.status]?.label || opened.status}</Status></h1>
+            <p>{sum.kind} · رفعه {ROLE_AR[opened.uploaded_by] || opened.uploaded_by || '—'} منذ {timeAgo(opened.uploaded_at)}{opened.branch ? ` · ${opened.branch}` : ''}{isSuperAdmin && projMap[opened.project_id] ? ` · ${projMap[opened.project_id]}` : ''}</p>
+          </div>
         </div>
-      ) : docs.map(doc => (
-        <DocCard key={doc.id} doc={doc}
+        {opened._draftStale && (
+          <Note tone="warning" icon={CircleAlert} title="لم تُطبَّق مسودة سابقة">
+            تغيّرت حالة المستند أو نتيجة قراءته بعد حفظها، فحُذفت. الحقول أدناه من القراءة الحالية.
+          </Note>
+        )}
+        {opened._dirty ? (
+          <Note tone="warning" icon={CircleAlert} title="تعديلات لم تُحفظ">
+            احفظها مسودةً في هذه النافذة، أو اعتمد مباشرة. لا يُكتب شيء في قاعدة البيانات قبل الاعتماد.
+          </Note>
+        ) : opened._draftSavedAt ? (
+          <Note tone="info" icon={Save} title={`مسودة محفوظة في هذه النافذة فقط · ${new Date(opened._draftSavedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+            action={<Button size="sm" variant="quiet" icon={Undo2} onClick={() => discardDraft(opened)}>تجاهل المسودة</Button>}>
+            ليست في قاعدة البيانات ولا يراها غيرك. تُحذف عند الاعتماد أو الرفض أو إغلاق النافذة.
+          </Note>
+        ) : null}
+        <div className="rp-view-switch">
+          <div className="ts-segment ts-segment--full" role="group" aria-label="عرض">
+            <button type="button" aria-pressed={view === 'fields'} onClick={() => setView('fields')}>البيانات</button>
+            <button type="button" aria-pressed={view === 'image'} onClick={() => setView('image')}>صورة المستند</button>
+          </div>
+        </div>
+        <div className="rp-review-grid rp-review-grid--app" data-view={view}>
+          <div className="rp-review-fields"
+            onFocus={e => { if (e.target.matches('input, select, textarea')) setTyping(true) }}
+            onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTyping(false) }}>
+            <DocCard key={doc.id} doc={doc} embedded readOnly={isSuperAdmin}
+          v2={modeOf(doc) !== 'legacy' ? { mode: modeOf(doc), ...(doc._v2 || {}) } : null}
+          onDupConfirm={(invId, reason, linked) => {
+            const decisions = { ...(doc._dupDecisions || {}), [invId]: { reason, linked_journal: linked?.journal_number || null, linked_document: linked?.document_id || null } }
+            updateDoc(doc.id, { _state: doc._state, _dupDecisions: decisions })
+            approveV2({ ...doc, _dupDecisions: decisions })
+          }}
+          onCorrectSales={reason => correctSalesV2(doc, reason)}
+          onSaveDraft={() => saveDraftFor(doc)}
+          canSaveDraft={!!uidRef.current}
           projName={isSuperAdmin ? (projMap[doc.project_id] || '') : ''}
           onLoadImage={() => loadImage(doc)}
           onAnalyze={() => analyze(doc)}
           onApprove={() => approve(doc)}
           onApproveForced={() => approve(doc, true)}
-          onDupIgnore={() => reject(doc)}
-          onReject={() => reject(doc)}
+          onDupIgnore={() => askReject(doc)}
+          onReject={() => askReject(doc)}
           onApproveInvoice={invIdx => approveInvoice(doc, invIdx)}
           onRejectInvoice={invIdx => rejectInvoice(doc, invIdx)}
           onEdit={(f, v) => {
@@ -759,16 +1132,126 @@ export default function PendingDocuments() {
           branches={branches}
           suppliers={suppliers}
           payableSuppliers={isSuperAdmin ? (payableSuppliersMap[doc.project_id] || []) : payableSuppliers}
-          onBranchChange={b => updateDoc(doc.id, { branch: b })}
-          onSupplierChange={id => updateDoc(doc.id, { _supplierId: id })}
-          onSupplierNameChange={v => updateDoc(doc.id, { _supplierName: v, _supplierResolution: null, _matchedSupplierId: null })}
-          onSupplierResolve={(resolution, matchedId) => updateDoc(doc.id, { _supplierResolution: resolution, _matchedSupplierId: matchedId })}
+          onBranchChange={b => updateDoc(doc.id, { branch: b, _dirty: true })}
+          onSupplierChange={id => updateDoc(doc.id, { _supplierId: id, _dirty: true })}
+          onSupplierNameChange={v => updateDoc(doc.id, { _supplierName: v, _supplierResolution: null, _matchedSupplierId: null, _dirty: true })}
+          onSupplierResolve={(resolution, matchedId) => updateDoc(doc.id, { _supplierResolution: resolution, _matchedSupplierId: matchedId, _dirty: true })}
           onClearValidation={() => updateDoc(doc.id, { _validationError: null })}
           ROLE_AR={ROLE_AR}
           ROLE_COLOR={ROLE_COLOR}
         />
-      ))}
+          </div>
+          <div className="rp-image-col">
+            <DocImagePanel doc={opened} isImage={isImage} onOpenFile={() => loadImage(opened)} />
+          </div>
+        </div>
+        {rejectDialog}
+        {leaveDialog}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="ts-heading">
+        <div>
+          <h1>مستندات جديدة</h1>
+          <p>مرفوعة ولم تُعتمد بعد. اعتمادها يسجّلها في الدفتر.</p>
+        </div>
+        <div className="ts-heading-actions">
+          {isSuperAdmin && !projectId && (
+            <Select aria-label="المشروع" value={filterProjId} onChange={e => setFilterProjId(e.target.value)}
+              options={[{ value: '', label: 'كل المشاريع' }, ...projects.map(p => ({ value: p.id, label: p.name }))]} />
+          )}
+          <Button icon={RefreshCw} onClick={refresh}>تحديث</Button>
+        </div>
+      </div>
+
+      {listNotice && <Note tone="success" icon={Check} title={listNotice} action={<Button size="sm" variant="quiet" onClick={() => setListNotice('')}>إخفاء</Button>} />}
+      <Panel clip>
+        <div className="rp-toolbar">
+          <Tabs label="الحالة" value={statusFilter} onChange={v => setFilter('status', v)} tabs={[
+            { value: 'all', label: 'الكل', count: counts.all },
+            { value: 'analyzed', label: 'مقروء', count: counts.analyzed },
+            { value: 'uploaded', label: 'لم يُقرأ', count: counts.uploaded },
+          ]} />
+          <div className="rp-filters">
+            <SearchBox label="بحث" value={q} onChange={v => setFilter('q', v)} placeholder="المورد، اسم الملف، المبلغ…" />
+            <Select aria-label="رفعه" value={roleFilter} onChange={e => setFilter('by', e.target.value)}
+              options={[{ value: 'all', label: 'كل الرافعين' }, ...Object.entries(ROLE_AR).map(([value, label]) => ({ value, label }))]} />
+          </div>
+          <div className="rp-results">
+            <span><strong className="ts-num">{rows.length}</strong> من <span className="ts-num">{docs.length}</span></span>
+            <span className="rp-vat-note">المبالغ كما في المستند (شاملة الضريبة)</span>
+          </div>
+        </div>
+        {rows.length === 0 ? (
+          <EmptyState icon={Inbox}>{docs.length ? 'لا مستندات تطابق البحث.' : 'لا توجد مستندات جديدة.'}</EmptyState>
+        ) : (
+          <>
+            <table className="ts-table rp-table">
+              <thead><tr><th>المستند</th><th>النوع</th><th>التاريخ</th><th className="ts-end">الإجمالي</th><th>الحالة</th><th>رفعه</th></tr></thead>
+              <tbody>
+                {rows.map(({ doc, sum }) => (
+                  <tr key={doc.id} className="is-link" onClick={() => openDoc(doc.id)}>
+                    <td><div className="rp-doc-main"><span className="rp-doc-icon"><FileText className="ts-icon" aria-hidden="true" /></span>
+                      <div><button type="button" className="rp-link-cell" onClick={e => { e.stopPropagation(); openDoc(doc.id) }}><strong>{sum.name}</strong></button>
+                        <small>{doc._dirty ? 'تعديلات لم تُحفظ' : doc._draftSavedAt ? 'مسودة محفوظة في هذه النافذة' : doc.file_name}</small></div></div></td>
+                    <td><Chip>{sum.kind}</Chip></td>
+                    <td>{sum.date || '—'}</td>
+                    <td className="ts-end">{sum.total == null ? <span className="ts-muted">—</span> : <Money value={sum.total} />}</td>
+                    <td><Status tone={STATUS[doc.status]?.tone || 'neutral'}>{STATUS[doc.status]?.label || doc.status}</Status></td>
+                    <td>{ROLE_AR[doc.uploaded_by] || doc.uploaded_by || '—'}<small>منذ {timeAgo(doc.uploaded_at)}</small></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <ul className="rp-cards">
+              {rows.map(({ doc, sum }) => (
+                <li key={doc.id}>
+                  <button type="button" className="rp-card rp-card--button" onClick={() => openDoc(doc.id)}>
+                    <div className="rp-card-top"><strong>{sum.name}</strong><Status tone={STATUS[doc.status]?.tone || 'neutral'}>{STATUS[doc.status]?.label || doc.status}</Status></div>
+                    <div className="rp-card-meta"><Chip>{sum.kind}</Chip>{sum.date && <span className="ts-num">{sum.date}</span>}{(doc._dirty || doc._draftSavedAt) && <span>{doc._dirty ? 'تعديلات لم تُحفظ' : 'مسودة محفوظة'}</span>}</div>
+                    <div className="rp-card-bottom">{sum.total == null ? <span className="ts-muted">لم يُقرأ بعد</span> : <Money value={sum.total} />}</div>
+                    <div className="rp-card-meta">رفعه {ROLE_AR[doc.uploaded_by] || doc.uploaded_by || '—'} · منذ {timeAgo(doc.uploaded_at)}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </Panel>
+      {rejectDialog}
+      {leaveDialog}
     </div>
+  )
+}
+
+// صورة المستند: تُحمَّل برابط موقَّت كما في السابق، مع تكبير
+function DocImagePanel({ doc, isImage, onOpenFile }) {
+  const [zoom, setZoom] = useState(1)
+  const src = doc._imageData ? (doc._isUrl ? doc._imageData : `data:${doc.file_type};base64,${doc._imageData}`) : null
+  return (
+    <Panel className="rp-image-panel" title="صورة المستند" icon={FileSearch}
+      action={isImage && src ? (
+        <div className="rp-image-tools">
+          <IconButton label="تصغير" icon={ZoomOut} disabled={zoom <= 0.6} onClick={() => setZoom(z => Math.max(0.6, +(z - 0.2).toFixed(1)))} />
+          <span className="rp-zoom ts-num">{Math.round(zoom * 100)}%</span>
+          <IconButton label="تكبير" icon={ZoomIn} disabled={zoom >= 3} onClick={() => setZoom(z => Math.min(3, +(z + 0.2).toFixed(1)))} />
+          <IconButton label="الحجم الأصلي" icon={Maximize2} onClick={() => setZoom(1)} />
+        </div>
+      ) : null}>
+      <div className="rp-image-stage">
+        {doc._loadingImg && <div className="ts-empty">جارٍ تحميل الصورة…</div>}
+        {!doc._loadingImg && src && isImage && (
+          <div className="rp-image-scale" style={{ transform: `scale(${zoom})` }}><img src={src} alt={doc.file_name} className="rp-doc-image" /></div>
+        )}
+        {!doc._loadingImg && src && !isImage && (
+          <div className="ts-empty"><Button variant="primary" icon={FileText} onClick={() => { if (doc._isUrl) window.open(doc._imageData, '_blank'); else openPdfBlob(doc._imageData, doc.file_name) }}>فتح الملف</Button></div>
+        )}
+        {!doc._loadingImg && !src && <div className="ts-empty"><Button onClick={onOpenFile}>عرض الملف</Button></div>}
+      </div>
+    </Panel>
   )
 }
 
@@ -780,12 +1263,50 @@ function openPdfBlob(base64, fileName) {
   window.open(URL.createObjectURL(blob), '_blank')
 }
 
-// ── ItemRow ──────────────────────────────────────────────────────────────────
+// ── نموذج المراجعة ───────────────────────────────────────────────────────────
+// الحقول نفسها ومسارات الاعتماد نفسها كما قبل التصميم الجديد؛ تغيّر العرض فقط.
+
+const TYPE_OPTIONS = [
+  { value: 'expense',  label: 'فاتورة مصروفات' },
+  { value: 'sales',    label: 'مبيعات' },
+  { value: 'transfer', label: 'تحويل' },
+]
+const PAY_OPTIONS = [
+  { value: 'cash',    label: 'الصندوق' },
+  { value: 'bank',    label: 'البنك / مدى' },
+  { value: 'custody', label: 'العهدة' },
+  { value: 'payable', label: 'آجل — باسم المورد' },
+]
+const SALES_CHANNELS = [
+  { key: 'cashSales',     label: 'نقدي' },
+  { key: 'networkSales',  label: 'شبكة / مدى' },
+  { key: 'transferSales', label: 'تحويل' },
+  { key: 'hungerSales',   label: 'هنقر ستيشن' },
+  { key: 'jahez',         label: 'جاهز' },
+  { key: 'keeta',         label: 'كيتا' },
+  { key: 'mrsool',        label: 'مرسول' },
+]
+const TRANSFER_KINDS = t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي')
+const blankItem = () => ({ description: '', amount: '', category_main: '', category_sub: '' })
+
+/** حقل مبلغ (src/lib/amountInput.js): أرقام لاتينية، ويقبل العربية ويحوّلها، ويرفض أي حرف آخر.
+ *  كان type=number يعيد قيمة فارغة للمدخل غير الصالح فتُحسب صفرًا عند الاعتماد. */
+const Num = React.forwardRef(function Num({ onChange, value, ...props }, ref) {
+  return <Input ref={ref} numeric dir="ltr" placeholder="0.00" value={typeof value === 'number' ? value.toFixed(2) : value} {...props}
+    onChange={e => { const v = acceptAmount(e.target.value); if (v !== null) onChange({ target: { value: v } }) }} />
+})
+
+function catOptions(list, current) {
+  const opts = list.map(n => ({ value: n, label: n }))
+  return current && !list.includes(current) ? [{ value: current, label: current }, ...opts] : opts
+}
+
+// ── بند ──────────────────────────────────────────────────────────────────────
 // فاتورة ببند واحد (categoryMainFromType مُمرَّر): الأب ثابت من تصنيف الفاتورة العام.
 // فاتورة متعددة البنود (categoryMainFromType === undefined): كل بند يختار تصنيفه الأساسي بنفسه.
 // onEdit يستقبل كائن تصحيح (patch) — يسمح بتحديث حقلين معاً بنداء واحد ذرّي (مثل تصفير
 // category_sub عند تغيير category_main دون تسلسل نداءات يتصادم على نفس الإغلاق القديم).
-function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromType }) {
+function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromType, discounts }) {
   const allCats     = categories || []
   const parentCats  = allCats.filter(c => !c.parent_id)
   const independentMode = categoryMainFromType === undefined
@@ -793,60 +1314,161 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
   const parentCat   = parentCats.find(p => normCat(p.name) === normCat(mainValue))
   const itemSubs    = parentCat ? allCats.filter(c => c.parent_id === parentCat.id) : []
   const subValue    = item.category_sub || ''
-
+  const n = index + 1
+  const remove = cls => (
+    <button type="button" className={`rp-line-remove ${cls}`} onClick={onDelete} aria-label={`حذف البند ${n}`}>
+      <Trash2 className="ts-icon--sm" aria-hidden="true" /><span>حذف</span>
+    </button>
+  )
   return (
-    <div className="border-b border-slate-100 last:border-0 p-2 space-y-1.5">
-      <div className="flex gap-2 items-center">
-        <span className="text-xs text-slate-400 shrink-0 w-4 text-center">{index + 1}</span>
-        <input value={item.description || ''} onChange={e => onEdit({ description: e.target.value })}
-          placeholder="وصف البند"
-          className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-300"/>
-        <input type="number" value={item.amount || ''} onChange={e => onEdit({ amount: e.target.value })}
-          placeholder="0.00"
-          className="w-24 border border-slate-200 rounded-lg px-2 py-1 text-sm text-left font-mono focus:outline-none focus:ring-1 focus:ring-blue-300"/>
-        <button onClick={onDelete}
-          className="text-red-300 hover:text-red-600 transition-colors text-base leading-none px-1">✕</button>
-      </div>
-      <div className={independentMode ? 'pr-5 grid grid-cols-2 gap-1.5' : 'pr-5'}>
-        {independentMode && (
-          <select value={mainValue}
+    <div className={`rp-line rp-line--doc${independentMode ? ' has-main' : ''}${discounts ? ' has-disc' : ''}`}>
+      <div className="rp-line-top"><span>البند <span className="ts-num">{n}</span></span>{remove('rp-line-remove--top')}</div>
+      <label className="rp-cell rp-cell--name"><span className="rp-cell-label">الوصف</span>
+        <Input value={item.description || ''} placeholder="وصف البند" aria-label={`وصف البند ${n}`}
+          onChange={e => onEdit({ description: e.target.value })} /></label>
+      {independentMode && (
+        <label className="rp-cell"><span className="rp-cell-label">التصنيف الأساسي</span>
+          <Select value={mainValue} placeholder="— اختر —" aria-label={`التصنيف الأساسي للبند ${n}`}
             onChange={e => onEdit({ category_main: e.target.value, category_sub: '' })}
-            className="w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
-            style={{ borderColor: '#fde68a' }}>
-            <option value="">— التصنيف الأساسي —</option>
-            {item.category_main && !parentCats.some(p => p.name === mainValue) && (
-              <option value={mainValue}>{mainValue}</option>
-            )}
-            {parentCats.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-          </select>
-        )}
-        <select value={subValue} onChange={e => onEdit({ category_sub: e.target.value })}
-          className="w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1"
-          style={{ borderColor: '#bbf7d0' }}>
-          <option value="">— التصنيف الفرعي —</option>
-          {item.category_sub && !itemSubs.some(s => s.name === subValue) && (
-            <option value={subValue}>{subValue}</option>
-          )}
-          {itemSubs.length > 0
-            ? itemSubs.map(s => <option key={s.id} value={s.name}>{s.name}</option>)
-            : <option value="أخرى">أخرى</option>
-          }
-        </select>
-      </div>
+            options={catOptions(parentCats.filter(p => p.is_active !== false).map(p => p.name), mainValue)} /></label>
+      )}
+      <label className="rp-cell"><span className="rp-cell-label">التصنيف الفرعي</span>
+        <Select value={subValue} placeholder="— اختر —" aria-label={`التصنيف الفرعي للبند ${n}`}
+          onChange={e => onEdit({ category_sub: e.target.value })}
+          options={catOptions(itemSubs.length ? itemSubs.filter(s => s.is_active !== false).map(s => s.name) : ['أخرى'], subValue)} /></label>
+      {discounts && (
+        <label className="rp-cell rp-cell--amount"><span className="rp-cell-label">خصم البند</span>
+          <Num value={item.discount ?? ''} placeholder="0" aria-label={`خصم البند ${n}`} onChange={e => onEdit({ discount: e.target.value })} /></label>
+      )}
+      <label className="rp-cell rp-cell--amount"><span className="rp-cell-label">{discounts ? 'المبلغ بعد الخصم' : 'المبلغ شامل الضريبة'}</span>
+        <Num value={item.amount ?? ''} aria-label={`مبلغ البند ${n}`} onChange={e => onEdit({ amount: e.target.value })} /></label>
+      {remove('rp-line-remove--desk')}
     </div>
   )
 }
 
-// ── DocCard ──────────────────────────────────────────────────────────────────
-function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, timeAgo, transTypes, categories, branches, suppliers, payableSuppliers, ROLE_AR, ROLE_COLOR }) {
+function ItemLines({ items, independent, categories, transType, onEditItem, onDeleteItem, onAddItem, discounts }) {
+  return (
+    <div className="rp-lines rp-lines--doc">
+      {items.length > 0 && (
+        <div className={`rp-line rp-line--doc rp-line-head${independent ? ' has-main' : ''}${discounts ? ' has-disc' : ''}`} aria-hidden="true">
+          <span>الوصف</span>{independent && <span>التصنيف الأساسي</span>}<span>التصنيف الفرعي</span>
+          {discounts && <span className="rp-line-total">خصم البند</span>}<span className="rp-line-total">{discounts ? 'المبلغ بعد الخصم' : 'المبلغ شامل الضريبة'}</span><span />
+        </div>
+      )}
+      {items.map((item, i) => (
+        <ItemRow key={i} item={item} index={i} categories={categories}
+          categoryMainFromType={independent ? undefined : normCat(transType || '')} discounts={discounts}
+          onEdit={patch => onEditItem(i, patch)} onDelete={() => onDeleteItem(i)} />
+      ))}
+      <div><Button size="sm" icon={Plus} onClick={onAddItem}>إضافة بند</Button></div>
+    </div>
+  )
+}
+
+function ItemsTotals({ check, exact, res, onEdit }) {
+  const totalKey = res.totalAmount != null ? 'totalAmount' : 'amount'
+  if (exact) return (
+    <div className="rp-totals">
+      {exact.status !== 'none' && (
+        <div className="rp-total-row"><span>{exact.basis === 'exclusive' ? 'مجموع البنود قبل الضريبة' : 'مجموع البنود'}</span><Money value={exact.itemsTotal / 100} /></div>
+      )}
+      <div className="rp-total-row">
+        <label htmlFor="rv-disc">خصم على إجمالي الفاتورة <small className="ts-field-hint">يُوزَّع على البنود بنسبة مبالغها</small></label>
+        <Num id="rv-disc" value={res.invoiceDiscount ?? ''} placeholder="0" onChange={e => onEdit('invoiceDiscount', e.target.value)} />
+      </div>
+      <div className="rp-total-row">
+        <label htmlFor="rv-vat">{exact.basis === 'exclusive' ? 'ضريبة القيمة المضافة' : 'منها ضريبة القيمة المضافة'} <small className="ts-field-hint">كما في المستند</small></label>
+        <Num id="rv-vat" value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)} />
+      </div>
+      <div className="rp-total-row rp-total-row--strong">
+        <label htmlFor="rv-total">إجمالي المستند <small className="ts-field-hint">شامل الضريبة</small></label>
+        <Num id="rv-total" value={res.totalAmount ?? res.amount ?? ''} onChange={e => onEdit(totalKey, e.target.value)} />
+      </div>
+      {exact.status === 'match' && (
+        <div className="rp-total-row rp-total-row--ok"><span>{[exact.basis === 'exclusive' ? 'البنود' : 'مجموع البنود', exact.discount ? '− الخصم' : '', exact.basis === 'exclusive' ? '+ الضريبة' : ''].filter(Boolean).join(' ')} = الإجمالي، بالهللة</span><Check className="ts-icon--sm" aria-hidden="true" /></div>
+      )}
+      {exact.status === 'mismatch' && (
+        <div className="rp-total-row rp-total-row--diff" role="status">
+          <span>فرق غير مفسّر: البنود {exact.diff > 0 ? 'تزيد' : 'تنقص'} عن الإجمالي. طابق مبالغ البنود وخصوماتها والضريبة مع المستند؛ لا يُعتمد بفرق</span><Money value={Math.abs(exact.diff) / 100} />
+        </div>
+      )}
+      {exact.status === 'invalid' && (
+        <div className="rp-total-row rp-total-row--diff" role="status"><span>في المبالغ قيمة غير صالحة (رقم بأكثر من هللتين أو نص).</span></div>
+      )}
+    </div>
+  )
+  return (
+    <div className="rp-totals">
+      {check.status !== 'none' && <div className="rp-total-row"><span>مجموع البنود</span><Money value={check.itemsTotal} /></div>}
+      <div className="rp-total-row">
+        <label htmlFor="rv-vat">منها ضريبة القيمة المضافة <small className="ts-field-hint">كما في المستند</small></label>
+        <Num id="rv-vat" value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)} />
+      </div>
+      <div className="rp-total-row rp-total-row--strong">
+        <label htmlFor="rv-total">إجمالي المستند <small className="ts-field-hint">يُسجَّل في القيد</small></label>
+        <Num id="rv-total" value={res.totalAmount ?? res.amount ?? ''} onChange={e => onEdit(totalKey, e.target.value)} />
+      </div>
+      {check.status === 'match' && (
+        <div className="rp-total-row rp-total-row--ok"><span>مجموع البنود يطابق الإجمالي</span><Check className="ts-icon--sm" aria-hidden="true" /></div>
+      )}
+      {check.status === 'net-basis' && (
+        <div className="rp-total-row rp-total-row--warn" role="status">
+          <span>البنود مقروءة قبل الضريبة: مجموعها + الضريبة = الإجمالي. المعتاد أن تكون شاملة الضريبة — طابقها مع الصورة.</span>
+        </div>
+      )}
+      {check.status === 'mismatch' && (
+        <div className="rp-total-row rp-total-row--diff" role="status">
+          <span>البنود {check.diff > 0 ? 'تزيد' : 'تنقص'} عن الإجمالي بمقدار</span><Money value={Math.abs(check.diff)} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+const LINK_REASON = { same_number_other_supplier: 'الرقم نفسه لمورد آخر', same_supplier_date_total: 'المورد واليوم والمبلغ نفسها',
+  legacy_entry_match: 'قيد مسجّل سابقًا بالتاريخ والمبلغ والمورد نفسها' }
+function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
+  const [reason, setReason] = useState('')
+  if (!err) return null
+  const l = err.linked
+  const facts = l ? [
+    l.reason && { label: 'سبب التشابه', value: LINK_REASON[l.reason] || l.reason },
+    l.file_name && { label: 'المستند المرتبط', value: l.file_name },
+    l.supplier_label && { label: 'المورد', value: l.supplier_label },
+    l.journal_number && { label: 'القيد', value: <span className="ts-num">{l.journal_number}</span> },
+    l.invoice_date && { label: 'التاريخ', value: <span className="ts-num">{l.invoice_date}</span> },
+    l.total != null && { label: 'المبلغ', value: <Money value={l.total} /> },
+    l.current && { label: 'أرقام التقرير الموجود', value: <span className="ts-num">نقدي {money(l.current.cash)} · شبكة {money(l.current.network)}</span> },
+  ].filter(Boolean) : null
+  const warn = ['suspected_duplicate', 'sales_report_exists', 'no_change', 'stale', 'invoice_already_decided'].includes(err.code)
+  const reasonBox = (label, cta, onGo) => (
+    <div className="rp-v2-decision">
+      <Field label={label}><Textarea value={reason} onChange={e => setReason(e.target.value)} /></Field>
+      <div className="rp-note-actions">
+        <Button size="sm" variant="primary" disabled={busy || !reason.trim()} onClick={() => onGo(reason.trim())}>{cta}</Button>
+        <Button size="sm" variant="quiet" icon={Ban} onClick={onReject}>رفض المستند</Button>
+      </div>
+    </div>
+  )
+  return (
+    <Note tone={warn ? 'warning' : 'error'} icon={CircleAlert} title={approvalMessage(err)} facts={facts}
+      action={err.code === 'suspected_duplicate' ? reasonBox('لماذا ليس مكررًا؟ (يُحفظ مع الاعتماد)', 'ليس مكررًا — اعتماد', r => onDupConfirm(err.invoice_id, r, l))
+        : err.code === 'sales_report_exists' ? reasonBox('سبب تصحيح التقرير الموجود', 'تصحيح التقرير الموجود', r => onCorrectSales(r))
+        : ['duplicate_invoice', 'no_change', 'sales_report_exists_legacy'].includes(err.code)
+          ? <div className="rp-note-actions"><Button size="sm" variant="quiet" icon={Ban} onClick={onReject}>رفض المستند</Button></div> : null} />
+  )
+}
+
+function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, suppliers, payableSuppliers }) {
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
   const busy          = ['analyzing','approving','rejecting'].includes(doc._state)
-  const isImage  = doc.file_type?.startsWith('image/')
-  const fmt      = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
+  const analyzed      = doc.status === 'analyzed' || doc._state === 'analyzed'
 
   const parentCats     = categories.filter(c => !c.parent_id)
+  const isSales        = res?.type === 'sales'
   const isExpenseItems = res?.type === 'expense' && res.items?.length > 0
   const itemCount       = isExpenseItems ? res.items.length : 0
   const isFutureDate    = res?.date && res.date > fmtDate(new Date())
@@ -854,14 +1476,12 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
   // "نوع المستند = تحويل" مخصص فقط للتحويلات الداخلية الحقيقية — قصر خيارات "التصنيف الأساسي"
   // على الأنواع التحويلية فقط، مع الحفاظ على أي قيمة محفوظة سابقاً حتى لو لم تعد ضمن الفلتر
   const isTransferDoc      = res?.type === 'transfer'
-  const filteredTransTypes = isTransferDoc
-    ? transTypes.filter(t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي'))
-    : transTypes
+  const filteredTransTypes = isTransferDoc ? transTypes.filter(TRANSFER_KINDS) : transTypes
 
-  // مجموع البنود محسوب دائماً من البنود الفعلية
-  const itemsTotal   = isExpenseItems ? res.items.reduce((s, it) => s + (Number(it.amount) || 0), 0) : 0
-  const invoiceTotal = Number(res?.totalAmount || res?.amount) || 0
-  const totalDiff    = itemsTotal > 0 ? itemsTotal - invoiceTotal : 0   // موجب = البنود أكثر، سالب = أقل
+  // مقارنة على الأساس نفسه (src/lib/documentTotals.js): البنود شاملة الضريبة مع الإجمالي الشامل،
+  // والبنود المقروءة قبل الضريبة تُميَّز عن البند الناقص بدل أن تُعرض نقصًا بقيمة الضريبة
+  const totalsCheck = res && res.type === 'expense' ? compareItemsToTotal(res) : { status: 'none', itemsTotal: 0, total: 0, vat: 0, diff: 0 }
+  const salesTotal  = SALES_CHANNELS.reduce((s, c) => s + (Number(res?.[c.key]) || 0), 0)
 
   // الأولوية: transType أولاً، ثم category_main كـ fallback للمستندات القديمة
   const selectedParent = parentCats.find(p =>
@@ -869,13 +1489,8 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
     p.name === (res?.category_main || '') ||
     normCat(p.name) === normCat(res?.category_main || '')
   )
-  const resolvedMain = selectedParent ? selectedParent.name : (res?.category_main || '')
-  const subCats      = selectedParent ? categories.filter(c => c.parent_id === selectedParent.id) : []
-
-  function openFile() {
-    if (doc._isUrl)          window.open(doc._imageData, '_blank')
-    else if (doc._imageData) openPdfBlob(doc._imageData, doc.file_name)
-  }
+  const subCats     = selectedParent ? categories.filter(c => c.parent_id === selectedParent.id) : []
+  const resolvedSub = subCats.find(s => s.name === (res?.category_sub || '') || normCat(s.name) === normCat(res?.category_sub || ''))?.name || (res?.category_sub || '')
 
   // مطابقة اسم المورد — فقط لفواتير "آجل"، تُعاد حسبتها حياً مع كل تعديل بالاسم
   const isPayable      = res?.paySource === 'payable'
@@ -884,683 +1499,332 @@ function DocCard({ doc, projName, onLoadImage, onAnalyze, onApprove, onApproveFo
     ? matchSupplier(supplierName, payableSuppliers || [])
     : { matchType: 'none', supplier: null }
   const needsSupplierConfirm = isPayable && supplierMatch.matchType === 'fuzzy' && !doc._supplierResolution
+  const vErr = doc._validationError || {}
+  const isStub = [doc.analysis_result, rawRes, ...(rawRes?.invoices || [])].some(r => r?._localStub)
+  // الاعتماد الجديد: فحص الهللة يمنع الاعتماد بفرق غير مفسّر، وحالة كل فاتورة من الخادم
+  const isV2 = !!v2
+  const paused = v2?.mode === 'paused'
+  const preparing = isV2 && analyzed && v2.version == null
+  const invStatus = id => v2?.invoices?.find(i => i.id === id)
+  const exact = isV2 && res?.type === 'expense' ? exactTotals(res) : null
+  const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid')
+    : isV2 && isMultiInvoice && rawRes.invoices.some(x => (invStatus(x._id)?.status ?? 'pending') === 'pending'
+      && x.type === 'expense' && x.items?.length && ['mismatch', 'invalid'].includes(exactTotals(x).status))
+  const pendingCount = isMultiInvoice ? rawRes.invoices.filter(x => !isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending').length : 0
+  // قرار معلّق في التنبيه (تكرار، أو اشتباه بلا سبب، أو تقرير مبيعات موجود): الاعتماد يمر من التنبيه وحده
+  const DECISIONS = { duplicate_invoice: 'فاتورة معتمدة مسبقًا: لا اعتماد لها. ارفض المستند.',
+    suspected_duplicate: 'اكتب سبب اختلافه عن المستند المرتبط في التنبيه أعلاه، أو ارفضه.',
+    sales_report_exists: 'يوجد تقرير لهذا اليوم: صحّحه بسبب مكتوب من التنبيه أعلاه، أو ارفض المستند.',
+    sales_report_exists_legacy: 'يوجد تقرير لهذا اليوم سُجّل سابقًا: لا يُنشأ ثانٍ.',
+    no_change: 'مطابق للتقرير الموجود: ارفض المستند المكرر.' }
+  const decisionPending = isV2 && DECISIONS[doc._v2Error?.code]
+  // عدد القيود: قيد لكل تصنيف أساسي في الفاتورة (الاعتماد الجديد)
+  const entryCount = isV2 && isExpenseItems ? new Set(res.items.map(it => resolveItemCategoryMain(categories, it, res.transType))).size : 1
+
+  const approveHint = needsSupplierConfirm ? null
+    : isMultiInvoice ? `يسجّل ${plural(pendingCount, 'قيدًا واحدًا للفاتورة المتبقية', 'قيدين للفاتورتين المتبقيتين', 'قيود مستقلة للفواتير المتبقية', 'قيدًا مستقلًا للفواتير المتبقية')}.`
+    : isSales ? 'يسجّل المبيعات وقيودها حسب طريقة الدفع.'
+    : isExpenseItems ? `يسجّل ${plural(entryCount, 'قيدًا واحدًا', 'قيدين', 'قيود', 'قيدًا')} في الدفتر، وعدد البنود ${itemCount}.`
+    : 'يسجّل قيدًا واحدًا في الدفتر.'
+  const approveLabel = n => (n === 1 ? 'اعتماد الفاتورة المتبقية' : n === 2 ? 'اعتماد الفاتورتين' : n <= 10 ? `اعتماد ${n} فواتير` : `اعتماد ${n} فاتورة`)
+  // مدير المنصة يعرض المنشأة للقراءة فقط: لا اعتماد ولا رفض ولا قراءة (20261009150000)
+  const actionBar = (approveCount) => readOnly ? (
+    <div className="rp-action-bar" data-readonly-actions>
+      <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />عرض للقراءة فقط: الاعتماد والرفض للمحاسب.</div>
+    </div>
+  ) : (
+    <div className="rp-action-bar">
+      {paused ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />الاعتماد متوقف مؤقتًا لهذه المنشأة.</div>
+        : decisionPending ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />{decisionPending}</div>
+        : amountsBlocked ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />البنود لا تطابق الإجمالي بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.</div>
+        : needsSupplierConfirm
+        ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />أكّد هوية المورد أولًا (أعلاه).</div>
+        : <div className="rp-action-hint">{(exact ? amountsBlocked : totalsCheck.status === 'mismatch') ? <strong>البنود لا تطابق الإجمالي — راجعها قبل الاعتماد. </strong> : null}{approveHint}</div>}
+      <div className="rp-action-buttons">
+        <Button variant="primary" icon={doc._state === 'approving' ? LoaderCircle : Check} className="rp-approve"
+          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || preparing || !!decisionPending} onClick={onApprove}>
+          {doc._state === 'approving' ? 'جارٍ الاعتماد…' : approveCount ? approveLabel(approveCount) : 'اعتماد'}
+        </Button>
+        <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
+          title={canSaveDraft ? 'تُحفظ في هذه النافذة فقط، لا في قاعدة البيانات' : 'تعذّر التعرف على هوية الجلسة'}>حفظ مسودة</Button>
+        <Button variant="quiet" icon={Ban} className="rp-reject" disabled={busy} onClick={onReject}>رفض</Button>
+      </div>
+    </div>
+  )
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+    <div className="rp-form">
+      {isStub && (
+        <Note tone="info" icon={FlaskConical} title="قراءة محاكاة محليًا">
+          بيئة الاختبار: نتيجة ثابتة مطابقة للصورة المصطنعة. لا تقيس دقة مزوّد القراءة، ولم يُرسل المستند إلى أي مزوّد.
+        </Note>
+      )}
+      {doc._error && <Note tone="error" icon={CircleAlert} title="تعذّر الإجراء">{doc._error}</Note>}
+      {doc._notice && <Note tone="success" icon={Check} title={doc._notice} />}
+      <V2Error err={doc._v2Error} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />
+      {doc._validationError && (
+        <Note tone="error" icon={CircleAlert} title="حقول مطلوبة قبل الاعتماد">
+          {vErr.missingTransferPay
+            ? 'اختر مصدر الدفع قبل اعتماد التحويل.'
+            : `اختر ${vErr.missingType && vErr.missingPay ? 'التصنيف الأساسي ومصدر الدفع' : vErr.missingType ? 'التصنيف الأساسي' : 'مصدر الدفع'}.`}
+        </Note>
+      )}
+      {doc._dupCheck && !readOnly && (
+        <Note tone="warning" icon={CircleAlert} title="قيد مطابق مسجّل مسبقًا في الدفتر"
+          action={<div className="rp-note-actions">
+            <Button size="sm" variant="primary" disabled={busy} onClick={onApproveForced}>تسجيله مستندًا مختلفًا</Button>
+            <Button size="sm" variant="quiet" icon={Ban} onClick={onDupIgnore}>رفض المستند</Button>
+          </div>}>
+          بالتاريخ والنوع والوصف والمبلغ نفسها. هل هذا مستند مختلف حقًا؟
+        </Note>
+      )}
 
-      {/* ── Header ── */}
-      <div className="flex items-center gap-3 p-4 border-b border-slate-50">
-        <span className="text-2xl shrink-0">{isImage ? '🖼️' : '📄'}</span>
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-slate-800 truncate text-sm">{doc.file_name}</div>
-          <div className="text-xs text-slate-400 mt-0.5">منذ {timeAgo(doc.uploaded_at)}</div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-          {projName && (
-            <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full font-medium">{projName}</span>
-          )}
-          {doc.branch && (
-            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700">🏢 {doc.branch}</span>
-          )}
-          {doc.uploaded_by && (
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLOR[doc.uploaded_by] || 'bg-slate-100 text-slate-500'}`}>
-              {ROLE_AR[doc.uploaded_by] || doc.uploaded_by}
-            </span>
-          )}
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${doc.status === 'analyzed' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>
-            {doc.status === 'analyzed' ? 'محلَّل' : 'جديد'}
-          </span>
-        </div>
-      </div>
-
-      <div className="p-4 space-y-4">
-
-        {doc._error && (
-          <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-red-700 text-sm">❌ {doc._error}</div>
-        )}
-
-        {doc._validationError && (
-          <div className="bg-red-50 border-2 border-red-400 rounded-xl p-3 text-red-700 text-sm font-semibold flex items-center gap-2">
-            {doc._validationError.missingTransferPay
-              ? '⚠️ يجب اختيار مصدر الدفع قبل اعتماد التحويل'
-              : `⚠️ يرجى اختيار ${doc._validationError.missingType && doc._validationError.missingPay ? 'التصنيف الأساسي ومصدر الدفع' : doc._validationError.missingType ? 'التصنيف الأساسي' : 'مصدر الدفع'} قبل الاعتماد`}
+      {/* لم يُقرأ بعد */}
+      {doc.status === 'uploaded' && doc._state !== 'analyzed' && (
+        <Panel title="لم يُقرأ بعد" icon={FileSearch} subtitle="اقرأ المستند لتظهر حقوله، ثم راجعها مع الصورة">
+          <div className="ts-panel-body rp-read-actions">
+            {readOnly ? <span className="rp-action-why" data-readonly-actions>عرض للقراءة فقط: القراءة والرفض للمحاسب.</span> : <>
+            <Button variant="primary" icon={doc._state === 'analyzing' ? LoaderCircle : ScanText} disabled={busy} onClick={onAnalyze}>
+              {doc._state === 'analyzing' ? 'جارٍ القراءة…' : 'قراءة المستند'}
+            </Button>
+            {doc._state !== 'analyzing' && <Button variant="quiet" icon={Ban} disabled={busy} onClick={onReject}>رفض المستند</Button>}
+            </>}
           </div>
-        )}
+        </Panel>
+      )}
 
-        {doc._dupCheck && (
-          <div className="rounded-xl p-4 space-y-3" style={{ background: '#fffbeb', border: '2px solid #f59e0b' }}>
-            <div className="flex items-center gap-2 font-bold text-amber-800">
-              ⚠️ هذا القيد مسجل مسبقاً في الدفتر
-            </div>
-            <p className="text-sm text-amber-700">
-              تم تسجيل نفس المستند مسبقاً — هل هو مستند مختلف حقاً؟
-            </p>
-            <div className="flex gap-2">
-              <button onClick={onDupIgnore}
-                className="flex-1 py-2 rounded-xl text-sm font-medium transition-colors"
-                style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}>
-                ✕ رفض المستند
-              </button>
-              <button onClick={onApproveForced} disabled={busy}
-                className="flex-[2] py-2 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-50"
-                style={{ background: '#d97706' }}>
-                تسجيل كمستند جديد مختلف
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* File toggle */}
-        <button onClick={onLoadImage} disabled={doc._loadingImg}
-          className="flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">
-          {doc._loadingImg
-            ? <><div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"/>جارٍ التحميل...</>
-            : doc._showImage ? `🔼 إخفاء ${isImage ? 'الصورة' : 'الملف'}` : `👁 عرض ${isImage ? 'الصورة' : 'الملف PDF'}`
-          }
-        </button>
-
-        {doc._showImage && doc._imageData && isImage && (
-          doc._isUrl
-            ? <img src={doc._imageData} alt={doc.file_name} className="w-full max-h-80 object-contain rounded-xl bg-slate-50 border border-slate-100"/>
-            : <img src={`data:${doc.file_type};base64,${doc._imageData}`} alt={doc.file_name} className="w-full max-h-80 object-contain rounded-xl bg-slate-50 border border-slate-100"/>
-        )}
-        {doc._showImage && doc._imageData && !isImage && (
-          <button onClick={openFile}
-            className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
-            📄 فتح الملف
-          </button>
-        )}
-
-        {/* Analyze */}
-        {doc.status === 'uploaded' && (
-          <button onClick={onAnalyze} disabled={busy}
-            className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-            {doc._state === 'analyzing'
-              ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ التحليل...</span></>
-              : '📄 قراءة المستند'
-            }
-          </button>
-        )}
-
-        {/* نتيجة التحليل — فواتير متعددة */}
-        {(doc.status === 'analyzed' || doc._state === 'analyzed') && isMultiInvoice && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold rounded-lg px-3 py-2 border"
-              style={{ background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' }}>
-              📑 {rawRes.invoices.length} فواتير في هذه الصورة — عدّل كل فاتورة ثم اعتمد الكل
-            </div>
+      {/* فواتير متعددة في صورة واحدة */}
+      {analyzed && isMultiInvoice && (
+        <Panel title={`${plural(rawRes.invoices.length, 'فاتورة واحدة', 'فاتورتان', 'فواتير', 'فاتورة')} في هذه الصورة`} icon={Layers} subtitle="افتح كل فاتورة لتعديلها. تُعتمد كلها معًا، أو كل فاتورة وحدها.">
+          <div className="rp-subinvs">
             {rawRes.invoices.map((inv, idx) => (
-              <InvoiceSubPanel
-                key={idx}
-                invoice={inv}
-                index={idx}
-                transTypes={transTypes}
-                categories={categories}
+              <InvoiceSubPanel key={inv._id || idx} invoice={inv} index={idx} transTypes={transTypes} categories={categories}
+                v2={isV2} decision={isV2 ? invStatus(inv._id) : null}
                 onEdit={(f, v) => onEditInvoice(idx, f, v)}
-                onApprove={() => onApproveInvoice(idx)}
-                onReject={() => onRejectInvoice(idx)}
+                onApprove={readOnly ? null : () => onApproveInvoice(idx)}
+                onReject={readOnly ? null : () => onRejectInvoice(idx)}
                 approving={busy}
-              />
+                blocked={isV2 ? (decisionPending && (!doc._v2Error?.invoice_id || doc._v2Error.invoice_id === inv._id) ? decisionPending
+                  : inv.type === 'expense' && inv.items?.length && ['mismatch', 'invalid'].includes(exactTotals(inv).status) ? 'البنود لا تطابق إجمالي هذه الفاتورة بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.' : null) : null} />
             ))}
-            <div className="flex gap-2 pt-1">
-              <button onClick={onApprove} disabled={busy}
-                className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                {doc._state === 'approving'
-                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
-                  : `✓ اعتماد ${rawRes.invoices.length} فواتير`
-                }
-              </button>
-              <button onClick={onReject} disabled={busy}
-                className="px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
-                {doc._state === 'rejecting' ? '...' : '✕ رد'}
-              </button>
-            </div>
-            <button onClick={onAddInvoice} disabled={busy}
-              className="w-full py-2 text-blue-600 border border-dashed border-blue-300 bg-blue-50 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors disabled:opacity-50">
-              ➕ إضافة فاتورة أخرى من نفس الصورة
-            </button>
           </div>
-        )}
+          {pendingCount > 0 && actionBar(pendingCount)}
+        </Panel>
+      )}
 
-        {/* نتيجة التحليل — فاتورة واحدة */}
-        {(doc.status === 'analyzed' || doc._state === 'analyzed') && res && (
-          <div className="space-y-3">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide">نتيجة التحليل — عدّل إن لزم ثم اعتمد</div>
-
-            {/* ── ملخص ── */}
-            <div className="bg-slate-50 rounded-xl p-3 space-y-2 text-sm">
-              <div className="grid grid-cols-2 gap-2">
-                <div><span className="text-slate-400 text-xs block">التاريخ</span><span className="font-medium">{res.date}</span></div>
-
-                {res.type === 'sales' ? (
-                  <>
-                    {[
-                      { label: 'كاش',         val: res.cashSales,    show: true },
-                      { label: 'شبكة / مدى',  val: res.networkSales, show: true },
-                      { label: 'تحويل 💸',     val: res.transferSales, show: !!(res.transferSales > 0) },
-                      { label: 'هنقر ستيشن',  val: res.hungerSales,   show: !!(res.hungerSales > 0) },
-                      { label: 'جاهز',         val: res.jahez,         show: !!(res.jahez > 0) },
-                      { label: 'كيتا',         val: res.keeta,         show: !!(res.keeta > 0) },
-                      { label: 'مرسول',        val: res.mrsool,        show: !!(res.mrsool > 0) },
-                    ].filter(c => c.show).map(c => (
-                      <div key={c.label}><span className="text-slate-400 text-xs block">{c.label}</span><span className="font-semibold text-green-700">{fmt(c.val)}</span></div>
-                    ))}
-                    <div><span className="text-slate-400 text-xs block">الإجمالي</span><span className="font-bold text-green-800">{fmt(res.totalSales || (res.cashSales||0)+(res.networkSales||0)+(res.transferSales||0)+(res.hungerSales||0)+(res.jahez||0)+(res.keeta||0)+(res.mrsool||0))}</span></div>
-                    <div><span className="text-slate-400 text-xs block">ضريبة المخرجات (15%)</span><span className="font-semibold" style={{color:'#b45309'}}>{fmt(((res.totalSales||(res.cashSales||0)+(res.networkSales||0)+(res.transferSales||0))/1.15*0.15))}</span></div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <span className="text-slate-400 text-xs block">إجمالي الفاتورة</span>
-                      <span className="font-semibold text-red-700">
-                        {fmt(invoiceTotal)}
-                        {isExpenseItems && <span className="text-xs text-slate-400 mr-1 font-normal">({res.items.length} بنود)</span>}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-xs block">ضريبة المدخلات</span>
-                      <span className="font-semibold" style={{color: res.vatAmount > 0 ? '#dc2626' : '#94a3b8'}}>
-                        {res.vatAmount > 0 ? fmt(res.vatAmount) : '—'}
-                      </span>
-                    </div>
-                    <div><span className="text-slate-400 text-xs block">مصدر الدفع</span><span className="font-medium">{{ cash:'الصندوق', bank:'البنك', custody:'العهدة', payable:'آجل 🏪' }[res.paySource] || res.paySource || '—'}</span></div>
-                  </>
-                )}
-
-                {res.description && (
-                  <div className="col-span-2"><span className="text-slate-400 text-xs block">الوصف</span><span>{res.description}</span></div>
-                )}
-              </div>
-
-              {/* اسم المورد — فواتير "آجل" فقط */}
+      {/* فاتورة واحدة */}
+      {analyzed && res && (
+        <Panel title="بيانات المستند" icon={ListChecks} subtitle="طابق الحقول مع الصورة">
+          <div className="rp-section">
+            <Segment full label="نوع المستند" value={res.type || ''} onChange={v => onEdit('type', v)} options={TYPE_OPTIONS} />
+            <div className="ts-form-grid">
+              <Field label={isSales ? 'الوصف' : 'المورد أو الوصف'} span>
+                <GrowInput value={res.description || ''} onChange={e => onEdit('description', e.target.value)} />
+              </Field>
+              <Field label="التاريخ" error={isFutureDate ? 'تاريخ في المستقبل — تأكد من القراءة قبل الاعتماد.' : undefined}>
+                <DateInput value={res.date || ''} onChange={v => onEdit('date', v)} />
+              </Field>
+              {isV2 && !isSales && (
+                <Field label="رقم الفاتورة" hint={res.invoiceNumber ? 'كما هو مطبوع؛ يُحفظ النص الأصلي' : 'لم تقرأه القراءة الآلية — اكتبه من الصورة إن وُجد'}>
+                  <Input value={res.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} />
+                </Field>
+              )}
+              {doc._branchEditable && branches.length > 0 && (
+                <Field label="الفرع">
+                  <Select value={doc.branch || ''} placeholder="— اختر الفرع —" onChange={e => onBranchChange(e.target.value)}
+                    options={branches.map(b => ({ value: b, label: b }))} />
+                </Field>
+              )}
+              {!isSales && (
+                <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint="يحدد الرصيد الذي ينقص، أو دينًا على المورد.">
+                  <Select value={res.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
+                    options={[...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
+                      ...(res.paySource && ![...PAY_OPTIONS.map(o => o.value), 'credit'].includes(res.paySource) ? [{ value: res.paySource, label: res.paySource }] : [])]} />
+                </Field>
+              )}
+              {res.paySource === 'credit' && suppliers.length > 0 && (
+                <Field label="المورد">
+                  <Select value={doc._supplierId || ''} placeholder="— اختر المورد —" onChange={e => onSupplierChange(e.target.value)}
+                    options={suppliers.map(s => ({ value: s.id, label: s.name }))} />
+                </Field>
+              )}
               {isPayable && (
-                <div className="border-t border-slate-200 pt-2 space-y-2">
-                  <label className="text-xs text-slate-400 block">🏪 اسم المورد</label>
-                  <input value={supplierName} onChange={e => onSupplierNameChange(e.target.value)}
-                    placeholder="اسم المورد"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-
-                  {needsSupplierConfirm && (
-                    <div className="rounded-xl p-3 space-y-2" style={{ background: '#fffbeb', border: '2px solid #f59e0b' }}>
-                      <div className="text-sm text-amber-800 font-semibold">
-                        ⚠️ يشبه مورد موجود: {supplierMatch.supplier.name} — هل هو نفس المورد؟
-                      </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => onSupplierResolve('existing', supplierMatch.supplier.id)}
-                          className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white" style={{ background: '#d97706' }}>
-                          نعم نفس المورد
-                        </button>
-                        <button onClick={() => onSupplierResolve('new', null)}
-                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold border border-amber-300 text-amber-800 bg-white">
-                          لا، مورد جديد
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <Field label="اسم المورد (آجل)" span>
+                  <Input value={supplierName} placeholder="اسم المورد" onChange={e => onSupplierNameChange(e.target.value)} />
+                </Field>
               )}
-
-              {/* قائمة البنود */}
-              {isExpenseItems && (
-                <div className="border-t border-slate-200 pt-2 space-y-1">
-                  {res.items.map((item, i) => (
-                    <div key={i} className="flex items-start justify-between gap-2 text-xs">
-                      <div className="flex-1 min-w-0">
-                        <span className="text-slate-700">{item.description || '—'}</span>
-                        {(item.category_sub || item.category_main) && (
-                          <span className="text-slate-400 mr-1">· {item.category_sub || item.category_main}</span>
-                        )}
-                      </div>
-                      <span className="font-mono text-slate-600 shrink-0">{fmt(item.amount)}</span>
-                    </div>
-                  ))}
-
-                  {/* [تعديل 3] مجموع البنود المُعاد حسابه مع تحذير واضح */}
-                  <div className="border-t border-slate-200 pt-1.5 mt-1 space-y-1">
-                    <div className="flex justify-between text-xs font-semibold text-slate-600">
-                      <span>مجموع البنود (محسوب)</span>
-                      <span className="font-mono">{fmt(itemsTotal)}</span>
-                    </div>
-                    {Math.abs(totalDiff) > 0.5 && (
-                      <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5 text-xs text-red-700">
-                        <span className="text-sm">⚠️</span>
-                        <span>
-                          البنود {totalDiff > 0 ? 'تزيد' : 'تنقص'} بمقدار <strong className="font-mono">{fmt(Math.abs(totalDiff))}</strong> عن إجمالي الفاتورة ({fmt(invoiceTotal)}) — راجع المبالغ في التعديل
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+              {/* الاعتماد الجديد: التصنيف على البند نفسه (من قائمة التصنيفات)، ولو كان بندًا واحدًا؛ نوع القيد ومعالجته منه */}
+              {!isSales && !(isExpenseItems && (itemCount > 1 || isV2)) && (
+                <Field label={<>التصنيف الأساسي{doc._aiSuggestedType && res.transType ? <span className="rp-ai-tag">اقتراح القراءة</span> : null}</>}
+                  error={vErr.missingType ? 'مطلوب' : undefined}>
+                  <Select value={res.transType || ''} placeholder="— اختر —" onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
+                    options={catOptions(filteredTransTypes, res.transType)} />
+                </Field>
               )}
-
-              {/* شارات التصنيف للمستندات القديمة */}
-              {!isExpenseItems && res.category_main && (
-                <div className="flex gap-2 flex-wrap pt-1">
-                  <span className="text-xs px-2 py-1 rounded-full font-semibold" style={{ background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
-                    🏷️ {res.category_main}
-                  </span>
-                  {res.category_sub && (
-                    <span className="text-xs px-2 py-1 rounded-full font-semibold" style={{ background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' }}>
-                      📌 {res.category_sub}
-                    </span>
-                  )}
-                </div>
+              {!isSales && !isExpenseItems && (
+                <Field label="التصنيف الفرعي">
+                  {subCats.length > 0
+                    ? <Select value={resolvedSub} placeholder="— اختر الفئة الفرعية —" onChange={e => onEdit('category_sub', e.target.value)}
+                        options={catOptions(subCats.map(s => s.name), resolvedSub)} />
+                    : <Input value={res.category_sub || ''} onChange={e => onEdit('category_sub', e.target.value)} />}
+                </Field>
               )}
             </div>
-
-            {/* ── منتقي الفرع — يظهر إذا لم يكن للمستند فرع ── */}
-            {!doc.branch && branches.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3">
-                <span className="text-amber-600 text-sm shrink-0">🏢 الفرع</span>
-                <select
-                  value={doc.branch || ''}
-                  onChange={e => onBranchChange(e.target.value)}
-                  className="flex-1 border border-amber-300 bg-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                  <option value="">— اختر الفرع —</option>
-                  {branches.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
+            {needsSupplierConfirm && (
+              <Note tone="warning" icon={CircleAlert} title={`يشبه موردًا مسجّلًا: ${supplierMatch.supplier.name}`}
+                action={<div className="rp-note-actions">
+                  <Button size="sm" variant="primary" onClick={() => onSupplierResolve('existing', supplierMatch.supplier.id)}>نعم، المورد نفسه</Button>
+                  <Button size="sm" onClick={() => onSupplierResolve('new', null)}>لا، مورد جديد</Button>
+                </div>}>
+                هل هو المورد نفسه؟
+              </Note>
             )}
-
-            {/* ── تعديل البيانات ── */}
-            <details className="group" open={!!doc._validationError || isFutureDate}>
-              <summary className="text-sm text-blue-600 cursor-pointer hover:text-blue-800 font-medium list-none flex items-center gap-1">
-                <span className="group-open:rotate-90 transition-transform inline-block">▶</span> تعديل البيانات
-              </summary>
-              <div className="mt-3 space-y-3">
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
-                    {isFutureDate && (
-                      <div className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-1">
-                        ⚠️ هذا التاريخ في المستقبل — تأكد أن القراءة صحيحة قبل الاعتماد
-                      </div>
-                    )}
-                    <input type="date" value={res.date || ''} onChange={e => onEdit('date', e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                  </div>
-
-                  {/* نوع المستند — دائماً قابل للتعديل لتصحيح التصنيف الخاطئ */}
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">نوع المستند</label>
-                    <select value={res.type || ''} onChange={e => onEdit('type', e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                      <option value="sales">📊 مبيعات POS</option>
-                      <option value="expense">🧾 فاتورة مصروفات</option>
-                      <option value="transfer">🔄 تحويل</option>
-                    </select>
-                  </div>
-
-                  {/* مصدر الدفع — دائماً قابل للتعديل */}
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">
-                      مصدر الدفع {doc._validationError?.missingPay && <span className="text-red-500 font-bold">*مطلوب</span>}
-                    </label>
-                    <select value={res.paySource || ''} onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
-                      className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingPay ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
-                      <option value="">— اختر —</option>
-                      <option value="cash">💵 الصندوق</option>
-                      <option value="bank">🏦 البنك / مدى</option>
-                      <option value="custody">👤 العهدة</option>
-                      <option value="payable">🏪 آجل</option>
-                      {suppliers.length > 0 && <option value="credit">🏪 آجل / مورد</option>}
-                    </select>
-                    {res.paySource === 'credit' && suppliers.length > 0 && (
-                      <div className="mt-2">
-                        <label className="text-xs text-slate-400 block mb-1">المورد</label>
-                        <select value={doc._supplierId || ''} onChange={e => onSupplierChange(e.target.value)}
-                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                          style={{ borderColor: '#fcd34d', background: '#fffbeb' }}>
-                          <option value="">— اختر المورد —</option>
-                          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* إجمالي الفاتورة */}
-                  {res.type !== 'sales' && (
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">
-                        {isExpenseItems ? 'إجمالي الفاتورة (للقيد)' : 'المبلغ الإجمالي'}
-                      </label>
-                      <input type="number"
-                        value={res.totalAmount ?? res.amount ?? ''}
-                        onChange={e => onEdit(res.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                    </div>
-                  )}
-
-                  {res.type !== 'sales' && (
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">🏛️ ضريبة القيمة المضافة</label>
-                      <input type="number" value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)}
-                        placeholder="0.00"
-                        className="w-full border border-amber-200 bg-amber-50 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-                    </div>
-                  )}
-
-                  {/* التصنيف الأساسي — على مستوى الفاتورة فقط عندما تكون ببند واحد أو بلا بنود؛
-                      الفواتير متعددة البنود تُصنَّف لكل بند على حدة (انظر جدول البنود أدناه) */}
-                  {!(isExpenseItems && itemCount > 1) && (
-                    <div>
-                      <label className="text-xs text-slate-400 mb-1 flex items-center gap-1.5">
-                        <span>التصنيف الأساسي</span>
-                        {doc._validationError?.missingType && <span className="text-red-500 font-bold">*مطلوب</span>}
-                        {doc._aiSuggestedType && res.transType && (
-                          <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#eff6ff', color: '#1d4ed8' }}>🤖 اقتراح ذكي</span>
-                        )}
-                      </label>
-                      <select value={res.transType || ''} onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
-                        className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${doc._validationError?.missingType ? 'border-red-400 bg-red-50 focus:ring-red-400' : 'border-slate-200 focus:ring-blue-400'}`}>
-                        <option value="">— اختر —</option>
-                        {res.transType && isTransferDoc && !filteredTransTypes.includes(res.transType) && (
-                          <option value={res.transType}>{res.transType}</option>
-                        )}
-                        {filteredTransTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </div>
-                  )}
-
-                  {res.type === 'sales' && (
-                    <>
-                      {[
-                        { key: 'cashSales',     label: '💵 مبيعات كاش' },
-                        { key: 'networkSales',  label: '🏦 مبيعات شبكة / مدى' },
-                        { key: 'transferSales', label: '💸 مبيعات تحويل' },
-                        { key: 'hungerSales',   label: '🍔 هنقر ستيشن' },
-                        { key: 'jahez',         label: '🛵 جاهز' },
-                        { key: 'keeta',         label: '🛺 كيتا' },
-                        { key: 'mrsool',        label: '🛵 مرسول' },
-                      ].map(({ key, label }) => (
-                        <div key={key}>
-                          <label className="text-xs text-slate-400 block mb-1">{label}</label>
-                          <input type="number" value={res[key] || ''} onChange={e => onEdit(key, e.target.value)}
-                            placeholder="0.00"
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                        </div>
-                      ))}
-                      <div className="col-span-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm flex justify-between">
-                        <span className="text-green-700 font-semibold">الإجمالي المحسوب</span>
-                        <span className="font-mono font-bold text-green-800">{fmt((Number(res.cashSales)||0)+(Number(res.networkSales)||0)+(Number(res.transferSales)||0)+(Number(res.hungerSales)||0)+(Number(res.jahez)||0)+(Number(res.keeta)||0)+(Number(res.mrsool)||0))}</span>
-                      </div>
-                    </>
-                  )}
-
-                  <div className="col-span-2">
-                    <label className="text-xs text-slate-400 block mb-1">الوصف / اسم المورد</label>
-                    <input value={res.description || ''} onChange={e => onEdit('description', e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                  </div>
-                </div>
-
-                {/* ── جدول البنود ── */}
-                {isExpenseItems && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-500">البنود ({res.items.length})</span>
-                      <button onClick={onAddItem}
-                        className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors">
-                        + إضافة بند
-                      </button>
-                    </div>
-                    <div className="border border-slate-200 rounded-xl overflow-hidden">
-                      {res.items.map((item, i) => (
-                        <ItemRow key={i} item={item} index={i}
-                          categories={categories}
-                          categoryMainFromType={itemCount > 1 ? undefined : normCat(res.transType || '')}
-                          onEdit={patch => onEditItem(i, patch)}
-                          onDelete={() => onDeleteItem(i)}/>
-                      ))}
-                    </div>
-                    {/* مقارنة المجموع */}
-                    <div className={`flex justify-between text-xs px-1 font-semibold ${Math.abs(totalDiff) > 0.5 ? 'text-red-600' : 'text-green-600'}`}>
-                      <span>مجموع البنود</span>
-                      <span className="font-mono">{fmt(itemsTotal)} / {fmt(invoiceTotal)}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* التصنيف الفرعي — الرئيسي يُشتق تلقائياً من نوع الحركة */}
-                {res.type !== 'sales' && !isExpenseItems && (
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">📌 التصنيف الفرعي</label>
-                    {subCats.length > 0 ? (() => {
-                      const resolvedSub = subCats.find(s =>
-                        s.name === (res.category_sub || '') ||
-                        normCat(s.name) === normCat(res.category_sub || '')
-                      )?.name || (res.category_sub || '')
-                      return (
-                        <select value={resolvedSub} onChange={e => onEdit('category_sub', e.target.value)}
-                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                          style={{ borderColor: '#bbf7d0' }}>
-                          <option value="">— اختر الفئة الفرعية —</option>
-                          {res.category_sub && !subCats.some(s => s.name === resolvedSub) && (
-                            <option value={resolvedSub}>{resolvedSub}</option>
-                          )}
-                          {subCats.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                        </select>
-                      )
-                    })() : (
-                      <input value={res.category_sub || ''} onChange={e => onEdit('category_sub', e.target.value)}
-                        className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-                        style={{ borderColor: '#bbf7d0' }}/>
-                    )}
-                  </div>
-                )}
-              </div>
-            </details>
-
-            {/* أزرار الاعتماد */}
-            <div className="flex gap-2 pt-1">
-              <button onClick={onApprove} disabled={busy || needsSupplierConfirm}
-                title={needsSupplierConfirm ? 'يرجى تأكيد هوية المورد أولاً' : ''}
-                className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                {doc._state === 'approving'
-                  ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
-                  : isExpenseItems
-                    ? `✓ تسجيل — حركة واحدة + ${res.items.length} بنود`
-                    : '✓ تسجيل وحفظ'
-                }
-              </button>
-              <button onClick={onReject} disabled={busy}
-                className="px-4 py-2.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-sm font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
-                {doc._state === 'rejecting' ? '...' : '✕ رد'}
-              </button>
-            </div>
-            <button onClick={onAddInvoice} disabled={busy}
-              className="w-full py-2 text-blue-600 border border-dashed border-blue-300 bg-blue-50 rounded-xl text-sm font-medium hover:bg-blue-100 transition-colors disabled:opacity-50">
-              ➕ إضافة فاتورة أخرى من نفس الصورة
-            </button>
           </div>
-        )}
 
-        {/* رد للمستندات غير المحللة */}
-        {doc.status === 'uploaded' && doc._state !== 'analyzing' && (
-          <button onClick={onReject} disabled={busy}
-            className="w-full py-2 bg-slate-50 text-slate-500 border border-slate-200 rounded-xl text-sm font-medium hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50">
-            ✕ رد المستند
-          </button>
-        )}
-      </div>
+          {res.type === 'expense' && (
+            <div className="rp-section">
+              <h3>البنود <span className="ts-num">{itemCount}</span> <span className="ts-field-hint">{exact?.basis === 'exclusive' ? 'المبالغ قبل الضريبة كما في المستند' : 'المبالغ شاملة الضريبة كما في المستند'}</span></h3>
+              {isV2 && (
+                <Segment label="أساس مبالغ البنود" value={exact?.basis || 'inclusive'} onChange={v => onEdit('amountsBasis', v)}
+                  options={[{ value: 'inclusive', label: 'البنود شاملة الضريبة' }, { value: 'exclusive', label: 'البنود قبل الضريبة' }]} />
+              )}
+              <ItemLines items={res.items || []} independent={itemCount > 1 || isV2} categories={categories} transType={res.transType} discounts={isV2}
+                onEditItem={onEditItem} onDeleteItem={onDeleteItem} onAddItem={onAddItem} />
+              <ItemsTotals check={totalsCheck} exact={exact} res={res} onEdit={onEdit} />
+            </div>
+          )}
+
+          {res.type === 'transfer' && (
+            <div className="rp-section">
+              <div className="ts-form-grid">
+                <Field label="المبلغ">
+                  <Num value={res.totalAmount ?? res.amount ?? ''} onChange={e => onEdit(res.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)} />
+                </Field>
+                <Field label="ضريبة القيمة المضافة">
+                  <Num value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)} />
+                </Field>
+              </div>
+            </div>
+          )}
+
+          {isSales && (
+            <div className="rp-section">
+              <h3>المبيعات حسب طريقة الدفع</h3>
+              <div className="ts-form-grid rp-channels">
+                {SALES_CHANNELS.map(({ key, label }) => (
+                  <Field key={key} label={label}><Num value={res[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
+                ))}
+              </div>
+              <div className="rp-totals">
+                <div className="rp-total-row rp-total-row--strong"><span>الإجمالي المحسوب</span><Money value={salesTotal} /></div>
+                <div className="rp-total-row"><span>ضريبة المخرجات المحسوبة (15% كما في التطبيق)</span>
+                  <Money value={(res.totalSales || (res.cashSales || 0) + (res.networkSales || 0) + (res.transferSales || 0)) / 1.15 * 0.15} /></div>
+              </div>
+            </div>
+          )}
+
+          {actionBar(0)}
+        </Panel>
+      )}
+
+      {analyzed && (res || isMultiInvoice) && (
+        <div className="rp-secondary-actions">
+          <Button size="sm" variant="quiet" icon={Plus} disabled={busy} onClick={onAddInvoice}>إضافة فاتورة أخرى من الصورة نفسها</Button>
+        </div>
+      )}
     </div>
   )
 }
 
-// ── InvoiceSubPanel — بطاقة فاتورة واحدة ضمن نتيجة متعددة ───────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApprove, onReject, approving }) {
+// ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
+function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApprove, onReject, approving, blocked, v2, decision }) {
+  const decided = decision && decision.status !== 'pending'
+  if (decided) return (
+    <div className="rp-subinv rp-subinv--decided">
+      <div className="rp-subinv-row">
+        <span className="rp-subinv-n">فاتورة <span className="ts-num">{index + 1}</span></span>
+        <span className="rp-subinv-desc">{invoice.description || invoice.transType || '—'}</span>
+        <Status tone={decision.status === 'approved' ? 'success' : 'neutral'}>
+          {decision.status === 'approved' ? <>معتمدة · <span className="ts-num">{decision.journal_number}</span></> : 'مستبعدة'}
+        </Status>
+      </div>
+    </div>
+  )
   const [payError, setPayError] = useState(false)
-  const fmt = v => v != null && v !== '' ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
   const isSales      = invoice.type === 'sales'
   const isMultiItem  = (invoice.items?.length || 0) > 1
   const isFutureDate = invoice.date && invoice.date > fmtDate(new Date())
   const isTransferDoc      = invoice.type === 'transfer'
-  const filteredTransTypes = isTransferDoc
-    ? transTypes.filter(t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي'))
-    : transTypes
+  const filteredTransTypes = isTransferDoc ? transTypes.filter(TRANSFER_KINDS) : transTypes
   const totalDisp = isSales
     ? (Number(invoice.cashSales)||0) + (Number(invoice.networkSales)||0) + (Number(invoice.hungerSales)||0) + (Number(invoice.jahez)||0) + (Number(invoice.keeta)||0)
     : Number(invoice.totalAmount || invoice.amount) || 0
+  const items = invoice.items || []
 
   return (
-    <div className="border border-slate-200 rounded-xl overflow-hidden">
-      {/* header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-50 border-b border-slate-100">
-        <span className="text-xs font-bold text-slate-600">فاتورة {index + 1}</span>
-        <div className="flex items-center gap-3">
-          {invoice.date && <span className="text-xs text-slate-400">{invoice.date}</span>}
-          <span className={`text-xs font-mono font-bold ${isSales ? 'text-green-700' : 'text-red-700'}`}>
-            {fmt(totalDisp)}
-          </span>
-        </div>
-      </div>
-
-      {/* summary row */}
-      {(invoice.description || invoice.transType) && (
-        <div className="px-3 py-2 flex items-center gap-2 text-xs text-slate-500">
-          {invoice.transType && (
-            <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full shrink-0">{invoice.transType}</span>
+    <details className="rp-subinv" open={isFutureDate || undefined}>
+      <summary>
+        <span className="rp-subinv-n">فاتورة <span className="ts-num">{index + 1}</span></span>
+        <span className="rp-subinv-desc">{invoice.description || invoice.transType || '—'}</span>
+        {invoice.date && <span className="ts-num rp-subinv-date">{invoice.date}</span>}
+        <Money value={totalDisp} />
+      </summary>
+      <div className="rp-subinv-body">
+        <div className="ts-form-grid">
+          <Field label="الوصف" span>
+            <Input value={invoice.description || ''} onChange={e => onEdit('description', e.target.value)} />
+          </Field>
+          <Field label="التاريخ" error={isFutureDate ? 'تاريخ في المستقبل — تأكد من القراءة.' : undefined}>
+            <DateInput value={invoice.date || ''} onChange={v => onEdit('date', v)} />
+          </Field>
+          {v2 && !isSales && (
+            <Field label="رقم الفاتورة"><Input value={invoice.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} /></Field>
           )}
-          {invoice.description && <span className="truncate">{invoice.description}</span>}
+          {!isSales && (
+            <Field label="مصدر الدفع" error={payError ? 'مطلوب' : undefined}>
+              <Select value={invoice.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
+                options={PAY_OPTIONS.filter(o => o.value !== 'payable')} />
+            </Field>
+          )}
+          {!isSales && (
+            <Field label="المبلغ">
+              <Num value={invoice.totalAmount ?? invoice.amount ?? ''} onChange={e => onEdit(invoice.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)} />
+            </Field>
+          )}
+          {!isSales && !isMultiItem && (
+            <Field label="التصنيف الأساسي">
+              <Select value={invoice.transType || ''} placeholder="— اختر —" onChange={e => onEdit('transType', e.target.value)}
+                options={catOptions(filteredTransTypes, isTransferDoc ? invoice.transType : '')} />
+            </Field>
+          )}
+          {isSales && SALES_CHANNELS.filter(c => !['transferSales', 'mrsool'].includes(c.key)).map(({ key, label }) => (
+            <Field key={key} label={label}><Num value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
+          ))}
         </div>
-      )}
-
-      {/* edit */}
-      <details open={isFutureDate}>
-        <summary className="px-3 py-2 text-xs text-blue-600 cursor-pointer list-none flex items-center gap-1 border-t border-slate-100">
-          <span>▶</span> تعديل
-        </summary>
-        <div className="px-3 pb-3 pt-2 space-y-2 bg-slate-50 border-t border-slate-100">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
-              {isFutureDate && (
-                <div className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-1">
-                  ⚠️ هذا التاريخ في المستقبل — تأكد أن القراءة صحيحة قبل الاعتماد
-                </div>
-              )}
-              <input type="date" value={invoice.date || ''} onChange={e => onEdit('date', e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"/>
-            </div>
-            {!isSales && (
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">
-                  مصدر الدفع {payError && <span className="text-red-500 font-bold">*مطلوب</span>}
-                </label>
-                <select value={invoice.paySource || ''} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
-                  className={`w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 ${payError ? 'border-red-400 bg-red-50' : 'border-slate-200 bg-white'}`}>
-                  <option value="">— اختر —</option>
-                  <option value="cash">💵 الصندوق</option>
-                  <option value="bank">🏦 البنك</option>
-                  <option value="custody">👤 العهدة</option>
-                </select>
-              </div>
-            )}
-            {!isSales && (
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">المبلغ</label>
-                <input type="number" value={invoice.totalAmount ?? invoice.amount ?? ''}
-                  onChange={e => onEdit(invoice.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
-              </div>
-            )}
-            {!isSales && !isMultiItem && (
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">التصنيف الأساسي</label>
-                <select value={invoice.transType || ''} onChange={e => onEdit('transType', e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white">
-                  <option value="">— اختر —</option>
-                  {invoice.transType && isTransferDoc && !filteredTransTypes.includes(invoice.transType) && (
-                    <option value={invoice.transType}>{invoice.transType}</option>
-                  )}
-                  {filteredTransTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-            )}
-            {isSales && [
-              { key: 'cashSales',    label: '💵 كاش' },
-              { key: 'networkSales', label: '🏦 شبكة' },
-              { key: 'hungerSales',  label: '🍔 هنقر' },
-              { key: 'jahez',        label: '🛵 جاهز' },
-              { key: 'keeta',        label: '🛺 كيتا' },
-            ].map(({ key, label }) => (
-              <div key={key}>
-                <label className="text-xs text-slate-400 block mb-1">{label}</label>
-                <input type="number" value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)}
-                  placeholder="0.00"
-                  className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
-              </div>
-            ))}
-            <div className="col-span-2">
-              <label className="text-xs text-slate-400 block mb-1">الوصف</label>
-              <input value={invoice.description || ''} onChange={e => onEdit('description', e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white"/>
-            </div>
-
-            {/* ── بنود الفاتورة ── */}
-            {!isSales && (
-              <div className="col-span-2 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-500">البنود ({(invoice.items || []).length})</span>
-                  <button
-                    onClick={() => onEdit('items', [...(invoice.items || []), { description: '', amount: '', category_main: '', category_sub: '' }])}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-semibold px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors">
-                    + إضافة بند
-                  </button>
-                </div>
-                {(invoice.items || []).length > 0 && (
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    {(invoice.items || []).map((item, i) => (
-                      <ItemRow key={i} item={item} index={i}
-                        categories={categories || []}
-                        categoryMainFromType={isMultiItem ? undefined : normCat(invoice.transType || '')}
-                        onEdit={patch => {
-                          const items = (invoice.items || []).map((it, j) => j === i ? { ...it, ...patch } : it)
-                          onEdit('items', items)
-                        }}
-                        onDelete={() => onEdit('items', (invoice.items || []).filter((_, j) => j !== i))}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+        {!isSales && (
+          <div className="rp-subinv-items">
+            <h4>البنود <span className="ts-num">{items.length}</span></h4>
+            <ItemLines items={items} independent={isMultiItem || v2} categories={categories || []} transType={invoice.transType} discounts={v2}
+              onEditItem={(i, patch) => onEdit('items', items.map((it, j) => j === i ? { ...it, ...patch } : it))}
+              onDeleteItem={i => onEdit('items', items.filter((_, j) => j !== i))}
+              onAddItem={() => onEdit('items', [...items, blankItem()])} />
           </div>
-        </div>
-      </details>
-
-      {/* أزرار الاعتماد والرفض الفردي */}
-      {(onApprove || onReject) && (
-        <div className="px-3 pb-3 pt-1 space-y-1.5">
-          {payError && (
-            <div className="text-red-600 text-xs font-semibold bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">
-              ⚠️ يجب اختيار مصدر الدفع قبل اعتماد التحويل
-            </div>
-          )}
-          <div className="flex gap-2">
+        )}
+        {(onApprove || onReject) && (
+          <div className="rp-subinv-actions">
+            {payError && <span className="ts-field-error">اختر مصدر الدفع قبل اعتماد التحويل.</span>}
+            {blocked && <span className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />{blocked}</span>}
             {onApprove && (
-              <button onClick={() => {
+              <Button size="sm" icon={Check} disabled={approving || !!blocked} onClick={() => {
                 if (invoice.type === 'transfer' && !invoice.paySource) { setPayError(true); return }
                 setPayError(false)
                 onApprove()
-              }} disabled={approving}
-                className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">
-                {approving
-                  ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ...</span></>
-                  : '✅ اعتماد هذه الفاتورة'
-                }
-              </button>
+              }}>اعتماد هذه الفاتورة وحدها</Button>
             )}
-            {onReject && (
-              <button onClick={onReject} disabled={approving}
-                className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-xl text-xs font-semibold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50">
-                ❌ رفض
-              </button>
-            )}
+            {onReject && <Button size="sm" variant="quiet" icon={Ban} disabled={approving} onClick={onReject}>استبعادها</Button>}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </details>
   )
 }

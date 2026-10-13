@@ -1,33 +1,64 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarDays, ExternalLink, FileText, Info, NotebookText, Paperclip, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage, getSignedUrl } from '../lib/storage'
+import { loadAttachmentCounts, loadPeriodEntries } from '../lib/journalEntries.js'
+import { deleteSupplierPayment, isSupplierPaymentType } from '../lib/supplierPayments'
+import { Button, DateInput, Dialog, EmptyState, Field, IconButton, Panel, SearchBox, Segment, Status } from '../ui/components.jsx'
+import { formatDate, formatNumber } from '../ui/format.js'
 
-const NAVY = '#1B3A5C'
-const GOLD = '#6EB7B0'
+// سجل الحركات اليومية بالهوية الجديدة. الحسابات كما كانت حرفيًا: القيود غير الملغاة في الفترة بترتيب التاريخ، والمدين = دخل الصندوق
+// والبنك والعهدة، والدائن = خرجها، والإجمالي على قيود الفترة كلها، والبحث في البيان والنوع ورقم القيد كما هو، ورقم «#ترتيب» للقيد بلا
+// رقم، ورابط المستند (ملف القيد أو مستند برقم القيد)، والمرفقات الإضافية (عرض ورفع وحذف)، والحذف النهائي بعد التأكيد.
+// التغيير: التحميل كامل بترتيب ثابت (src/lib/journalEntries.js) وفشل أي جزء رسالة بإعادة محاولة بلا صفوف؛ وجدول على الكمبيوتر وبطاقات
+// على الجوال؛ وحوارات الهوية بدل نافذة المتصفح ورسالة عند فشل الحذف أو المرفق. المقارنة قبل وبعد: local-test/journals-figures.mjs.
 
 function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-const now = new Date()
-const thisMonthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
-const today = fmtDate(now)
-
-const STATUS_BADGE = {
-  approved:  { bg: '#f0fdf4', color: '#16a34a' },
-  auto:      { bg: '#eff6ff', color: '#1d4ed8' },
-  pending:   { bg: '#fffbeb', color: '#b45309' },
-  cancelled: { bg: '#fef2f2', color: '#dc2626' },
-  modified:  { bg: '#f5f3ff', color: '#7c3aed' },
-}
+const STATUS_TONE = { approved: 'success', auto: 'info', pending: 'warning', cancelled: 'danger', modified: 'neutral' }
 const STATUS_LABEL = {
   approved: 'معتمد', auto: 'تلقائي', pending: 'معلق', cancelled: 'ملغي', modified: 'معدَّل',
 }
+const QUICK_PERIODS = [
+  { value: 'month',     label: 'الشهر الحالي' },
+  { value: 'lastMonth', label: 'الشهر الماضي' },
+  { value: 'year',      label: 'السنة الحالية' },
+  { value: 'custom',    label: 'فترة أخرى' },
+]
+const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url'
+const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
 
-// ── مودال المرفقات ──────────────────────────────────────────────
-function AttachModal({ entry, projectId, role, onClose, onAdded }) {
-  const [attachments, setAttachments] = useState([])
+function getRange(type) {
+  const n = new Date()
+  let from, to = fmtDate(n)
+  if (type === 'month') from = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`
+  else if (type === 'lastMonth') {
+    const lm = new Date(n.getFullYear(), n.getMonth() - 1, 1)
+    const lme = new Date(n.getFullYear(), n.getMonth(), 0)
+    from = fmtDate(lm); to = fmtDate(lme)
+  } else { from = `${n.getFullYear()}-01-01` }
+  return { from, to }
+}
+
+const reason = error => (/failed to fetch|network|load failed/i.test(error?.message || '') ? 'تعذّر الاتصال بالخادم؛ تحقق من الاتصال ثم أعد المحاولة.' : (error?.message || 'خطأ غير معروف'))
+const cleanLabel = s => String(s || '').replace(/^[^\p{L}\p{N}]+/u, '').trim() || String(s || '')
+const fmt = v => (v ? formatNumber(v, 2) : '—')
+const debitOf  = r => (r.cash_in  || 0) + (r.bank_in  || 0) + (r.custody_in  || 0)
+const creditOf = r => (r.cash_out || 0) + (r.bank_out || 0) + (r.custody_out || 0)
+
+// يفتح الملف برابط موقَّع مؤقت (كما كان: نافذة تُفتح فورًا ثم يوضع الرابط فيها)
+async function openFile(fileUrl) {
+  const win = window.open('', '_blank')
+  const url = await getSignedUrl(fileUrl)
+  if (win) { if (url) win.location.href = url; else win.close() }
+}
+
+// ── المرفقات الإضافية للقيد (عرض ورفع وحذف) ─────────────────────────
+function AttachDialog({ entry, projectId, role, onClose, onChanged }) {
+  const [attachments, setAttachments] = useState(null)
   const [uploading, setUploading]     = useState(false)
   const [error, setError]             = useState('')
   const fileRef = useRef()
@@ -36,12 +67,13 @@ function AttachModal({ entry, projectId, role, onClose, onAdded }) {
 
   async function loadAttachments() {
     if (!entry.journal_number) return
-    const { data } = await supabase
+    const { data, error: e } = await supabase
       .from('attachments')
       .select('id,file_name,file_url,uploaded_by,uploaded_at')
       .eq('journal_number', entry.journal_number)
       .eq('project_id', projectId)
       .order('uploaded_at')
+    if (e) { setError('تعذّر تحميل المرفقات: ' + reason(e)); return }
     setAttachments(data || [])
   }
 
@@ -51,211 +83,128 @@ function AttachModal({ entry, projectId, role, onClose, onAdded }) {
     setUploading(true); setError('')
     try {
       const fileUrl = await uploadToStorage(file, projectId)
-      await supabase.from('attachments').insert({
+      const { error: insErr } = await supabase.from('attachments').insert({
         project_id:     projectId,
         journal_number: entry.journal_number,
         file_url:       fileUrl,
         file_name:      file.name,
         uploaded_by:    role,
       })
+      if (insErr) throw insErr
       await loadAttachments()
-      onAdded(entry.journal_number)
-    } catch(e) { setError(e.message) }
+      onChanged()
+    } catch (err) { setError('تعذّر رفع المرفق: ' + reason(err)) }
     setUploading(false)
     if (fileRef.current) fileRef.current.value = ''
   }
 
   async function handleDelete(id) {
-    await supabase.from('attachments').delete().eq('id', id)
+    setError('')
+    const { error: delErr } = await supabase.from('attachments').delete().eq('id', id)
+    if (delErr) { setError('تعذّر حذف المرفق: ' + reason(delErr)); return }
     await loadAttachments()
-    onAdded(entry.journal_number)
+    onChanged()
   }
 
-  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB') : ''
-  const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
-
+  const day = d => (d ? new Date(d).toLocaleDateString('en-GB') : '')
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden" style={{ border: `2px solid ${GOLD}` }}>
-
-        {/* رأس المودال */}
-        <div className="px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
-          <div>
-            <h2 className="font-bold text-white text-sm">📎 مرفقات القيد</h2>
-            <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              {entry.journal_number} — {entry.date}
-            </p>
-          </div>
-          <button onClick={onClose} className="text-white/60 hover:text-white text-xl leading-none">✕</button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          {/* زر رفع مرفق جديد */}
-          <label className="flex items-center gap-2 px-4 py-3 rounded-xl cursor-pointer font-bold text-sm transition-all"
-            style={{ background: GOLD, color: NAVY }}>
-            {uploading
-              ? <><div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"/>جارٍ الرفع...</>
-              : <>📎 إضافة مرفق جديد</>
-            }
-            <input ref={fileRef} type="file" className="hidden" accept="image/*,.pdf"
-              onChange={handleUpload} disabled={uploading}/>
-          </label>
-
-          {error && (
-            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">❌ {error}</div>
-          )}
-
-          {/* قائمة المرفقات الحالية */}
-          {attachments.length === 0 ? (
-            <div className="text-center py-8 text-slate-400">
-              <span className="text-3xl block mb-2">📂</span>
-              <p className="text-sm">لا توجد مرفقات بعد</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="text-xs font-bold text-slate-500 mb-2">{attachments.length} مرفق</div>
-              {attachments.map(a => (
-                <div key={a.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
-                  style={{ background: '#f5f4f0', border: '1px solid #e8e5dc' }}>
-                  <span className="text-lg shrink-0">{a.file_name?.endsWith('.pdf') ? '📄' : '🖼️'}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate" style={{ color: NAVY }}>{a.file_name}</div>
-                    <div className="text-xs text-slate-400">{ROLE_AR[a.uploaded_by] || a.uploaded_by} — {fmtDate(a.uploaded_at)}</div>
-                  </div>
-                  <button onClick={async () => {
-                      const win = window.open('', '_blank')
-                      const url = await getSignedUrl(a.file_url)
-                      if (win) { if (url) win.location.href = url; else win.close() }
-                    }}
-                    className="text-xs font-semibold px-2 py-1 rounded-lg transition-all"
-                    style={{ background: '#eff6ff', color: '#1d4ed8' }}>
-                    فتح
-                  </button>
-                  {(role === 'owner' || role === 'accountant') && (
-                    <button onClick={() => handleDelete(a.id)}
-                      className="text-xs px-2 py-1 rounded-lg transition-all"
-                      style={{ background: '#fef2f2', color: '#dc2626' }}>
-                      حذف
-                    </button>
-                  )}
+    <Dialog open title="مرفقات القيد" description={`${entry.journal_number} — ${formatDate(entry.date, { year: true })}`} onClose={onClose}
+      footer={<Button onClick={onClose}>إغلاق</Button>}>
+      <div className="jrl-attach">
+        <label className={`ts-btn ts-btn--primary jrl-upload${uploading ? ' is-busy' : ''}`}>
+          {uploading ? <RefreshCw className="ts-icon" aria-hidden="true" /> : <Upload className="ts-icon" aria-hidden="true" />}
+          {uploading ? 'جارٍ الرفع…' : 'إضافة مرفق جديد'}
+          <input ref={fileRef} type="file" className="ts-sr" accept="image/*,.pdf" onChange={handleUpload} disabled={uploading} />
+        </label>
+        {error && <p className="ts-field-error" role="alert">{error}</p>}
+        {attachments === null && !error && <p className="ts-field-hint" aria-busy="true">جارٍ تحميل المرفقات…</p>}
+        {attachments && attachments.length === 0 && <EmptyState icon={Paperclip}>لا توجد مرفقات بعد.</EmptyState>}
+        {attachments && attachments.length > 0 && (
+          <ul className="jrl-attach-list" data-k="jl.attachments">
+            {attachments.map(a => (
+              <li key={a.id}>
+                <FileText className="ts-icon" aria-hidden="true" />
+                <div className="jrl-attach-name">
+                  <strong>{a.file_name}</strong>
+                  <span>{ROLE_AR[a.uploaded_by] || a.uploaded_by} — <span className="ts-num">{day(a.uploaded_at)}</span></span>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <Button size="sm" variant="quiet" icon={ExternalLink} onClick={() => openFile(a.file_url)}>فتح</Button>
+                {(role === 'owner' || role === 'accountant') && (
+                  <Button size="sm" variant="quiet" className="jrl-del" icon={Trash2} onClick={() => handleDelete(a.id)}>حذف</Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    </div>
+    </Dialog>
   )
 }
 
-// ── الصفحة الرئيسية ──────────────────────────────────────────────
+// ── الصفحة ──────────────────────────────────────────────────────────
 export default function JournalLedger() {
   const { role, projectId, isSuperAdmin } = useAuth()
   const canEdit = role === 'accountant' || role === 'owner' || isSuperAdmin
-  const [rows, setRows]             = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [filter, setFilter]         = useState({ from: thisMonthStart, to: today })
+  const [rows, setRows]                 = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [loadError, setLoadError]       = useState('')
+  const [filter, setFilter]             = useState(getRange('month'))
   const [activePeriod, setActivePeriod] = useState('month')
-  const [search, setSearch]         = useState('')
+  const [search, setSearch]             = useState('')
   const [attachCounts, setAttachCounts] = useState({})   // journal_number → count
-  const [modalEntry,  setModalEntry]  = useState(null)
-  const [cancellingId, setCancellingId] = useState(null)
+  const [modalEntry, setModalEntry]     = useState(null)
+  const [deleting, setDeleting]         = useState(null)
+  const [busy, setBusy]                 = useState(false)
+  const [actionError, setActionError]   = useState('')
+  const loadSeq = useRef(0)
 
   useEffect(() => { if (projectId) load(projectId, filter) }, [projectId])
 
+  // القيود والمستندات والمرفقات كاملة؛ أي فشل ← رسالة بلا صفوف. نتيجة أقدم من آخر طلب تُهمل.
   async function load(pid, f) {
-    setLoading(true)
-    let q = supabase.from('ledger_entries')
-      .select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url')
-      .eq('project_id', pid || projectId)
-      .not('status', 'eq', 'cancelled')
-      .order('date', { ascending: true })
-      .order('created_at', { ascending: true })
-      .limit(500)
-    if (f.from) q = q.gte('date', f.from)
-    if (f.to)   q = q.lte('date', f.to)
-    const { data } = await q
-    const entries = data || []
-
-    // جلب file_url من documents للقيود القديمة
-    const missing = entries.filter(r => !r.file_url && r.journal_number).map(r => r.journal_number)
-    let docMap = {}
-    if (missing.length) {
-      const { data: docs } = await supabase
-        .from('documents')
-        .select('journal_number,file_url,file_name')
-        .in('journal_number', missing)
-        .not('file_url', 'is', null)
-      if (docs) docs.forEach(d => { if (d.file_url) docMap[d.journal_number] = d })
-    }
-
-    const mapped = entries.map(r =>
-      (!r.file_url && docMap[r.journal_number])
-        ? { ...r, file_url: docMap[r.journal_number].file_url, _doc_name: docMap[r.journal_number].file_name }
-        : r
-    )
-    setRows(mapped)
-
-    // جلب عدد المرفقات لكل قيد
-    const jnums = [...new Set(mapped.map(r => r.journal_number).filter(Boolean))]
-    if (jnums.length) {
-      const { data: atts } = await supabase
-        .from('attachments')
-        .select('journal_number')
-        .eq('project_id', pid || projectId)
-        .in('journal_number', jnums)
-      const counts = {}
-      ;(atts || []).forEach(a => { counts[a.journal_number] = (counts[a.journal_number] || 0) + 1 })
-      setAttachCounts(counts)
-    }
-
+    const seq = ++loadSeq.current
+    setLoading(true); setLoadError('')
+    const pidOk = pid || projectId
+    const entries = await loadPeriodEntries(supabase, { projectId: pidOk, from: f.from, to: f.to, columns: COLUMNS, dateAscending: true })
+    const counts = entries.error ? null : await loadAttachmentCounts(supabase, { projectId: pidOk, journalNumbers: entries.data.map(r => r.journal_number) })
+    if (seq !== loadSeq.current) return
+    const failed = entries.error ? entries : counts.error ? counts : null
+    if (failed) { setRows([]); setAttachCounts({}); setLoadError(`${failed.part}: ${reason(failed.error)}`) }
+    else { setRows(entries.data); setAttachCounts(counts.data) }
     setLoading(false)
   }
 
-  function refreshAttachCount(journalNumber) {
+  // الحذف كما كان: حذف نهائي للصف بعد التأكيد. قيد «سداد مورد» يُحذف بدالة الخادم مع حركة المورد معًا (20261013120000)
+  async function handleDelete(entry) {
+    setBusy(true); setActionError('')
+    let msg = null
+    if (isSupplierPaymentType(entry.type)) msg = await deleteSupplierPayment(supabase, entry).catch(e => e?.message || 'خطأ غير معروف')
+    else {
+      const { error } = await supabase.from('ledger_entries').delete().eq('id', entry.id)
+      if (error) msg = error.message || 'خطأ غير معروف'
+    }
+    setBusy(false)
+    if (msg) { setActionError('فشل الحذف: ' + reason({ message: msg })); return }
+    setDeleting(null)
     load(projectId, filter)
   }
 
-  async function handleCancel(entry) {
-    if (!window.confirm(`حذف الحركة ${entry.journal_number || ''}؟\n"${entry.type}" — ${entry.date}\n\nلا يمكن التراجع عن هذا الإجراء.`)) return
-    setCancellingId(entry.id)
-    const { error } = await supabase
-      .from('ledger_entries')
-      .delete()
-      .eq('id', entry.id)
-    setCancellingId(null)
-    if (error) { alert('فشل الحذف: ' + error.message); return }
-    load(projectId, filter)
-  }
-
-  function setQuick(type) {
+  function choosePeriod(type) {
     setActivePeriod(type)
-    const n = new Date()
-    let from, to = fmtDate(n)
-    if (type === 'month')     from = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`
-    else if (type === 'lastMonth') {
-      const lm = new Date(n.getFullYear(), n.getMonth() - 1, 1)
-      const lme = new Date(n.getFullYear(), n.getMonth(), 0)
-      from = fmtDate(lm); to = fmtDate(lme)
-    } else { from = `${n.getFullYear()}-01-01` }
-    const f = { from, to }; setFilter(f)
+    if (type === 'custom') return
+    const f = getRange(type); setFilter(f)
     if (projectId) load(projectId, f)
+  }
+  function setDate(key, iso) {
+    setActivePeriod('custom')
+    const f = { ...filter, [key]: iso }; setFilter(f); load(projectId, f)
   }
 
   const totals = useMemo(() => {
     const debit   = rows.reduce((s, r) => s + (r.cash_in  || 0) + (r.bank_in  || 0) + (r.custody_in  || 0), 0)
     const credit  = rows.reduce((s, r) => s + (r.cash_out || 0) + (r.bank_out || 0) + (r.custody_out || 0), 0)
-    const cashIn  = rows.reduce((s, r) => s + (r.cash_in  || 0), 0)
-    const cashOut = rows.reduce((s, r) => s + (r.cash_out || 0), 0)
-    const bankIn  = rows.reduce((s, r) => s + (r.bank_in  || 0), 0)
-    const bankOut = rows.reduce((s, r) => s + (r.bank_out || 0), 0)
-    const custIn  = rows.reduce((s, r) => s + (r.custody_in  || 0), 0)
-    const custOut = rows.reduce((s, r) => s + (r.custody_out || 0), 0)
-    return { debit, credit, cashIn, cashOut, bankIn, bankOut, custIn, custOut }
+    return { debit, credit }
   }, [rows])
-
-  const fmt = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'
 
   const visibleRows = useMemo(() => {
     if (!search.trim()) return rows
@@ -267,213 +216,160 @@ export default function JournalLedger() {
     )
   }, [rows, search])
 
-  const cardBorder = { border: '1px solid #e8e5dc' }
+  const refYear = Number((filter.to || fmtDate(new Date())).slice(0, 4))
+  const day = iso => (iso ? formatDate(iso, { refYear }) : '—')
+  const rangeText = filter.from && filter.to
+    ? (filter.from === filter.to ? formatDate(filter.from, { year: true }) : `${formatDate(filter.from, { year: filter.from.slice(0, 4) !== filter.to.slice(0, 4) })} – ${formatDate(filter.to, { year: true })}`)
+    : 'كل التواريخ'
+  const countText = `${visibleRows.length} حركة${search && rows.length !== visibleRows.length ? ` (من ${rows.length})` : ''}`
+
+  const view = rows.length ? visibleRows : []
+  const jnLabel = (r, idx) => r.journal_number || `#${idx + 1}`
+  const canAttachOf = r => ['approved', 'auto'].includes(r.status) && r.journal_number
+  const docButton = r => r.file_url
+    ? <IconButton bare label={r._doc_name ? `فتح المستند: ${r._doc_name}` : 'فتح المستند'} icon={FileText} className="jrl-doc" onClick={() => openFile(r.file_url)} />
+    : <span className="ldg-nil">—</span>
+  const attButton = r => {
+    const n = r.journal_number ? (attachCounts[r.journal_number] || 0) : 0
+    return canAttachOf(r)
+      ? <Button size="sm" variant={n > 0 ? 'primary' : 'quiet'} icon={n > 0 ? Paperclip : Plus} className="jrl-att" aria-label={n > 0 ? `المرفقات (${n})` : 'إضافة مرفق'} onClick={() => setModalEntry(r)}>{n > 0 ? <span className="ts-num">{n}</span> : null}</Button>
+      : <span className="ldg-nil">—</span>
+  }
 
   return (
-    <div className="space-y-4">
-
-      {/* رأس الصفحة */}
-      <div>
-        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>سجل الحركات اليومية</h1>
-        <p className="text-sm text-slate-500 mt-0.5">
-          {visibleRows.length} حركة {search && rows.length !== visibleRows.length ? `(من ${rows.length})` : ''}
-        </p>
-      </div>
-
-      {/* فلاتر */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={cardBorder}>
-        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
-        <div className="flex flex-wrap gap-2 justify-center">
-          {[
-            { key: 'month',     label: 'الشهر الحالي' },
-            { key: 'lastMonth', label: 'الشهر الماضي' },
-            { key: 'year',      label: 'السنة الحالية' },
-          ].map(q => (
-            <button key={q.key} onClick={() => setQuick(q.key)}
-              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
-              style={activePeriod === q.key
-                ? { background: GOLD, color: NAVY }
-                : { background: '#f5f4f0', color: '#4b5563' }}>
-              {q.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-3 items-end justify-center">
-          <div className="flex-1 min-w-[8rem]">
-            <label className="text-xs text-slate-500 block mb-1 text-center">من</label>
-            <input type="date" value={filter.from}
-              onChange={e => { setActivePeriod('custom'); const f = { ...filter, from: e.target.value }; setFilter(f); load(projectId, f) }}
-              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
-          <div className="flex-1 min-w-[8rem]">
-            <label className="text-xs text-slate-500 block mb-1 text-center">إلى</label>
-            <input type="date" value={filter.to}
-              onChange={e => { setActivePeriod('custom'); const f = { ...filter, to: e.target.value }; setFilter(f); load(projectId, f) }}
-              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
-          <div className="flex-1 min-w-[10rem]">
-            <label className="text-xs text-slate-500 block mb-1">بحث بالبيان أو رقم القيد</label>
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="فاتورة كهرباء أو QD-..."
-              className="w-full border rounded-xl px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: '#d1c9b8' }}/>
-          </div>
-          <div className="flex-1 min-w-[8rem]">
-            <div className="mb-1 h-4" />
-            <button onClick={() => load(projectId, filter)}
-              className="w-full px-4 py-1.5 rounded-xl text-sm font-bold transition-all text-center"
-              style={{ background: NAVY, color: '#fff' }}>
-              بحث
-            </button>
-          </div>
+    <div className="ldg-page jrl-page">
+      <div className="ts-heading">
+        <div>
+          <h1>سجل الحركات اليومية</h1>
+          <p className="ldg-showing">
+            <CalendarDays className="ts-icon--sm" aria-hidden="true" />
+            <span>{rangeText}</span>
+            <span aria-hidden="true">·</span>
+            <span data-k="jl.count">{loading || loadError ? '—' : countText}</span>
+          </p>
         </div>
       </div>
 
-      {/* الجدول */}
-      <div className="bg-white rounded-2xl shadow-sm overflow-x-auto" style={cardBorder}>
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin"
-              style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
+      <Panel className="ldg-filters jx-filters" title="الفترة والبحث" icon={CalendarDays}>
+        <div className="ts-panel-body ldg-filter-body">
+          <Segment label="الفترة" value={activePeriod} onChange={choosePeriod} options={QUICK_PERIODS} />
+          <div className="ldg-filter-row jx-filter-row">
+            <Field label="من"><DateInput value={filter.from} onChange={iso => setDate('from', iso)} /></Field>
+            <Field label="إلى"><DateInput value={filter.to} onChange={iso => setDate('to', iso)} /></Field>
+            <div className="ts-field jx-search">
+              <span className="ts-field-label">بحث بالبيان أو رقم القيد</span>
+              <SearchBox label="بحث بالبيان أو رقم القيد" value={search} onChange={setSearch} placeholder="فاتورة كهرباء أو QD-..." />
+            </div>
+            <Button icon={RefreshCw} onClick={() => load(projectId, filter)} disabled={loading}>تحديث</Button>
           </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ background: NAVY }}>
-                <th className="px-4 py-3 text-right text-xs font-bold text-white">رقم القيد</th>
-                <th className="px-4 py-3 text-right text-xs font-bold text-white">التاريخ</th>
-                <th className="px-4 py-3 text-right text-xs font-bold text-white">نوع الحركة</th>
-                <th className="px-4 py-3 text-right text-xs font-bold text-white">البيان</th>
-                <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#86efac' }}>مدين</th>
-                <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#fca5a5' }}>دائن</th>
-                <th className="px-4 py-3 text-right text-xs font-bold text-white">الحالة</th>
-                <th className="px-4 py-3 text-center text-xs font-bold" style={{ color: GOLD }}>مستند</th>
-                <th className="px-4 py-3 text-center text-xs font-bold" style={{ color: GOLD }}>مرفقات</th>
-                {canEdit && (
-                  <th className="px-4 py-3 text-center text-xs font-bold text-white w-16">إلغاء</th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y" style={{ borderColor: '#f5f4f0' }}>
-              {visibleRows.length === 0 && (
-                <tr><td colSpan={canEdit ? 10 : 9}
-                  className="text-center py-12 text-slate-400">
-                  {search ? 'لا توجد نتائج للبحث' : 'لا توجد قيود في هذه الفترة'}
-                </td></tr>
-              )}
-              {visibleRows.map((r, idx) => {
-                const debit   = (r.cash_in  || 0) + (r.bank_in  || 0) + (r.custody_in  || 0)
-                const credit  = (r.cash_out || 0) + (r.bank_out || 0) + (r.custody_out || 0)
-                const badge   = STATUS_BADGE[r.status] || { bg: '#f5f4f0', color: '#6b7280' }
-                const attCount = r.journal_number ? (attachCounts[r.journal_number] || 0) : 0
-                const canAttach = ['approved','auto'].includes(r.status) && r.journal_number
+        </div>
+      </Panel>
 
-                return (
-                  <tr key={r.id} className="transition-colors hover:bg-amber-50/30">
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="text-xs font-bold font-mono" style={{ color: GOLD }}>
-                        {r.journal_number || `#${idx + 1}`}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap font-mono text-xs">{r.date}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs font-medium" style={{ color: NAVY }}>{r.type || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 max-w-48 truncate text-xs">{r.description || '—'}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {debit > 0 ? <span className="text-green-700 font-semibold text-xs">{fmt(debit)}</span> : <span className="text-slate-300 text-xs">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {credit > 0 ? <span className="text-red-600 font-semibold text-xs">{fmt(credit)}</span> : <span className="text-slate-300 text-xs">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={badge}>
-                        {STATUS_LABEL[r.status] || r.status}
-                      </span>
-                    </td>
-                    {/* عمود المستند الأصلي */}
-                    <td className="px-4 py-3 text-center">
-                      {r.file_url
-                        ? <button onClick={async () => {
-                              const win = window.open('', '_blank')
-                              const url = await getSignedUrl(r.file_url)
-                              if (win) { if (url) win.location.href = url; else win.close() }
-                            }}
-                            title={r._doc_name || 'فتح المستند'}
-                            className="inline-flex items-center justify-center w-7 h-7 rounded-lg transition-colors text-base"
-                            style={{ background: '#fef9ec', color: GOLD }}
-                            onMouseEnter={e => e.currentTarget.style.background = '#fef3c7'}
-                            onMouseLeave={e => e.currentTarget.style.background = '#fef9ec'}>
-                            📎
-                          </button>
-                        : <span className="text-slate-300 text-xs">—</span>
-                      }
-                    </td>
-                    {/* عمود المرفقات الإضافية */}
-                    <td className="px-4 py-3 text-center">
-                      {canAttach ? (
-                        <button onClick={() => setModalEntry(r)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all"
-                          style={{ background: attCount > 0 ? NAVY : '#f5f4f0', color: attCount > 0 ? '#fff' : '#6b7280' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = NAVY; e.currentTarget.style.color = '#fff' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = attCount > 0 ? NAVY : '#f5f4f0'; e.currentTarget.style.color = attCount > 0 ? '#fff' : '#6b7280' }}>
-                          📎 {attCount > 0 ? attCount : '+'}
-                        </button>
-                      ) : (
-                        <span className="text-slate-300 text-xs">—</span>
-                      )}
-                    </td>
+      {loading ? (
+        <Panel><div className="ldg-loading" aria-busy="true">جارٍ تحميل الحركات…</div></Panel>
+      ) : loadError ? (
+        <div className="ts-note ts-note--error ldg-load-error" data-k="jl.loadError" role="alert">
+          <Info className="ts-icon" aria-hidden="true" />
+          <div className="ts-note-body">
+            <strong>تعذّر تحميل حركات هذه الفترة كاملة، فلم تُعرض الحركات ولا الإجماليات.</strong>
+            عرض جزء منها كأنه كامل يعطي إجماليات خاطئة. {loadError}
+            <div className="ts-note-action"><Button size="sm" variant="primary" icon={RefreshCw} onClick={() => load(projectId, filter)}>إعادة المحاولة</Button></div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="jx-totals" data-k="jl.totals">
+            <div><span>مدين الفترة</span><strong className="ts-num is-in" data-k="jl.totalDebit">{fmt(totals.debit)}</strong></div>
+            <div><span>دائن الفترة</span><strong className="ts-num is-out" data-k="jl.totalCredit">{fmt(totals.credit)}</strong></div>
+            <div><span>قيود الفترة</span><strong className="ts-num" data-k="jl.totalCount">{rows.length}</strong></div>
+          </div>
 
-                    {/* زر الإلغاء */}
-                    {canEdit && (
-                      <td className="px-4 py-3 text-center">
-                        {r.status !== 'cancelled' ? (
-                          <button
-                            onClick={() => handleCancel(r)}
-                            disabled={cancellingId === r.id}
-                            className="inline-flex items-center justify-center px-2.5 py-1 rounded-lg text-xs font-bold transition-all disabled:opacity-40"
-                            style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = '#dc2626'; e.currentTarget.style.color = '#fff' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#fef2f2'; e.currentTarget.style.color = '#dc2626' }}>
-                            {cancellingId === r.id
-                              ? <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin"/>
-                              : '✕ إلغاء'
-                            }
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-300">ملغي</span>
-                        )}
-                      </td>
-                    )}
+          {/* الكمبيوتر */}
+          <Panel className="ldg-table-panel" clip>
+            <div className="ldg-scroll">
+              <table className="ts-table ldg-table jrl-table" data-table="jl.rows">
+                <thead>
+                  <tr>
+                    <th>رقم القيد</th><th>التاريخ</th><th>نوع الحركة</th><th>البيان</th>
+                    <th className="ts-end">مدين</th><th className="ts-end">دائن</th><th>الحالة</th>
+                    <th className="jrl-c">مستند</th><th className="jrl-c">مرفقات</th>
+                    {canEdit && <th><span className="ts-sr">حذف</span></th>}
                   </tr>
-                )
-              })}
-            </tbody>
-            {visibleRows.length > 0 && (
-              <tfoot style={{ background: NAVY }}>
-                <tr>
-                  <td colSpan={4} className="px-4 py-3 text-xs font-bold text-white">الإجمالي ({visibleRows.length} قيد)</td>
-                  <td className="px-4 py-3 text-right font-bold tabular-nums text-xs" style={{ color: '#86efac' }}>{fmt(totals.debit)}</td>
-                  <td className="px-4 py-3 text-right font-bold tabular-nums text-xs" style={{ color: '#fca5a5' }}>{fmt(totals.credit)}</td>
-                  <td/><td/><td/>
-                  {canEdit && <td/>}
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        )}
-      </div>
+                </thead>
+                <tbody>
+                  {view.length === 0 && (
+                    <tr><td colSpan={canEdit ? 10 : 9}><EmptyState icon={NotebookText}>{search ? 'لا توجد نتائج للبحث.' : 'لا توجد قيود في هذه الفترة.'}</EmptyState></td></tr>
+                  )}
+                  {view.map((r, idx) => (
+                    <tr key={r.id} data-id={r.id}>
+                      <td data-k="jn" className="jrl-jn ts-num">{jnLabel(r, idx)}</td>
+                      <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
+                      <td data-k="type" className="ldg-type" title={r.type || ''}>{cleanLabel(r.type) || '—'}</td>
+                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}</td>
+                      <td data-k="debit" className="ts-end ldg-move">{debitOf(r) > 0 ? <span className="is-in ts-num">{fmt(debitOf(r))}</span> : <span className="ldg-nil">—</span>}</td>
+                      <td data-k="credit" className="ts-end ldg-move">{creditOf(r) > 0 ? <span className="is-out ts-num">{fmt(creditOf(r))}</span> : <span className="ldg-nil">—</span>}</td>
+                      <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
+                      <td data-k="doc" className="jrl-c">{docButton(r)}</td>
+                      <td data-k="att" className="jrl-c" data-count={attachCounts[r.journal_number] || 0}>{attButton(r)}</td>
+                      {canEdit && (
+                        <td>{r.status !== 'cancelled' && <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); setDeleting(r) }} />}</td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
 
-      {/* مودال المرفقات */}
-      {modalEntry && (
-        <AttachModal
-          entry={modalEntry}
-          projectId={projectId}
-          role={role}
-          onClose={() => setModalEntry(null)}
-          onAdded={refreshAttachCount}
-        />
+          {/* الجوال */}
+          <div className="ldg-cards" data-cards="jl.rows">
+            {view.length === 0 && <Panel><EmptyState icon={NotebookText}>{search ? 'لا توجد نتائج للبحث.' : 'لا توجد قيود في هذه الفترة.'}</EmptyState></Panel>}
+            {view.map((r, idx) => (
+              <article key={r.id} className="ldg-card jrl-card" data-id={r.id}>
+                <div className="ldg-card-head">
+                  <span><span className="ts-num jrl-jn">{jnLabel(r, idx)}</span> · {day(r.date)}</span>
+                  <Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status>
+                </div>
+                <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
+                {r.description && <div className="ldg-card-desc">{r.description}</div>}
+                <dl className="ldg-card-moves">
+                  <div className="is-in"><dt>مدين</dt><dd className="ts-num">{fmt(debitOf(r))}</dd></div>
+                  <div className="is-out"><dt>دائن</dt><dd className="ts-num">{fmt(creditOf(r))}</dd></div>
+                </dl>
+                <div className="jrl-card-actions">
+                  {r.file_url && <Button size="sm" variant="quiet" icon={FileText} onClick={() => openFile(r.file_url)}>المستند</Button>}
+                  {canAttachOf(r) && <Button size="sm" variant="quiet" icon={Paperclip} onClick={() => setModalEntry(r)}>المرفقات ({attachCounts[r.journal_number] || 0})</Button>}
+                  {canEdit && r.status !== 'cancelled' && <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); setDeleting(r) }}>حذف</Button>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
       )}
+
+      {modalEntry && (
+        <AttachDialog entry={modalEntry} projectId={projectId} role={role} onClose={() => setModalEntry(null)} onChanged={() => load(projectId, filter)} />
+      )}
+
+      {/* تأكيد الحذف (الحذف نفسه كما كان: نهائي) */}
+      <Dialog open={!!deleting} onClose={() => !busy && setDeleting(null)} title="حذف الحركة نهائيًا؟"
+        description="يُحذف الصف من الدفتر ولا يمكن التراجع عن هذا الإجراء."
+        footer={<>
+          <Button variant="danger-solid" icon={Trash2} disabled={busy} onClick={() => handleDelete(deleting)}>{busy ? 'جارٍ الحذف…' : 'حذف نهائي'}</Button>
+          <Button onClick={() => setDeleting(null)} disabled={busy}>رجوع</Button>
+        </>}>
+        {deleting && (
+          <dl className="ldg-del-facts">
+            {deleting.journal_number && <div><dt>رقم القيد</dt><dd className="ts-num">{deleting.journal_number}</dd></div>}
+            <div><dt>التاريخ</dt><dd>{day(deleting.date)}</dd></div>
+            <div><dt>النوع</dt><dd>{cleanLabel(deleting.type) || '—'}</dd></div>
+            {deleting.description && <div><dt>البيان</dt><dd>{deleting.description}</dd></div>}
+            {debitOf(deleting) > 0 && <div><dt>مدين</dt><dd className="ts-num">{fmt(debitOf(deleting))}</dd></div>}
+            {creditOf(deleting) > 0 && <div><dt>دائن</dt><dd className="ts-num">{fmt(creditOf(deleting))}</dd></div>}
+          </dl>
+        )}
+        {deleting && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
+      </Dialog>
     </div>
   )
 }

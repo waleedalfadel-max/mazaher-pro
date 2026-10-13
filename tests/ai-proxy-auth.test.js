@@ -137,6 +137,19 @@ test('مستخدم موثّق بلا صف app_users (غير عضو) يُرفض',
   assert.equal(calls.length, 0)
 })
 
+test('موظف معطّل بجلسة قائمة يُرفض ولا يستدعي المزوّد', async () => {
+  const { res, calls } = await run({ adminOpts: { member: { id: 'app-1', project_id: 'project-1', role: 'accountant', is_active: false } } })
+  assert.equal(res.statusCode, 403)
+  assert.equal(res.body.error, 'USER_INACTIVE')
+  assert.equal(calls.length, 0)
+})
+
+test('موظف نشط صراحة يصل للمزوّد', async () => {
+  const { res, calls } = await run({ adminOpts: { member: { id: 'app-1', project_id: 'project-1', role: 'accountant', is_active: true } } })
+  assert.equal(res.statusCode, 200)
+  assert.equal(calls.length, 1)
+})
+
 test('الهوية تُفحص قبل شكل الجسم — لا يُكشف سبب التحقق لغير الموثّق', async () => {
   const { res, calls } = await run({}, { authorization: null, body: { junk: true } })
   assert.equal(res.statusCode, 401)

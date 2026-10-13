@@ -37,12 +37,14 @@ export async function authenticateRequest(req, { getAdmin = defaultGetAdmin } = 
 
     const { data: member, error: memberError } = await admin
       .from('app_users')
-      .select('id, project_id, role')
+      .select('id, project_id, role, is_active')
       .eq('auth_id', authUser.id)
       .maybeSingle()
 
     if (memberError) return deny(500, 'AUTH_UNAVAILABLE')
     if (!member) return deny(403, 'NOT_A_MEMBER')
+    // موظف عطّله مالك منشأته: جلسته القائمة لا تكفي (الحالة تُقرأ عند كل طلب)
+    if (member.is_active === false) return deny(403, 'USER_INACTIVE')
 
     return {
       ok: true,

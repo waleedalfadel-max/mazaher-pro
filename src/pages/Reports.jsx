@@ -1,26 +1,43 @@
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { CalendarCheck, CalendarDays, ChevronDown, ChevronLeft, FileSpreadsheet, FileText, HandCoins, Info, Landmark, ListTree, Percent, Receipt,
+  RefreshCw, ShoppingBasket, Smartphone, Store, TrendingUp, Trophy, Wallet } from 'lucide-react'
 import { supabase, fetchAllRows } from '../lib/supabase'
+import { fetchEveryRow, fetchByChunks } from '../lib/fetchAll.js'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings, isCorrupted } from '../lib/projectSettings'
-import { getFinancialSummary, isSales, isExcluded, isCOGS, isWithdrawal, isDebt,
-         salesAmountNet, expenseAmountNet, VAT_RATE } from '../lib/financialEngine'
+import { getFinancialSummary, isSales, salesAmountNet } from '../lib/financialEngine'
+import { isCounted, uncountedText } from '../lib/financeRules.js'
+import { fmtDate, salesFigures, expenseFigures } from '../lib/reportFigures.js'
+import { vatFigures } from '../lib/vatTreatment.js'
+import { SCOPE, TITLES, exportFileName, modelToXlsx, reportModel } from '../lib/reportExport.js'
+import { downloadBlob } from '../lib/reportPdf.js'
+import { Button, DateInput, EmptyState, Field, Metric, Money, Panel, Segment, Select, Tabs } from '../ui/components.jsx'
+import { formatDate, formatNumber, plural } from '../ui/format.js'
 
-const NAVY = '#1B3A5C'
-const GOLD = '#6EB7B0'
+// صفحة التقارير بالهوية الجديدة. الحسابات منقولة كما هي من الصفحة السابقة (الدوال salesFigures وexpenseFigures
+// وload)، والتغيير في العرض: الفترة والفرع ظاهران، والاختيار في العنوان (يبقى مع التحديث والرجوع)، والجداول تتمرر على الجوال.
+// المبالغ تُعرض بمنزلتين عشريتين (كانت تظهر أحيانًا بثلاث). مقارنة الأرقام قبل التصميم وبعده: local-test/reports-figures.mjs.
 
-const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
 
-const QUICK_PERIODS = [
-  { key: 'month',     label: 'الشهر الحالي' },
-  { key: 'lastMonth', label: 'الشهر الماضي' },
-  { key: 'year',      label: 'السنة الحالية' },
+const PERIODS = [
+  { value: 'month',        label: 'الشهر الحالي' },
+  { value: 'lastMonth',    label: 'الشهر الماضي' },
+  { value: 'year',         label: 'السنة الحالية' },
+  { value: 'month-picker', label: 'شهر محدد' },
+  { value: 'custom',       label: 'فترة أخرى' },
+]
+const PRESETS = ['month', 'lastMonth', 'year']
+
+const TABS = [
+  { value: 'sales',     label: 'المبيعات' },
+  { value: 'purchases', label: 'المصروفات' },
+  { value: 'vat',       label: 'الضريبة' },
+  { value: 'balance',   label: 'الأرصدة' },
 ]
 
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
-
-function fmtDate(d) {
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-}
+const ISO = /^\d{4}-\d{2}-\d{2}$/
 
 function getPeriodRange(key) {
   const n  = new Date()
@@ -39,77 +56,117 @@ function getPeriodRange(key) {
   return { from: `${n.getFullYear()}-01-01`, to }
 }
 
-function cleanFileName(name) {
-  return (name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim()
+function monthRange(year, month) {
+  const last = new Date(year, month, 0).getDate()
+  return { from: `${year}-${String(month).padStart(2,'0')}-01`, to: `${year}-${String(month).padStart(2,'0')}-${last}` }
 }
 
-function IncomeRow({ label, value, bold, indent, color, line }) {
-  const fmt = v => (v || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })
+// الاختيار من العنوان: الفترات الجاهزة تُحسب من تاريخ اليوم عند الفتح؛ الشهر المحدد والفترة الأخرى بتاريخيهما
+function initialFilters(params) {
+  const tab = TABS.some(t => t.value === params.get('tab')) ? params.get('tab') : 'sales'
+  const branch = params.get('branch') || 'all'
+  let period = PERIODS.some(p => p.value === params.get('period')) ? params.get('period') : 'month'
+  let from = params.get('from'), to = params.get('to')
+  if (PRESETS.includes(period)) ({ from, to } = getPeriodRange(period))
+  else if (!ISO.test(from || '') || !ISO.test(to || '')) { period = 'month'; ({ from, to } = getPeriodRange('month')) }
+  return { tab, branch, period, from, to }
+}
+
+// اسم التصنيف أو النوع بلا الرمز التعبيري في أوله (للعرض فقط)
+const cleanLabel = s => String(s || '').replace(/^[^\p{L}\p{N}]+/u, '').trim() || String(s || '')
+
+// ── عناصر العرض ─────────────────────────────────────────────────────────────
+
+const fmt = v => formatNumber(v, 2)
+const Num = ({ v, k, className }) => <span className={`ts-num${className ? ' ' + className : ''}`} data-k={k}>{fmt(v)}</span>
+const Cell = ({ v, k, label }) => <td className="ts-end" data-label={label}>{v ? <Num v={v} k={k} /> : <span className="rpt-nil" data-k={k}>—</span>}</td>
+
+// وصف الأرقام: النص نفسه في الشاشة والملفين (SCOPE في src/lib/reportExport.js)
+function Scope({ tab }) {
   return (
-    <>
-      {line && <div className="border-t my-2" style={{ borderColor: '#e8e5dc' }} />}
-      <div className="py-2" style={{ display: 'grid', gridTemplateColumns: '1fr 7.5rem' }}>
-        <span className={`text-sm text-right ${bold ? 'font-bold' : 'font-medium'}`}
-          style={{ color: color || (bold ? NAVY : '#4b5563') }}>
-          {label}
-        </span>
-        <span className={`text-sm font-mono tabular-nums ${bold ? 'font-bold' : ''}`}
-          style={{ color: color || (bold ? NAVY : '#6b7280'), direction: 'ltr', textAlign: 'left' }}>
-          {fmt(value)}
-        </span>
+    <details className="rp-scope rpt-scope">
+      <summary><Info className="ts-icon--sm" aria-hidden="true" />ما الذي تشمله هذه الأرقام؟<ChevronDown className="ts-icon--sm" aria-hidden="true" /></summary>
+      <div className="rp-scope-list">
+        {SCOPE[tab].map(([t, x]) => t ? <div key={t}><strong>{t}: </strong>{x}</div> : <div key={x} className="rp-scope-wide">{x}</div>)}
       </div>
-    </>
+    </details>
   )
 }
 
-const ALL_TABS = [
-  { key: 'sales',     label: 'المبيعات',    icon: '💵' },
-  { key: 'purchases', label: 'المصروفات',   icon: '🛒' },
-  { key: 'vat',       label: 'الضريبة',     icon: '🏛️' },
-  { key: 'balance',   label: 'الأرصدة',     icon: '⚖️' },
-]
+// صفوف حساب (عنوان ومبلغ) بدل IncomeRow السابق
+function CalcRows({ rows, k }) {
+  return (
+    <dl className="rpt-calc" data-k={k}>
+      {rows.map(r => (
+        <div key={r.label} className={`${r.strong ? 'is-strong' : ''}${r.line ? ' has-line' : ''}${r.tone ? ' is-' + r.tone : ''}`} data-row={r.label}>
+          <dt>{r.label}</dt>
+          <dd><Num v={r.value} k="value" /></dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+// صف قابل للفتح في تفصيل المصروفات
+function TreeRow({ level, label, sub, amount, pct, pctText, open, onToggle, bar, kind }) {
+  const Tag = onToggle ? 'button' : 'div'
+  return (
+    <Tag type={onToggle ? 'button' : undefined} className={`rpt-tree-row rpt-tree-row--${level}${onToggle ? ' is-toggle' : ''}`}
+      aria-expanded={onToggle ? !!open : undefined} onClick={onToggle} data-node={kind} data-label={label}>
+      {onToggle ? <ChevronLeft className={`ts-icon--sm rpt-chevron${open ? ' is-open' : ''}`} aria-hidden="true" /> : <span className="rpt-chevron-space" aria-hidden="true" />}
+      <span className="rpt-tree-label">{cleanLabel(label)}{sub && <small>{sub}</small>}</span>
+      {pctText != null && <span className="rpt-tree-pct" data-k="pct">{pctText}</span>}
+      <span className="rpt-tree-amount"><Num v={amount} k="amount" /></span>
+      {bar != null && <span className="rpt-bar" aria-hidden="true"><span style={{ width: `${Math.min(Number(bar) || 0, 100)}%` }} /></span>}
+    </Tag>
+  )
+}
+
+// ── الصفحة ──────────────────────────────────────────────────────────────────
 
 export default function Reports() {
-  const { projectId, role, sessionEpoch } = useAuth()
-  const isOwner = role === 'owner'
-  const init = getPeriodRange('month')
+  const { projectId, projectName, sessionEpoch } = useAuth()
+  const [params, setParams] = useSearchParams()
+  const init = useRef(initialFilters(params)).current
   const [from, setFrom]                 = useState(init.from)
   const [to,   setTo]                   = useState(init.to)
-  const [activePeriod, setActivePeriod] = useState('month')
-  const [activeTab,    setActiveTab]    = useState('sales')
+  const [activePeriod, setActivePeriod] = useState(init.period)
+  const [activeTab,    setActiveTab]    = useState(init.tab)
   const [data,     setData]     = useState(null)
   const [entries,  setEntries]  = useState([])
-  const [docs,     setDocs]     = useState([])
   const [balances, setBalances] = useState(null)
   const [loading,  setLoading]  = useState(false)
-  const [exporting,  setExporting]  = useState(false)
-  const [previewing, setPreviewing] = useState(false)
+  const [loadError, setLoadError] = useState(null)   // ما تعذّر تحميله؛ لا أرقام تُعرض ولا تُصدَّر حتى تنجح إعادة المحاولة
+  const [exporting,  setExporting]  = useState(null)   // 'pdf' | 'xlsx' أثناء إنشاء الملف
+  const [exportError, setExportError] = useState('')
   const [branches,        setBranches]        = useState([])
-  const [selectedBranch,  setSelectedBranch]  = useState('all')
+  const [selectedBranch,  setSelectedBranch]  = useState(init.branch)
   const [branchEntries,   setBranchEntries]   = useState([])
   const [purchaseDocs,    setPurchaseDocs]    = useState([])
   const [docItems,        setDocItems]        = useState([])
+  const [categoriesById,  setCategoriesById]  = useState({})
   const [allBranchSales,  setAllBranchSales]  = useState([])
   const [expandedCats,    setExpandedCats]    = useState(new Set())
   const [engineSummary,   setEngineSummary]   = useState(null)
-  const [showMonthPicker, setShowMonthPicker] = useState(false)
-  const [pickerYear,      setPickerYear]      = useState(new Date().getFullYear())
-  const [pickerMonth,     setPickerMonth]     = useState(new Date().getMonth() + 1)
+  const [pickerYear,      setPickerYear]      = useState(init.period === 'month-picker' ? Number(init.from.slice(0, 4)) : new Date().getFullYear())
+  const [pickerMonth,     setPickerMonth]     = useState(init.period === 'month-picker' ? Number(init.from.slice(5, 7)) : new Date().getMonth() + 1)
   const [prevPeriodSales, setPrevPeriodSales] = useState(null)
   const [prevEntries,     setPrevEntries]     = useState([])
-  const pdfRef          = useRef()
-  const monthPickerRef  = useRef()
+  const [filtersOpen, setFiltersOpen] = useState(false)   // على الجوال: الفلاتر مطوية خلف «تغيير»، والاختيار ظاهر في العنوان
+  const loadSeq  = useRef(0)
 
-  const liveRef = useRef({ from: init.from, to: init.to, branch: 'all' })
+  const liveRef = useRef({ from: init.from, to: init.to, branch: init.branch })
   useEffect(() => { liveRef.current = { from, to, branch: selectedBranch } }, [from, to, selectedBranch])
 
+  // الاختيار في العنوان: يبقى مع التحديث والرجوع (بلا إضافة إلى سجل المتصفح)
   useEffect(() => {
-    function onOutside(e) {
-      if (monthPickerRef.current && !monthPickerRef.current.contains(e.target)) setShowMonthPicker(false)
-    }
-    if (showMonthPicker) document.addEventListener('mousedown', onOutside)
-    return () => document.removeEventListener('mousedown', onOutside)
-  }, [showMonthPicker])
+    const next = new URLSearchParams()
+    if (activeTab !== 'sales') next.set('tab', activeTab)
+    if (activePeriod !== 'month') next.set('period', activePeriod)
+    if (!PRESETS.includes(activePeriod)) { next.set('from', from); next.set('to', to) }
+    if (selectedBranch !== 'all') next.set('branch', selectedBranch)
+    if (next.toString() !== params.toString()) setParams(next, { replace: true })
+  }, [activeTab, activePeriod, from, to, selectedBranch])
 
   useEffect(() => {
     if (projectId) {
@@ -127,7 +184,8 @@ export default function Reports() {
           setBranches(unique.sort())
         }
       })
-      load(init.from, init.to)
+      const { from: f, to: t, branch: b } = liveRef.current
+      load(f, t, b)
     }
   }, [projectId, sessionEpoch])
 
@@ -142,26 +200,43 @@ export default function Reports() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
-  function applyPreset(key) {
-    setActivePeriod(key)
-    setShowMonthPicker(false)
-    const r = getPeriodRange(key)
+  function choosePeriod(key) {
+    if (PRESETS.includes(key)) {
+      setActivePeriod(key)
+      const r = getPeriodRange(key)
+      setFrom(r.from); setTo(r.to)
+      load(r.from, r.to)
+    } else if (key === 'month-picker') {
+      applyMonth(pickerYear, pickerMonth)
+    } else {
+      setActivePeriod('custom')   // التاريخان الحاليان يبقيان، ويُعدَّلان من الحقلين
+    }
+  }
+
+  function applyMonth(year, month) {
+    const r = monthRange(year, month)
+    setPickerYear(year); setPickerMonth(month)
     setFrom(r.from); setTo(r.to)
+    setActivePeriod('month-picker')
     load(r.from, r.to)
   }
 
-  function applyMonthPicker() {
-    const last = new Date(pickerYear, pickerMonth, 0).getDate()
-    const from = `${pickerYear}-${String(pickerMonth).padStart(2,'0')}-01`
-    const to   = `${pickerYear}-${String(pickerMonth).padStart(2,'0')}-${last}`
-    setFrom(from); setTo(to)
-    setActivePeriod('month-picker')
-    setShowMonthPicker(false)
-    load(from, to)
+  function changeDate(field, iso) {
+    const f = field === 'from' ? iso : from, t = field === 'to' ? iso : to
+    setFrom(f); setTo(t); setActivePeriod('custom')
+    load(f, t)
   }
 
+  function changeBranch(b) {
+    setSelectedBranch(b)
+    load(from, to, b)
+  }
+
+  // الحسابات كما كانت؛ الإضافة الوحيدة: يُهمل رد طلب أقدم إن وصل بعد طلب أحدث (تغيير سريع للفترة أو الفرع)
   async function load(fromDate = from, toDate = to, branchFilter = selectedBranch) {
     if (!projectId) return
+    const seq = ++loadSeq.current
+    const stale = () => seq !== loadSeq.current
     setLoading(true)
 
     const applyBranch = q => branchFilter !== 'all' ? q.eq('branch', branchFilter) : q
@@ -172,26 +247,22 @@ export default function Reports() {
     const prevFromD      = fmtDate(new Date(fy, fm - 2, fd))
     const prevToD        = fmtDate(new Date(ty, tm - 2, td))
 
+    // الطلبات التي تُبنى عليها الأرقام تُجلب كاملة بترتيب ثابت (src/lib/fetchAll.js)، وأي خطأ فيها يوقف العرض برسالة
+    // وإعادة محاولة بدل عرض أرقام ناقصة أو أصفار (والتصدير لا يعمل بلا أرقام)
+    setLoadError(null)
     const [
-      { data: ledger },
-      { data: ledgerFull },
-      { data: documents },
-      { data: allTime },
+      { data: ledgerFull, error: ledgerError },
+      { data: allTime, error: allTimeError },
       { data: allBranchEntries },
       { data: purchaseDocsData },
       { data: allBranchSalesData },
-      { data: prevEntriesData },
+      { data: prevEntriesData, error: prevError },
       engineResult,
     ] = await Promise.all([
-      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('type,cash_out,bank_out,custody_out,cash_in,bank_in,custody_in,vat_amount')
-        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate))),
-      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,vat_amount,journal_number,category_main,category_sub')
-        .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate).order('date'))),
-      fetchAllRows(() => supabase.from('documents').select('file_name,uploaded_by,uploaded_at,analysis_result,journal_number,file_url')
-        .eq('project_id', projectId).eq('status','approved')
-        .gte('uploaded_at', fromDate).lte('uploaded_at', toDate + 'T23:59:59').order('uploaded_at')),
-      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id')
-        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled'))),
+      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,status,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,total_amount,vat_amount,journal_number,category_main,category_sub,category_id,financial_class')
+        .eq('project_id', projectId).or('status.is.null,status.neq.cancelled').gte('date', fromDate).lte('date', toDate).order('date').order('id'))),
+      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id')
+        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled').order('id'))),
       fetchAllRows(() => supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
         .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
       supabase.rpc('get_purchase_entries', {
@@ -201,11 +272,31 @@ export default function Reports() {
       }),
       fetchAllRows(() => supabase.from('sales').select('branch,cash_sales,network_sales,hunger_sales,jahez_sales,keeta_sales')
         .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate)),
-      fetchAllRows(() => applyBranch(supabase.from('ledger_entries').select('type,date,cash_in,bank_in,receivable_in')
+      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('type,date,status,cash_in,bank_in,receivable_in')
         .eq('project_id', projectId).neq('status','cancelled')
-        .gte('date', prevFromD).lte('date', prevToD))),
+        .gte('date', prevFromD).lte('date', prevToD).order('id'))),
       getFinancialSummary(projectId, fromDate, toDate, branchFilter),
     ])
+    if (stale()) return
+    const fail = what => { if (stale()) return; setLoadError(what); setData(null); setBalances(null); setLoading(false) }
+    if (ledgerError || allTimeError || prevError || !engineResult) return fail('القيود')
+
+    // بنود التصنيف التفصيلية لكل حركة (لتفصيل المصروفات ولتمييز سداد الضريبة) — عبر journal_number، كاملة ولو تجاوزت الألف
+    const jnSet = [...new Set((ledgerFull||[]).filter(e => e.journal_number).map(e => e.journal_number))]
+    const { data: docItemsData, error: itemsError } = await fetchByChunks(jnSet, 100, chunk => fetchEveryRow(() => supabase
+      .from('document_items')
+      .select('id,journal_number,ledger_entry_id,category_id,subcategory_id,description,amount,category_main,category_sub')
+      .eq('project_id', projectId)
+      .in('journal_number', chunk)
+      .order('id')))
+    if (stale()) return
+    if (itemsError) return fail('بنود المستندات')
+    // التصنيفات بمعرّفها: الاسم الحالي للعرض والرمز المالي للمعالجة
+    // كاملة بترتيب ثابت ولو تجاوزت حد الخادم (كما في التحليل): وإلا رجعت بنود ما بعد الصفحة الأولى لأسمائها المحفوظة
+    const { data: catRows, error: catError } = await fetchEveryRow(() => supabase.from('categories').select('id,name,parent_id,financial_class').eq('project_id', projectId).order('id'))
+    if (stale()) return
+    if (catError) return fail('التصنيفات')
+
     setEngineSummary(engineResult)
     setBranchEntries(allBranchEntries || [])
     setAllBranchSales(allBranchSalesData || [])
@@ -218,48 +309,20 @@ export default function Reports() {
     const grossSales   = engineResult?.grossSales || 0
     const netSales     = engineResult?.totalSales || 0
     const totalSales   = grossSales                                                         // شامل الضريبة — لعرض تبويب الضريبة
-    const totalIn      = (ledgerFull||[]).reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
-    const totalOut     = (ledgerFull||[]).reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
+    // حركة الفترة في تبويب الأرصدة كما كانت (كل ما له حالة غير «ملغى»)، لا مؤشر مبيعات أو مصروفات
+    const moved        = (ledgerFull||[]).filter(r => r.status != null)
+    const totalIn      = moved.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0), 0)
+    const totalOut     = moved.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0), 0)
 
-    // حسابات ضريبة القيمة المضافة
-    const outputVat    = engineResult?.outputVat || 0                                       // ضريبة المخرجات من المبيعات
-
-    // ضريبة المدخلات: من حقل vat_amount (فواتير عادية) + قيود نوعها "ضريبة القيمة المضافة"
-    const inputVatFromField   = (ledger||[])
-      .filter(r => !r.type?.includes('ضريبة القيمة المضافة'))
-      .reduce((s,r) => s + (Number(r.vat_amount)||0), 0)
-    const inputVatFromEntries = (ledger||[])
-      .filter(r => r.type?.includes('ضريبة القيمة المضافة'))
-      .reduce((s,r) => s + (Number(r.cash_out)||0) + (Number(r.bank_out)||0) + (Number(r.custody_out)||0), 0)
-    const inputVat     = inputVatFromField + inputVatFromEntries
-
-    const netVat       = outputVat - inputVat                                               // الصافي المستحق لهيئة الزكاة
-
-    // تفصيل فواتير المشتريات التي تحتوي ضريبة (من vat_amount + قيود منفصلة)
-    const vatEntries = [
-      ...(ledgerFull||[]).filter(r => (r.vat_amount||0) > 0 && !r.type?.includes('ضريبة القيمة المضافة')),
-      ...(ledgerFull||[])
-        .filter(r => r.type?.includes('ضريبة القيمة المضافة'))
-        .map(r => ({ ...r, vat_amount: (r.cash_out||0) + (r.bank_out||0) + (r.custody_out||0) }))
-        .filter(r => r.vat_amount > 0),
-    ]
-
-    setData({ totalSales, totalIn, totalOut, outputVat, netSales, inputVat, netVat, vatEntries })
     setEntries(ledgerFull || [])
-    setDocs(documents || [])
-
-    // بنود التصنيف التفصيلية لكل حركة مصروف (لتقرير المصروفات) — عبر journal_number
-    const jnSet = [...new Set((ledgerFull||[]).filter(e => e.journal_number).map(e => e.journal_number))]
-    let docItemsData = []
-    if (jnSet.length > 0) {
-      const { data: diData } = await supabase
-        .from('document_items')
-        .select('journal_number,description,amount,category_main,category_sub')
-        .eq('project_id', projectId)
-        .in('journal_number', jnSet)
-      docItemsData = diData || []
-    }
     setDocItems(docItemsData)
+    setCategoriesById(Object.fromEntries((catRows || []).map(c => [c.id, c])))
+
+    // ضريبة القيمة المضافة (src/lib/vatTreatment.js): المدخلات من الضريبة المسجلة على قيود غير ضريبية؛ سداد الضريبة للهيئة
+    // واسترداده منفصلان لا يدخلان المدخلات ولا يُطرحان من صافي الفترة؛ وما لا يثبت معناه يُعرض لتأكيد المحاسب.
+    // البنود هنا كاملة (وإلا توقف التحميل أعلاه)، فغياب بند عن قيد يعني فعلًا أنه بلا بنود.
+    const vat = vatFigures({ entries: ledgerFull || [], docItems: docItemsData, outputVat: engineResult?.outputVat || 0 })
+    setData({ totalSales, totalIn, totalOut, outputVat: vat.outputVat, netSales, inputVat: vat.inputVat, netVat: vat.netBeforePayment, vat })
 
     const at = allTime || []
     setBalances({
@@ -268,7 +331,7 @@ export default function Reports() {
       custody: at.reduce((s,r) => s+(r.custody_in||0)-(r.custody_out||0), 0),
     })
     const prevSalesTotal = (prevEntriesData || [])
-      .filter(e => isSales(e.type))
+      .filter(e => isCounted(e) && isSales(e.type))
       .reduce((s, e) => s + salesAmountNet(e), 0)
     setPrevPeriodSales({ total: prevSalesTotal, days: periodDaysLoad, prevFrom: prevFromD, prevTo: prevToD })
     setPrevEntries(prevEntriesData || [])
@@ -276,1192 +339,539 @@ export default function Reports() {
     setLoading(false)
   }
 
-  const trialBalance = useMemo(() => {
-    const map = {}
-    entries.forEach(e => {
-      const key = e.type || '— غير محدد'
-      if (!map[key]) map[key] = { type: key, debit: 0, credit: 0 }
-      map[key].debit  += (e.cash_in||0)  + (e.bank_in||0)  + (e.custody_in||0)
-      map[key].credit += (e.cash_out||0) + (e.bank_out||0) + (e.custody_out||0)
-    })
-    return Object.values(map).sort((a, b) => (b.debit + b.credit) - (a.debit + a.credit))
-  }, [entries])
-
-  async function exportPdf() {
-    if (!data || !pdfRef.current) return
-    setExporting(true)
+  // تصدير القسم المختار بالفترة والفرع نفسيهما، من أرقام الشاشة نفسها (src/lib/reportExport.js)
+  function currentModel() {
+    const ctx = { tab: activeTab, org: projectName, from, to, branch: selectedBranch, branches, generatedAt: new Date(), engineSummary,
+      prevEntriesCount: prevEntries.length, data, balances }
+    if (activeTab === 'sales') ctx.s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
+    if (activeTab === 'purchases') ctx.x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
+    return reportModel(ctx)
+  }
+  async function exportAs(kind) {
+    if (!data || loading || loadError || exporting) return
+    setExporting(kind); setExportError('')
     try {
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import('jspdf'), import('html2canvas'),
-      ])
-      const el = pdfRef.current
-      el.style.display = 'block'
-      await new Promise(r => setTimeout(r, 150))
-      const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' })
-      el.style.display = 'none'
-      const imgData = canvas.toDataURL('image/png')
-      const pdf   = new jsPDF('p', 'mm', 'a4')
-      const pageW = pdf.internal.pageSize.getWidth()
-      const pageH = pdf.internal.pageSize.getHeight()
-      const imgH  = (canvas.height * pageW) / canvas.width
-      let yOffset = 0, remaining = imgH
-      while (remaining > 0) {
-        pdf.addImage(imgData, 'PNG', 0, -yOffset, pageW, imgH)
-        remaining -= pageH; yOffset += pageH
-        if (remaining > 0) pdf.addPage()
+      const model = currentModel()
+      window.__rptLastExport = model   // للاختبار: الوصف الذي بُني منه الملف
+      if (kind === 'xlsx') {
+        downloadBlob(new Blob([modelToXlsx(model)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), exportFileName(model, 'xlsx'))
+      } else {
+        const { modelToPdf } = await import('../lib/reportPdf.js')
+        downloadBlob(await modelToPdf(model, { keep: !!window.__rptKeepPrint }), exportFileName(model, 'pdf'))
       }
-      pdf.save(`تقرير-${from}-${to}.pdf`)
-    } catch(e) { console.error(e) }
-    setExporting(false)
+    } catch (e) {
+      console.error(e); setExportError('تعذّر إنشاء الملف. أعد المحاولة.')
+    } finally { setExporting(null) }
   }
 
-  async function previewPdf() {
-    if (!data || !pdfRef.current) return
-    setPreviewing(true)
-    try {
-      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import('jspdf'), import('html2canvas'),
-      ])
-      const el = pdfRef.current
-      el.style.display = 'block'
-      await new Promise(r => setTimeout(r, 150))
-      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true })
-      el.style.display = 'none'
-      const imgData = canvas.toDataURL('image/png')
-      const pdf   = new jsPDF('p', 'mm', 'a4')
-      const pageW = pdf.internal.pageSize.getWidth()
-      const pageH = pdf.internal.pageSize.getHeight()
-      const imgH  = (canvas.height * pageW) / canvas.width
-      let yOffset = 0, remaining = imgH
-      while (remaining > 0) {
-        pdf.addImage(imgData, 'PNG', 0, -yOffset, pageW, imgH)
-        remaining -= pageH; yOffset += pageH
-        if (remaining > 0) pdf.addPage()
-      }
-      const blobUrl = pdf.output('bloburl')
-      window.open(blobUrl, '_blank')
-    } catch(e) { console.error(e) }
-    setPreviewing(false)
-  }
+  const toggleCat = cat => setExpandedCats(prev => {
+    const next = new Set(prev)
+    next.has(cat) ? next.delete(cat) : next.add(cat)
+    return next
+  })
 
-  const fmt  = v => (v||0).toLocaleString('en-US', { minimumFractionDigits: 2 })
-  const fmtD = d => d ? new Date(d).toLocaleDateString('en-GB') : ''
-
-  let legacySeq = 0
-  const entriesDisplay = entries.map(e => ({
-    ...e, _displayNum: e.journal_number || `OLD-${String(++legacySeq).padStart(3,'0')}`,
-  }))
-
-  const cardBorder = { border: '1px solid #e8e5dc' }
+  const refYear = Number(to.slice(0, 4))
+  const day = iso => formatDate(iso, { refYear })
+  const dayWithName = iso => formatDate(iso, { day: true, refYear })
+  // في الجدول اليومي: اسم اليوم يُخفى على الجوال ليتسع الجدول للأعمدة الأربعة
+  const dayCell = iso => <><span className="rpt-dayname">{formatDate(iso, { day: true }).split(' ')[0]} </span>{day(iso)}</>
+  const periodDaysShown = Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000) + 1)
+  const rangeText = from === to ? formatDate(from, { year: true }) : `${formatDate(from, { year: from.slice(0, 4) !== to.slice(0, 4) })} – ${formatDate(to, { year: true })}`
+  const branchText = selectedBranch === 'all' ? (branches.length > 1 ? 'كل الفروع' : 'المنشأة كاملة') : selectedBranch
+  const thisYear = new Date().getFullYear()
+  const badRange = from > to
 
   return (
-    <div className="space-y-5">
-
-      {/* ── رأس الصفحة ── */}
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold" style={{ color: NAVY }}>التقارير المالية</h1>
-        <button
-          onClick={() => load(from, to, selectedBranch)}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all shrink-0"
-          style={{ background: '#f5f4f0', color: NAVY, border: '1px solid #e8e5dc' }}
-          title="إعادة تحميل البيانات"
-        >
-          <span className={loading ? 'animate-spin inline-block' : ''}>🔄</span>
-          <span className="hidden sm:inline">تحديث</span>
-        </button>
+    <div className="rpt-page">
+      <div className="ts-heading">
+        <div>
+          <h1>التقارير</h1>
+          <p className="rpt-showing" data-shown-from={from} data-shown-to={to} data-shown-branch={selectedBranch}>
+            <CalendarDays className="ts-icon--sm" aria-hidden="true" />
+            <span>{rangeText}</span>
+            <span className="rpt-dot" aria-hidden="true">·</span>
+            <span>{plural(periodDaysShown, 'يوم واحد', 'يومان', 'أيام', 'يومًا')}</span>
+            <span className="rpt-dot" aria-hidden="true">·</span>
+            <Store className="ts-icon--sm" aria-hidden="true" />
+            <span>{branchText}</span>
+          </p>
+        </div>
+        <div className="ts-heading-actions">
+          <Button className="rpt-mobile-only" icon={CalendarDays} aria-expanded={filtersOpen} onClick={() => setFiltersOpen(v => !v)}>
+            {filtersOpen ? 'إخفاء الفلاتر' : 'تغيير الفترة'}
+          </Button>
+          <Button icon={RefreshCw} onClick={() => load(from, to, selectedBranch)} disabled={loading} className={loading ? 'is-busy' : ''} aria-label="تحديث">
+            <span className="ts-desktop-only">تحديث</span>
+          </Button>
+        </div>
       </div>
 
-      {/* ── فلتر الفترة ── */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={cardBorder}>
-        <div className="text-sm font-bold uppercase tracking-wider text-center" style={{ color: '#8a7a5a' }}>الفترة الزمنية</div>
-        <div className="flex flex-wrap gap-2 justify-center">
-          {QUICK_PERIODS.map(p => (
-            <button key={p.key} onClick={() => applyPreset(p.key)}
-              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
-              style={activePeriod === p.key
-                ? { background: GOLD, color: NAVY }
-                : { background: '#f5f4f0', color: '#4b5563' }
-              }>
-              {p.label}
-            </button>
-          ))}
-          {/* زر شهر محدد */}
-          <div className="relative" ref={monthPickerRef}>
-            <button
-              onClick={() => setShowMonthPicker(v => !v)}
-              className="px-3 py-1.5 text-xs rounded-xl font-semibold transition-all"
-              style={activePeriod === 'month-picker'
-                ? { background: GOLD, color: NAVY }
-                : { background: '#f5f4f0', color: '#4b5563' }
-              }>
-              {activePeriod === 'month-picker'
-                ? `${MONTHS_AR[pickerMonth - 1]} ${pickerYear} ▼`
-                : 'شهر محدد ▼'}
-            </button>
-            {showMonthPicker && (
-              <div className="absolute top-full mt-1 z-50 bg-white rounded-2xl shadow-xl p-3 min-w-[190px]"
-                style={{ borderColor: '#e8e5dc', border: '1px solid #e8e5dc', direction: 'rtl', left: 0 }}>
-                <div className="text-xs font-bold text-slate-500 mb-2">اختر الشهر والسنة</div>
-                <div className="flex gap-2 mb-2">
-                  <select value={pickerMonth} onChange={e => setPickerMonth(Number(e.target.value))}
-                    className="flex-1 border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
-                    style={{ borderColor: '#d1c9b8' }}>
-                    {MONTHS_AR.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-                  </select>
-                  <select value={pickerYear} onChange={e => setPickerYear(Number(e.target.value))}
-                    className="w-20 border rounded-lg px-2 py-1.5 text-xs focus:outline-none"
-                    style={{ borderColor: '#d1c9b8' }}>
-                    {[new Date().getFullYear(), new Date().getFullYear()-1, new Date().getFullYear()-2].map(y =>
-                      <option key={y} value={y}>{y}</option>)}
-                  </select>
-                </div>
-                <button onClick={applyMonthPicker}
-                  className="w-full py-1.5 rounded-xl text-xs font-bold"
-                  style={{ background: NAVY, color: '#fff' }}>
-                  تطبيق
-                </button>
-              </div>
+      {/* الفترة والفرع */}
+      <Panel className={`rpt-filters${filtersOpen ? '' : ' is-collapsed'}`} title="الفترة والفرع" icon={CalendarDays}>
+        <div className="ts-panel-body rpt-filter-body">
+          <Segment label="الفترة" value={activePeriod} onChange={choosePeriod} options={PERIODS} />
+          <div className="rpt-filter-row">
+            {activePeriod === 'month-picker' && (
+              <>
+                <Field label="الشهر">
+                  <Select value={pickerMonth} onChange={e => applyMonth(pickerYear, Number(e.target.value))}
+                    options={MONTHS_AR.map((m, i) => ({ value: i + 1, label: m }))} />
+                </Field>
+                <Field label="السنة">
+                  <Select value={pickerYear} onChange={e => applyMonth(Number(e.target.value), pickerMonth)}
+                    options={[thisYear, thisYear - 1, thisYear - 2].map(y => ({ value: y, label: String(y) }))} />
+                </Field>
+              </>
+            )}
+            <Field label="من"><DateInput value={from} onChange={iso => changeDate('from', iso)} /></Field>
+            <Field label="إلى"><DateInput value={to} onChange={iso => changeDate('to', iso)} /></Field>
+            {branches.length > 1 && (
+              <Field label="الفرع">
+                <Select value={selectedBranch} onChange={e => changeBranch(e.target.value)}
+                  options={[{ value: 'all', label: 'كل الفروع' }, ...branches.map(b => ({ value: b, label: b }))]} />
+              </Field>
             )}
           </div>
-        </div>
-        <div className="flex flex-wrap gap-3 items-end justify-center">
-          <div>
-            <label className="text-xs text-slate-500 block mb-1 text-center">من</label>
-            <input type="date" value={from}
-              onChange={e => { setFrom(e.target.value); setActivePeriod('custom'); load(e.target.value, to) }}
-              className="border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2"
-              style={{ borderColor: '#d1c9b8' }} />
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 block mb-1 text-center">إلى</label>
-            <input type="date" value={to}
-              onChange={e => { setTo(e.target.value); setActivePeriod('custom'); load(from, e.target.value) }}
-              className="border rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2"
-              style={{ borderColor: '#d1c9b8' }} />
-          </div>
-          {branches.length > 1 && (
-            <div>
-              <label className="text-xs text-slate-500 block mb-1 text-center">الفرع</label>
-              <select value={selectedBranch}
-                onChange={e => { setSelectedBranch(e.target.value); load(from, to, e.target.value) }}
-                className="border rounded-xl px-3 py-2 text-sm focus:outline-none"
-                style={{ borderColor: '#d1c9b8' }}>
-                <option value="all">جميع الفروع</option>
-                {branches.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
+          {badRange && <p className="ts-field-error">تاريخ البداية بعد تاريخ النهاية؛ لن تظهر أرقام لهذه الفترة.</p>}
+          {selectedBranch !== 'all' && (
+            <p className="ts-field-hint">عند اختيار فرع تُحسب قيود ذلك الفرع وحده؛ القيود غير المنسوبة لفرع (مثل الإيجار) لا تدخل.</p>
           )}
         </div>
-      </div>
+      </Panel>
 
-      {/* ── تحميل ── */}
+      <div className="rpt-tabs">
+        <Tabs label="التقارير" tabs={TABS} value={activeTab} onChange={setActiveTab} />
+        <div className="rpt-export" role="group" aria-label="تصدير هذا القسم">
+          <span className="ts-muted">تصدير {TITLES[activeTab].replace('تقرير ', '')} بالفترة والفرع المعروضين:</span>
+          <Button size="sm" icon={FileText} disabled={!data || loading || !!loadError || !!exporting} onClick={() => exportAs('pdf')}>{exporting === 'pdf' ? 'جارٍ إنشاء PDF…' : 'PDF'}</Button>
+          <Button size="sm" icon={FileSpreadsheet} disabled={!data || loading || !!loadError || !!exporting} onClick={() => exportAs('xlsx')}>{exporting === 'xlsx' ? 'جارٍ إنشاء Excel…' : 'Excel'}</Button>
+        </div>
+      </div>
+      {exportError && <p className="ts-field-error" role="alert">{exportError}</p>}
+
       {loading && (
-        <div className="flex justify-center py-16">
-          <div className="w-10 h-10 border-4 border-t-transparent rounded-full animate-spin"
-            style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
+        <div className="ts-metrics" aria-busy="true" aria-label="جارٍ التحميل">
+          {[0, 1, 2].map(i => <div key={i} className="ts-metric rp-skeleton-card" />)}
         </div>
       )}
 
-      {data && !loading && (
-        <>
-          {/* ── تبويبات ── */}
-          {(() => {
-            return (
-              <div className="flex flex-row w-full gap-1 p-1 rounded-2xl" style={{ background: '#e8e5dc' }}>
-                {ALL_TABS.map(t => (
-                  <button key={t.key} onClick={() => setActiveTab(t.key)}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-2 text-xs font-bold rounded-xl transition-all"
-                    style={activeTab === t.key
-                      ? { background: '#fff', color: NAVY, boxShadow: '0 1px 4px rgba(15,36,68,0.1)' }
-                      : { color: '#6b7280' }
-                    }>
-                    <span>{t.icon}</span> {t.label}
-                  </button>
-                ))}
-              </div>
-            )
-          })()}
+      {loadError && !loading && (
+        <div className="ts-note ts-note--error rpt-load-error" data-k="load-error" role="alert">
+          <Info className="ts-icon" aria-hidden="true" />
+          <div className="ts-note-body">
+            <strong>تعذّر تحميل {loadError} لهذه الفترة، فلم تُعرض الأرقام ولا يمكن تصديرها.</strong>
+            عرض أرقام من بيانات ناقصة قد يصنّف قيدًا خطأً (مثل سداد الضريبة). تحقّق من الاتصال ثم أعد المحاولة.
+            <div className="ts-note-action"><Button size="sm" variant="primary" icon={RefreshCw} onClick={() => load(from, to, selectedBranch)}>إعادة المحاولة</Button></div>
+          </div>
+        </div>
+      )}
 
-          {/* ══════════════════ TAB: المبيعات (المالك فقط) ══════════════════ */}
+      {data && !loading && !loadError && (
+        <div className="rpt-body" data-tab={activeTab}>
+          {activeTab !== 'balance' && uncountedText(engineSummary?.uncounted) && (
+            <div className="ts-note ts-note--warning" data-k="uncounted"><Info className="ts-icon" aria-hidden="true" /><div className="ts-note-body">{uncountedText(engineSummary.uncounted)}</div></div>
+          )}
+
+          {/* ══════════ المبيعات ══════════ */}
           {activeTab === 'sales' && (() => {
-            const salesEntries = (engineSummary?.entries || [])
-              .filter(e => isSales(e.type))
-              .filter(e => selectedBranch === 'all' || !selectedBranch || e.branch === selectedBranch)
-            const periodDays   = Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000) + 1)
-
-            // القسم 1: أداء الفروع
-            const branchSalesMap = {}
-            salesEntries.forEach(e => {
-              const b = e.branch || '— غير محدد'
-              if (!branchSalesMap[b]) branchSalesMap[b] = { sales: 0, byDate: {} }
-              const amt = salesAmountNet(e)
-              branchSalesMap[b].sales += amt
-              if (e.date) branchSalesMap[b].byDate[e.date] = (branchSalesMap[b].byDate[e.date] || 0) + amt
-            })
-            const totalSalesAll = Object.values(branchSalesMap).reduce((s, v) => s + v.sales, 0)
-            const branchRows = (branches.length > 1 ? branches : Object.keys(branchSalesMap))
-              .filter(b => branchSalesMap[b])
-              .map(b => {
-                const entries2  = branchSalesMap[b].byDate
-                const topDay    = Object.entries(entries2).sort(([,a],[,bb]) => bb - a)[0]
-                return { branch: b, sales: branchSalesMap[b].sales, share: totalSalesAll > 0 ? (branchSalesMap[b].sales / totalSalesAll * 100).toFixed(1) : '0.0', daily: branchSalesMap[b].sales / periodDays, topDate: topDay?.[0] || null, topAmt: topDay?.[1] || 0 }
-              })
-
-            // القسم 2: التطبيقات لكل فرع
-            const appMap = {}
-            salesEntries.forEach(e => {
-              const b = e.branch || '— غير محدد'
-              const t = e.type || ''
-              const amt = salesAmountNet(e)
-              if (!t.includes('هنقر') && !t.includes('جاهز') && !t.includes('كيتا') && !t.includes('مرسول') && !t.includes('نينجا')) return
-              if (!appMap[b]) appMap[b] = { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
-              if (t.includes('هنقر')) appMap[b].hunger += amt
-              if (t.includes('جاهز')) appMap[b].jahez  += amt
-              if (t.includes('كيتا')) appMap[b].keeta  += amt
-              if (t.includes('مرسول')) appMap[b].mrsool += amt
-              if (t.includes('نينجا')) appMap[b].ninja += amt
-            })
-            const hasAppSales = Object.values(appMap).some(v => v.hunger + v.jahez + v.keeta + v.mrsool + v.ninja > 0)
-            const appBranches = branches.length > 0 ? branches.filter(b => appMap[b]) : Object.keys(appMap)
-
-            // القسم 3: النمو — بناءً على آخر تاريخ فيه مبيعات فعلية
-            const actualLastDate  = salesEntries.length > 0
-              ? salesEntries.reduce((max, e) => e.date > max ? e.date : max, salesEntries[0].date)
-              : to
-            const [fy2, fm2, fd2] = from.split('-').map(Number)
-            const [ty2, tm2, td2] = actualLastDate.split('-').map(Number)
-            const actualPrevFromD = fmtDate(new Date(fy2, fm2 - 2, fd2))
-            const actualPrevToD   = fmtDate(new Date(ty2, tm2 - 2, td2))
-            const curSales  = salesEntries.reduce((s, e) => s + salesAmountNet(e), 0)
-            const prevSales = prevEntries
-              .filter(e => isSales(e.type) && e.date >= actualPrevFromD && e.date <= actualPrevToD)
-              .reduce((s, e) => s + salesAmountNet(e), 0)
-            const growth    = prevSales > 0 ? ((curSales - prevSales) / prevSales * 100) : null
-
-            // القسم 4: المبيعات اليومية
-            const dailyMap = {}
-            salesEntries.forEach(e => {
-              const d = e.date; if (!d) return
-              if (!dailyMap[d]) dailyMap[d] = { date: d, cash: 0, bank: 0, apps: 0 }
-              // صافية بنفس معالجة بقية الشاشات — وإلا خالف مجموع الجدول بطاقة المبيعات
-              dailyMap[d].cash += (Number(e.cash_in)       || 0) / (1 + VAT_RATE)
-              dailyMap[d].bank += (Number(e.bank_in)       || 0) / (1 + VAT_RATE)
-              dailyMap[d].apps += (Number(e.receivable_in) || 0) / (1 + VAT_RATE)
-            })
-            const dailyRows    = Object.values(dailyMap).sort((a, b) => b.date.localeCompare(a.date))
-            const maxDaySales  = Math.max(...dailyRows.map(r => r.cash + r.bank + r.apps), 1)
-
-            // بطاقات الملخص
-            const dailyAvg     = curSales / periodDays
-            const bestDayEntry = dailyRows.reduce((best, r) => {
-              const t = r.cash + r.bank + r.apps
-              return t > (best?.total || 0) ? { date: r.date, total: t } : best
-            }, null)
-            const activeDays = dailyRows.length
-
+            const s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
+            const growthText = s.growth === null ? null : `${s.growth >= 0 ? '↑' : '↓'} ${Math.abs(s.growth).toFixed(1)}%`
             return (
-              <div className="space-y-5">
-
-                {/* بطاقات الملخص */}
+              <>
                 {engineSummary && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="bg-white rounded-2xl p-4 shadow-sm" style={{ ...cardBorder, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6 }}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-lg">📅</span>
-                        <span className="text-xs font-semibold text-slate-500">متوسط يومي</span>
-                      </div>
-                      <div className="text-xl font-bold font-mono tabular-nums" style={{ color: NAVY }}>{fmt(dailyAvg)}</div>
-                      <div className="text-xs text-slate-400">ريال لكل يوم خلال {periodDays} يوم</div>
-                    </div>
-
-                    <div className="bg-white rounded-2xl p-4 shadow-sm" style={{ ...cardBorder, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6 }}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-lg">🏆</span>
-                        <span className="text-xs font-semibold text-slate-500">أعلى يوم</span>
-                      </div>
-                      {bestDayEntry ? (
-                        <>
-                          <div className="text-xl font-bold font-mono tabular-nums" style={{ color: '#16a34a' }}>{fmt(bestDayEntry.total)}</div>
-                          <div className="text-xs text-slate-400">{fmtD(bestDayEntry.date)}</div>
-                        </>
-                      ) : <div className="text-slate-400 text-sm">—</div>}
-                    </div>
-
-                    <div className="bg-white rounded-2xl p-4 shadow-sm" style={{ ...cardBorder, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6 }}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-lg">✅</span>
-                        <span className="text-xs font-semibold text-slate-500">أيام التشغيل</span>
-                      </div>
-                      <div className="text-xl font-bold font-mono tabular-nums" style={{ color: NAVY }}>
-                        {activeDays} <span className="text-sm font-normal text-slate-500">يوم</span>
-                      </div>
-                      <div className="text-xs text-slate-400">من أصل {periodDays} يوم</div>
-                    </div>
+                  <div className="ts-metrics" data-k="sales.cards">
+                    <Metric label="المبيعات" icon={Wallet} tag="قبل الضريبة"
+                      foot={growthText ? <><span className={s.growth >= 0 ? 'rpt-up' : 'rpt-down'}>{growthText}</span> عن الفترة نفسها من الشهر السابق</> : 'بلا مقارنة بالشهر السابق'}>
+                      <span data-k="sales.total"><Money value={s.curSales} /></span>
+                    </Metric>
+                    <Metric label="متوسط يومي" icon={CalendarDays} foot={<>لكل يوم خلال <span className="ts-num" data-k="periodDays">{s.periodDays}</span> يوم</>}>
+                      <span data-k="sales.avgDaily"><Money value={s.dailyAvg} /></span>
+                    </Metric>
+                    <Metric label="أعلى يوم" icon={Trophy} foot={s.bestDayEntry ? <span data-k="sales.bestDayDate" data-iso={s.bestDayEntry.date}>{dayWithName(s.bestDayEntry.date)}</span> : 'لا مبيعات'}>
+                      {s.bestDayEntry ? <span data-k="sales.bestDayTotal"><Money value={s.bestDayEntry.total} /></span> : <span data-k="sales.bestDayTotal">—</span>}
+                    </Metric>
+                    <Metric label="أيام التشغيل" icon={CalendarCheck} foot={<>من أصل <span className="ts-num">{s.periodDays}</span> يوم</>}>
+                      <span className="ts-num" data-k="sales.activeDays">{s.activeDays}</span> <small className="rpt-unit">يوم</small>
+                    </Metric>
                   </div>
                 )}
 
-                {/* القسم 1: أداء الفروع */}
-                {branches.length > 1 && branchRows.length > 0 && (
-                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-                    <div className="px-5 py-4" style={{ background: NAVY }}>
-                      <h2 className="font-bold text-white text-sm">🏪 أداء الفروع</h2>
-                      <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
+                {prevEntries.length > 0 && (
+                  <Panel title="نمو المبيعات" icon={TrendingUp} subtitle="من بداية الفترة حتى آخر يوم فيه مبيعات، مقابل الأيام نفسها من الشهر السابق">
+                    <div className="ts-panel-body rpt-growth" data-k="sales.growth" data-ranges={`${from}|${s.actualLastDate}|${s.actualPrevFromD}|${s.actualPrevToD}`}>
+                      <div><span>الفترة الحالية</span><strong><Num v={s.curSales} k="cur" /></strong><small>{day(from)} – {day(s.actualLastDate)}</small></div>
+                      <div><span>الفترة السابقة</span><strong><Num v={s.prevSales} k="prev" /></strong><small>{day(s.actualPrevFromD)} – {day(s.actualPrevToD)}</small></div>
+                      <div><span>النمو</span>
+                        <strong data-k="growth" className={s.growth === null ? '' : s.growth >= 0 ? 'rpt-up' : 'rpt-down'}>{growthText ? <span className="ts-num">{growthText}</span> : '—'}</strong>
+                        <small>{s.growth === null ? 'لا مبيعات في الفترة السابقة' : s.growth >= 0 ? 'زيادة' : 'انخفاض'}</small>
+                      </div>
                     </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الفرع</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#16a34a' }}>المبيعات</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold text-slate-400">النسبة</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold text-slate-500">متوسط يومي</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: GOLD }}>أعلى يوم</th>
-                          </tr>
-                        </thead>
+                  </Panel>
+                )}
+
+                {branches.length > 1 && s.branchRows.length > 0 && (
+                  <Panel title="أداء الفروع" icon={Store} subtitle="المبيعات قبل الضريبة" clip>
+                    <div className="rpt-scroll">
+                      <table className="ts-table rpt-table" data-table="sales.branches">
+                        <thead><tr><th>الفرع</th><th className="ts-end">المبيعات</th><th className="ts-end">النسبة</th><th className="ts-end">متوسط يومي</th><th>أعلى يوم</th></tr></thead>
                         <tbody>
-                          {branchRows.map((r, i) => (
-                            <tr key={r.branch} style={{ borderBottom: '1px solid #f5f4f0', background: i % 2 === 0 ? '#fff' : '#fafaf8' }}>
-                              <td className="px-4 py-3 font-semibold text-xs" style={{ color: NAVY }}>🏢 {r.branch}</td>
-                              <td className="px-4 py-3 font-mono tabular-nums font-bold text-xs" style={{ color: '#16a34a' }}>{fmt(r.sales)}</td>
-                              <td className="px-4 py-3 font-mono tabular-nums text-xs text-slate-400">{r.share}%</td>
-                              <td className="px-4 py-3 font-mono tabular-nums text-xs text-slate-500">{fmt(r.daily)}</td>
-                              <td className="px-4 py-3 text-xs" style={{ color: GOLD }}>
-                                {r.topDate ? <>{fmtD(r.topDate)} — <span className="font-mono font-bold">{fmt(r.topAmt)}</span></> : '—'}
-                              </td>
+                          {s.branchRows.map(r => (
+                            <tr key={r.branch}>
+                              <td data-k="branch"><strong>{r.branch}</strong></td>
+                              <td className="ts-end"><Num v={r.sales} k="sales" /></td>
+                              <td className="ts-end"><span className="ts-num" data-k="share">{r.share}%</span></td>
+                              <td className="ts-end"><Num v={r.daily} k="daily" /></td>
+                              <td data-k="top" data-iso={r.topDate || ''}>{r.topDate ? <>{day(r.topDate)} <small><Num v={r.topAmt} k="topAmt" /></small></> : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
-                          <tr style={{ background: NAVY }}>
-                            <td className="px-4 py-3 text-xs font-bold text-white">الإجمالي</td>
-                            <td className="px-4 py-3 font-mono tabular-nums font-bold text-xs" style={{ color: '#86efac' }}>{fmt(totalSalesAll)}</td>
-                            <td className="px-4 py-3 text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>100%</td>
-                            <td className="px-4 py-3 font-mono tabular-nums text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>{fmt(totalSalesAll / periodDays)}</td>
-                            <td className="px-4 py-3" />
-                          </tr>
+                          <tr><td>الإجمالي</td><td className="ts-end"><Num v={s.totalSalesAll} k="sales" /></td><td className="ts-end"><span className="ts-num">100%</span></td><td className="ts-end"><Num v={s.totalSalesAll / s.periodDays} k="daily" /></td><td /></tr>
                         </tfoot>
                       </table>
                     </div>
-                  </div>
+                  </Panel>
                 )}
 
-                {/* القسم 2: مبيعات التطبيقات */}
-                {hasAppSales && (
-                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-                    <div className="px-5 py-4" style={{ background: NAVY }}>
-                      <h2 className="font-bold text-white text-sm">📱 مبيعات التطبيقات{branches.length > 1 ? ' لكل فرع' : ''}</h2>
-                      <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
-                            {branches.length > 1 && <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الفرع</th>}
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#ef4444' }}>هنقر</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#f97316' }}>جاهز</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#8b5cf6' }}>كيتا</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#10b981' }}>مرسول</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#0ea5e9' }}>نينجا</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>إجمالي التطبيقات</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold text-slate-400">% من المبيعات</th>
-                          </tr>
-                        </thead>
+                {s.hasAppSales && (
+                  <Panel title={`مبيعات التطبيقات${branches.length > 1 ? ' لكل فرع' : ''}`} icon={Smartphone} subtitle="قبل الضريبة" clip>
+                    <div className="rpt-scroll">
+                      <table className="ts-table rpt-table" data-table="sales.apps">
+                        <thead><tr>
+                          {branches.length > 1 && <th>الفرع</th>}
+                          <th className="ts-end">هنقر</th><th className="ts-end">جاهز</th><th className="ts-end">كيتا</th><th className="ts-end">مرسول</th><th className="ts-end">نينجا</th>
+                          <th className="ts-end">إجمالي التطبيقات</th><th className="ts-end">% من المبيعات</th>
+                        </tr></thead>
                         <tbody>
-                          {(appBranches.length > 0 ? appBranches : Object.keys(appMap)).map((b, i) => {
-                            const v        = appMap[b] || { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
+                          {(s.appBranches.length > 0 ? s.appBranches : Object.keys(s.appMap)).map(b => {
+                            const v        = s.appMap[b] || { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
                             const appTotal = v.hunger + v.jahez + v.keeta + v.mrsool + v.ninja
-                            const brTotal  = branchSalesMap[b]?.sales || 0
+                            const brTotal  = s.branchSalesMap[b]?.sales || 0
                             const pct      = brTotal > 0 ? (appTotal / brTotal * 100).toFixed(1) : '—'
                             return (
-                              <tr key={b} style={{ borderBottom: '1px solid #f5f4f0', background: i % 2 === 0 ? '#fff' : '#fafaf8' }}>
-                                {branches.length > 1 && <td className="px-4 py-3 font-semibold text-xs" style={{ color: NAVY }}>🏢 {b}</td>}
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.hunger > 0 ? '#ef4444' : '#d1d5db' }}>{v.hunger > 0 ? fmt(v.hunger) : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.jahez  > 0 ? '#f97316' : '#d1d5db' }}>{v.jahez  > 0 ? fmt(v.jahez)  : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.keeta  > 0 ? '#8b5cf6' : '#d1d5db' }}>{v.keeta  > 0 ? fmt(v.keeta)  : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.mrsool > 0 ? '#10b981' : '#d1d5db' }}>{v.mrsool > 0 ? fmt(v.mrsool) : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: v.ninja > 0 ? '#0ea5e9' : '#d1d5db' }}>{v.ninja > 0 ? fmt(v.ninja) : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums font-bold text-xs" style={{ color: NAVY }}>{fmt(appTotal)}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs text-slate-400">{pct !== '—' ? `${pct}%` : '—'}</td>
+                              <tr key={b}>
+                                {branches.length > 1 && <td data-k="branch"><strong>{b}</strong></td>}
+                                <Cell v={v.hunger > 0 ? v.hunger : 0} k="hunger" /><Cell v={v.jahez > 0 ? v.jahez : 0} k="jahez" /><Cell v={v.keeta > 0 ? v.keeta : 0} k="keeta" />
+                                <Cell v={v.mrsool > 0 ? v.mrsool : 0} k="mrsool" /><Cell v={v.ninja > 0 ? v.ninja : 0} k="ninja" />
+                                <td className="ts-end"><strong><Num v={appTotal} k="total" /></strong></td>
+                                <td className="ts-end"><span className="ts-num" data-k="pct">{pct !== '—' ? `${pct}%` : '—'}</span></td>
                               </tr>
                             )
                           })}
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  </Panel>
                 )}
 
-                {/* القسم 3: النمو */}
-                {prevEntries.length > 0 && (
-                  <div className="bg-white rounded-2xl p-5 shadow-sm" style={cardBorder}>
-                    <div className="flex items-center justify-between flex-wrap gap-4">
-                      <div>
-                        <div className="text-sm font-bold mb-1" style={{ color: NAVY }}>📈 نمو المبيعات</div>
-                        <div className="text-xs text-slate-400">
-                          الحالية: {from} → {actualLastDate} | السابقة: {actualPrevFromD} → {actualPrevToD}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-5">
-                        <div className="text-center">
-                          <div className="text-xs text-slate-400 mb-0.5">الفترة الحالية</div>
-                          <div className="font-mono font-bold tabular-nums text-base" style={{ color: NAVY }}>{fmt(curSales)}</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-xs text-slate-400 mb-0.5">الفترة السابقة</div>
-                          <div className="font-mono font-bold tabular-nums text-base text-slate-400">{fmt(prevSales)}</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-xs text-slate-400 mb-0.5">النمو</div>
-                          {growth === null ? (
-                            <div className="text-sm font-bold text-slate-400">—</div>
-                          ) : (
-                            <div className={`text-2xl font-bold ${growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {growth >= 0 ? '↑' : '↓'} {Math.abs(growth).toFixed(1)}%
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* القسم 4: مبيعات يومية */}
-                {dailyRows.length > 0 && (
-                  <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-                    <div className="px-5 py-4" style={{ background: NAVY }}>
-                      <h2 className="font-bold text-white text-sm">📅 المبيعات اليومية</h2>
-                      <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>التاريخ</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#16a34a' }}>كاش</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#1d4ed8' }}>شبكة</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: '#f97316' }}>تطبيقات</th>
-                            <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الإجمالي</th>
-                          </tr>
-                        </thead>
+                {s.dailyRows.length > 0 && (
+                  <Panel title="المبيعات اليومية" icon={CalendarDays} subtitle="قبل الضريبة، الأحدث أولًا" clip>
+                    <div className="rpt-scroll">
+                      <table className="ts-table rpt-table" data-table="sales.daily">
+                        <thead><tr><th>التاريخ</th><th className="ts-end">كاش</th><th className="ts-end">شبكة</th><th className="ts-end">تطبيقات</th><th className="ts-end">الإجمالي</th></tr></thead>
                         <tbody>
-                          {dailyRows.map((r, i) => {
+                          {s.dailyRows.map(r => {
                             const total = r.cash + r.bank + r.apps
-                            const isTop = total === maxDaySales && total > 0
+                            const isTop = total === s.maxDaySales && total > 0
                             return (
-                              <tr key={r.date} style={{ borderBottom: '1px solid #f5f4f0', background: isTop ? '#f0fdf4' : i % 2 === 0 ? '#fff' : '#fafaf8' }}>
-                                <td className="px-4 py-2 text-xs font-semibold" style={{ color: isTop ? '#15803d' : '#4b5563' }}>
-                                  {isTop && <span className="ml-1">🏆</span>}{fmtD(r.date)}
+                              <tr key={r.date} className={isTop ? 'rpt-top' : ''}>
+                                <td data-k="date" data-iso={r.date} data-top={isTop ? '1' : ''}>
+                                  {dayCell(r.date)}{isTop && <span className="ts-status rpt-top-tag">الأعلى</span>}
                                 </td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: r.cash > 0 ? '#16a34a' : '#d1d5db' }}>{r.cash > 0 ? fmt(r.cash) : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: r.bank > 0 ? '#1d4ed8' : '#d1d5db' }}>{r.bank > 0 ? fmt(r.bank) : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums text-xs" style={{ color: r.apps > 0 ? '#f97316' : '#d1d5db' }}>{r.apps > 0 ? fmt(r.apps) : '—'}</td>
-                                <td className="px-4 py-2 font-mono tabular-nums font-bold text-xs" style={{ color: isTop ? '#15803d' : NAVY }}>{fmt(total)}</td>
+                                <Cell v={r.cash > 0 ? r.cash : 0} k="cash" /><Cell v={r.bank > 0 ? r.bank : 0} k="bank" /><Cell v={r.apps > 0 ? r.apps : 0} k="apps" />
+                                <td className="ts-end"><strong><Num v={total} k="total" /></strong></td>
                               </tr>
                             )
                           })}
                         </tbody>
                         <tfoot>
-                          <tr style={{ background: NAVY }}>
-                            <td className="px-4 py-3 text-xs font-bold text-white">الإجمالي ({dailyRows.length} يوم)</td>
-                            <td className="px-4 py-3 font-mono tabular-nums text-xs font-bold" style={{ color: '#86efac' }}>{fmt(dailyRows.reduce((s,r) => s+r.cash, 0))}</td>
-                            <td className="px-4 py-3 font-mono tabular-nums text-xs font-bold" style={{ color: '#93c5fd' }}>{fmt(dailyRows.reduce((s,r) => s+r.bank, 0))}</td>
-                            <td className="px-4 py-3 font-mono tabular-nums text-xs font-bold" style={{ color: '#fdba74' }}>{fmt(dailyRows.reduce((s,r) => s+r.apps, 0))}</td>
-                            <td className="px-4 py-3 font-mono tabular-nums text-xs font-bold" style={{ color: GOLD }}>{fmt(dailyRows.reduce((s,r) => s+r.cash+r.bank+r.apps, 0))}</td>
+                          <tr>
+                            <td>الإجمالي (<span className="ts-num" data-k="days">{s.dailyRows.length}</span> يوم)</td>
+                            <td className="ts-end"><Num v={s.dailyRows.reduce((t,r) => t+r.cash, 0)} k="cash" /></td>
+                            <td className="ts-end"><Num v={s.dailyRows.reduce((t,r) => t+r.bank, 0)} k="bank" /></td>
+                            <td className="ts-end"><Num v={s.dailyRows.reduce((t,r) => t+r.apps, 0)} k="apps" /></td>
+                            <td className="ts-end"><Num v={s.dailyRows.reduce((t,r) => t+r.cash+r.bank+r.apps, 0)} k="total" /></td>
                           </tr>
                         </tfoot>
                       </table>
                     </div>
-                  </div>
+                  </Panel>
                 )}
 
-                {!engineSummary && (
-                  <div className="bg-white rounded-2xl p-12 text-center text-slate-400 shadow-sm" style={cardBorder}>
-                    <div className="text-3xl mb-2">💵</div>
-                    <p className="text-sm">لا توجد بيانات في هذه الفترة</p>
-                  </div>
-                )}
-              </div>
+                {!engineSummary && <Panel><EmptyState icon={Wallet}>لا توجد بيانات في هذه الفترة</EmptyState></Panel>}
+                {engineSummary && s.dailyRows.length === 0 && <Panel><EmptyState icon={Wallet}>لا مبيعات معتمدة في هذه الفترة{selectedBranch !== 'all' ? ' لهذا الفرع' : ''}.</EmptyState></Panel>}
+
+                <Scope tab="sales" />
+              </>
             )
           })()}
 
-          {/* ══════════════════ TAB 2: ضريبة القيمة المضافة ══════════════════ */}
-          {activeTab === 'vat' && (
-            <div className="space-y-4">
-
-              {/* بطاقات الملخص */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {[
-                  { label: 'ضريبة المخرجات', sub: 'المبيعات ÷ 1.15 × 15%', value: data.outputVat, icon: '📤', bg: '#f0fdf4', border: '#bbf7d0', color: '#16a34a' },
-                  { label: 'ضريبة المدخلات', sub: 'من فواتير المشتريات', value: data.inputVat,  icon: '📥', bg: '#fef2f2', border: '#fecaca', color: '#dc2626' },
-                  { label: 'الصافي المستحق', sub: data.netVat >= 0 ? 'تُدفع لهيئة الزكاة' : 'مبلغ قابل للاسترداد', value: Math.abs(data.netVat), icon: '🏛️',
-                    bg: data.netVat >= 0 ? '#fffbeb' : '#eff6ff',
-                    border: data.netVat >= 0 ? '#fde68a' : '#bfdbfe',
-                    color: data.netVat >= 0 ? '#b45309' : '#1d4ed8' },
-                ].map(c => (
-                  <div key={c.label} className="rounded-2xl p-5 shadow-sm text-center" style={{ background: c.bg, border: `2px solid ${c.border}` }}>
-                    <div className="flex flex-col items-center gap-1 mb-2">
-                      <span className="text-2xl">{c.icon}</span>
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{c.label}</span>
-                      <span className="text-xs text-slate-400">{c.sub}</span>
-                    </div>
-                    <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: c.color }}>
-                      {(c.value||0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* جدول الحساب التفصيلي */}
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={{ border: '1px solid #e8e5dc' }}>
-                <div className="px-5 py-4" style={{ background: NAVY }}>
-                  <h2 className="font-bold text-white text-sm">🏛️ تفاصيل حساب الضريبة</h2>
-                  <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
-                </div>
-                <div className="p-5 space-y-0">
-                  <IncomeRow label="إجمالي المبيعات (شامل الضريبة)"   value={data.totalSales}  indent />
-                  <IncomeRow label="المبيعات الصافية (÷ 1.15)"         value={data.netSales}    indent />
-                  <IncomeRow label="ضريبة المخرجات (15%)"              value={data.outputVat}   bold  line color="#16a34a" />
-                  <IncomeRow label="ضريبة المدخلات (من الفواتير)"      value={-data.inputVat}   bold  color="#dc2626" />
-                  <IncomeRow label={data.netVat >= 0 ? 'صافي الضريبة المستحقة لهيئة الزكاة' : 'فائض ضريبي قابل للاسترداد'}
-                    value={data.netVat} bold line color={data.netVat >= 0 ? '#b45309' : '#1d4ed8'} />
-                </div>
-                {data.netVat > 0 && (
-                  <div className="mx-5 mb-5 p-3 rounded-xl text-sm font-semibold" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-                    ⚠️ يجب تحويل <span className="font-mono">{(data.netVat).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span> لهيئة الزكاة والضريبة والجمارك
+          {/* ══════════ المصروفات ══════════ */}
+          {activeTab === 'purchases' && (() => {
+            const x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
+            const pctOf = v => (x._sales > 0 ? ((v / x._sales) * 100).toFixed(1) : 0)
+            const allKeys = [
+              ...x.cogsBySubRows.map(sub => `__cogs__${sub.cat}`),
+              ...x.opexRows.flatMap(r => [r.cat, ...r.subs.map(sub => `${r.cat}__${sub.cat}`)]),
+              '__withdrawals__', '__debts__',
+            ]
+            const allOpen = allKeys.length > 0 && allKeys.every(k => expandedCats.has(k))
+            const oblGroups = [
+              { title: 'المسحوبات', total: x.totalW, groups: x.wGroups, key: '__withdrawals__' },
+              { title: 'الأقساط والقروض', total: x.totalD, groups: x.dGroups, key: '__debts__' },
+            ].filter(g => g.groups.length)
+            return (
+              <>
+                {(x.mainRows.length > 0 || x.hasObligations) && (
+                  <div className="rpt-toolbar">
+                    <span className="ts-muted">المبالغ قبل الضريبة، والنسبة من المبيعات قبل الضريبة.</span>
+                    <Button size="sm" variant="quiet" icon={ListTree} onClick={() => setExpandedCats(allOpen ? new Set() : new Set(allKeys))}>
+                      {allOpen ? 'طي التفاصيل' : 'فتح كل التفاصيل'}
+                    </Button>
                   </div>
                 )}
-                {data.netVat < 0 && (
-                  <div className="mx-5 mb-5 p-3 rounded-xl text-sm font-semibold" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af' }}>
-                    ✅ لديك فائض ضريبي بقيمة <span className="font-mono">{Math.abs(data.netVat).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span> قابل للاسترداد
+
+                {x.cogsRows.length > 0 && (
+                  <Panel title="تكلفة البضاعة المباعة" icon={ShoppingBasket} clip className="rpt-tree" subtitle="حسب التصنيف الفرعي"
+                    action={<div className="rpt-tree-total" data-node="cogs" data-label="تكلفة البضاعة المباعة">
+                      <Num v={x.cogsTotal} k="amount" />{x._sales > 0 && <small data-k="pct">{x.cogsPct}% من المبيعات</small>}
+                    </div>}>
+                    {x.cogsBySubRows.map(sub => {
+                      const subKey = `__cogs__${sub.cat}`
+                      const subOpen = expandedCats.has(subKey)
+                      return (
+                        <div key={sub.cat} className="rpt-tree-group">
+                          <TreeRow level={2} kind="cogs-sub" label={sub.isUncat ? 'غير مصنف' : sub.label} sub={sub.mainLabel || null}
+                            amount={sub.total} pctText={x._sales > 0 ? `${(sub.total / x._sales * 100).toFixed(1)}%` : null}
+                            open={subOpen} onToggle={() => toggleCat(subKey)} />
+                          {subOpen && sub.rows.map((row, ri) => <TreeRow key={ri} level={3} kind="row" label={row.label || '—'} amount={row.amount} />)}
+                        </div>
+                      )
+                    })}
+                  </Panel>
+                )}
+
+                {x.opexRows.length > 0 && (
+                  <Panel title="المصروفات حسب التصنيف" icon={Receipt} clip className="rpt-tree" subtitle="التصنيفات الرئيسية من الأكبر">
+                    {x.opexRows.map(r => {
+                      const pct  = pctOf(r.total)
+                      const open = expandedCats.has(r.cat)
+                      return (
+                        <div key={r.cat} className="rpt-tree-group">
+                          <TreeRow level={1} kind="opex-main" label={r.label} amount={r.total} pctText={`${pct}%`} bar={pct}
+                            open={open} onToggle={() => toggleCat(r.cat)} />
+                          {open && r.subs.map(sub => {
+                            const subKey  = `${r.cat}__${sub.cat}`
+                            const subOpen = expandedCats.has(subKey)
+                            return (
+                              <div key={sub.cat} className="rpt-tree-group">
+                                <TreeRow level={2} kind="opex-sub" label={sub.isUncat ? 'غير مصنف' : sub.label} amount={sub.total}
+                                  pctText={x._sales > 0 ? `${pctOf(sub.total)}%` : null} open={subOpen} onToggle={() => toggleCat(subKey)} />
+                                {subOpen && sub.rows.map((row, ri) => <TreeRow key={ri} level={3} kind="row" label={row.label || '—'} amount={row.amount} />)}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })}
+                  </Panel>
+                )}
+
+                {x.mainRows.length === 0 && !x.hasObligations && (
+                  <Panel><EmptyState icon={Receipt}>لا توجد فواتير مشتريات مصنّفة في هذه الفترة<small className="rpt-empty-hint">تظهر البيانات بعد اعتماد فواتير مسؤول المشتريات</small></EmptyState></Panel>
+                )}
+
+                {x.hasObligations && (
+                  <Panel title="المسحوبات والالتزامات" icon={HandCoins} clip className="rpt-tree rpt-obligations" subtitle="لا تدخل في الربح"
+                    action={(x.totalW + x.totalD) > 0 ? <div className="rpt-tree-total" data-node="obl-total" data-label="إجمالي المسحوبات والالتزامات"><Num v={x.totalW + x.totalD} k="amount" /></div> : null}>
+                    {oblGroups.map(g => {
+                      const open = expandedCats.has(g.key)
+                      return (
+                        <div key={g.key} className="rpt-tree-group">
+                          <TreeRow level={1} kind="obl-group" label={g.title} amount={g.total} open={open} onToggle={() => toggleCat(g.key)} />
+                          {open && g.groups.map((it, i) => <TreeRow key={i} level={3} kind="obl-item" label={it.type} amount={it.total} />)}
+                        </div>
+                      )
+                    })}
+                  </Panel>
+                )}
+
+                {x.taxEntries.length > 0 && (
+                  <div className="ts-note ts-note--info" data-k="purchases.taxNote">
+                    <Landmark className="ts-icon" aria-hidden="true" />
+                    <div className="ts-note-body">
+                      {plural(x.taxEntries.length, 'قيد ضريبي واحد', 'قيدان ضريبيان', 'قيود ضريبية', 'قيدًا ضريبيًا')} بمبلغ <Num v={x.taxEntries.reduce((t, e) => t + (Number(e.cash_out) || 0) + (Number(e.bank_out) || 0) + (Number(e.custody_out) || 0), 0)} k="amount" /> لا {x.taxEntries.length === 1 ? 'يدخل' : 'تدخل'} المصروفات (كما في لوحة التحكم): سداد الضريبة للهيئة وما يحتاج تأكيد المحاسب.
+                      {' '}<button type="button" className="rpt-link" onClick={() => setActiveTab('vat')}>تفاصيلها في تبويب الضريبة</button>
+                    </div>
                   </div>
                 )}
+
+                <Scope tab="purchases" />
+              </>
+            )
+          })()}
+
+          {/* ══════════ الضريبة ══════════ */}
+          {activeTab === 'vat' && (() => {
+            const v = data.vat
+            const due = v.netBeforePayment >= 0
+            const moves = [...v.payments, ...v.refunds].sort((p, q) => String(p.date).localeCompare(String(q.date)))
+            return (
+            <>
+              <div className="ts-metrics" data-k="vat.cards">
+                <Metric label="ضريبة المخرجات" icon={Percent} foot="المبيعات ÷ 1.15 × 15%"><span data-k="vat.output"><Money value={v.outputVat} /></span></Metric>
+                <Metric label="ضريبة المدخلات" icon={Receipt} foot="المسجلة على فواتير المشتريات"><span data-k="vat.input"><Money value={v.inputVat} /></span></Metric>
+                <Metric label="صافي ضريبة الفترة قبل السداد" icon={Landmark}
+                  foot={<span data-k="vat.netDir">{due ? 'المخرجات أكبر: مستحق للهيئة عن الفترة' : 'المدخلات أكبر: فائض لصالح المنشأة'}</span>}>
+                  <span data-k="vat.net"><Money value={Math.abs(v.netBeforePayment)} /></span>
+                </Metric>
+                <Metric label="مدفوعات الضريبة خلال الفترة" icon={HandCoins}
+                  foot={<span data-k="vat.paymentsFoot">{v.payments.length ? `${plural(v.payments.length, 'دفعة واحدة', 'دفعتان', 'دفعات', 'دفعة')}؛ لا تُطرح من صافي الفترة` : 'لا سداد مسجّل في الفترة'}{v.refunds.length ? `، ومستردات ${fmt(v.refundsTotal)}` : ''}</span>}>
+                  <span data-k="vat.payments"><Money value={v.paymentsTotal} /></span>
+                </Metric>
               </div>
 
-              {/* فواتير المشتريات التي تحتوي ضريبة */}
-              {data.vatEntries?.length > 0 && (
-                <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={{ border: '1px solid #e8e5dc' }}>
-                  <div className="px-5 py-4 flex items-center justify-between" style={{ background: '#fef2f2', borderBottom: '1px solid #fecaca' }}>
-                    <h2 className="font-bold text-sm text-red-800">📥 فواتير المشتريات — ضريبة المدخلات ({data.vatEntries.length})</h2>
-                    <span className="font-mono font-bold text-red-700 text-sm">{fmt(data.inputVat)}</span>
+              <Panel title="تفاصيل حساب الضريبة" icon={Landmark}>
+                <div className="ts-panel-body">
+                  <CalcRows k="vat.calc" rows={[
+                    { label: 'إجمالي المبيعات (شامل الضريبة)', value: data.totalSales },
+                    { label: 'المبيعات الصافية (÷ 1.15)', value: data.netSales },
+                    { label: 'ضريبة المخرجات (15%)', value: v.outputVat, strong: true, line: true },
+                    { label: 'ضريبة المدخلات (من الفواتير)', value: -v.inputVat, strong: true },
+                    { label: 'صافي ضريبة الفترة قبل السداد', value: v.netBeforePayment, strong: true, line: true, tone: due ? 'due' : 'refund' },
+                  ]} />
+                  <div className="ts-note ts-note--info rpt-vat-note" data-k="vat.notice">
+                    <Info className="ts-icon" aria-hidden="true" />
+                    <div className="ts-note-body">
+                      <strong>حساب للمتابعة الداخلية، يراجعه المحاسب قبل الإقرار والسداد.</strong>
+                      صافي ضريبة الفترة قبل السداد <Num v={Math.abs(v.netBeforePayment)} k="amount" /> {due ? '(مستحق عن الفترة)' : '(فائض لصالح المنشأة)'}.
+                      {' '}مدفوعات الضريبة المسجلة خلال الفترة لا تُطرح منه، لأن السداد قد يخص فترة سابقة ولا يحدد القيد الفترة التي يخصها.
+                    </div>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
-                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>التاريخ</th>
-                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>البند</th>
-                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الوصف</th>
-                          <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>المبلغ الإجمالي</th>
-                          <th className="px-4 py-3 text-right text-xs font-bold text-red-600">الضريبة</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y" style={{ borderColor: '#f5f4f0' }}>
-                        {data.vatEntries.map((e, i) => {
-                          const total = (e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0)
+                </div>
+              </Panel>
+
+              {moves.length > 0 && (
+                <Panel title="مدفوعات ومستردات الضريبة خلال الفترة" icon={HandCoins} clip subtitle="قيود بنوع «ضريبة القيمة المضافة»: لا تدخل المصروفات ولا ضريبة المدخلات، وأثرها في الأرصدة">
+                  <div className="rpt-scroll">
+                    <table className="ts-table rpt-table rpt-table--stack" data-table="vat.payments">
+                      <thead><tr><th>التاريخ</th><th>الوصف</th><th>الحركة</th><th>من / إلى</th><th className="ts-end">المبلغ</th></tr></thead>
+                      <tbody>
+                        {moves.map((r, i) => (
+                          <tr key={r.id || i}>
+                            <td data-label="التاريخ" data-k="date" data-iso={r.date || ''}>{r.date ? day(r.date) : '—'}</td>
+                            <td data-label="الوصف" data-k="desc" className="rpt-desc">{r.description || '—'}</td>
+                            <td data-label="الحركة" data-k="kind">{r.kind === 'payment' ? 'سداد' : 'استرداد'}</td>
+                            <td data-label="من / إلى" data-k="source">{r.source}</td>
+                            <td data-label="المبلغ" className="ts-end"><Num v={r.amount} k="amount" /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr><td colSpan={4}>إجمالي المدفوعات</td><td className="ts-end"><Num v={v.paymentsTotal} k="amount" /></td></tr>
+                        {v.refunds.length > 0 && <tr><td colSpan={4}>إجمالي المستردات</td><td className="ts-end"><Num v={v.refundsTotal} k="amount" /></td></tr>}
+                      </tfoot>
+                    </table>
+                  </div>
+                </Panel>
+              )}
+
+              {v.review.length > 0 && (
+                <Panel title={`قيود ضريبية تحتاج تأكيد المحاسب (${v.review.length})`} icon={Info} clip className="rpt-review"
+                  subtitle="لم تُحسب في المصروفات ولا في ضريبة المدخلات ولا في المدفوعات، ولم يُعدَّل أي قيد">
+                  <div className="rpt-scroll">
+                    <table className="ts-table rpt-table rpt-table--stack" data-table="vat.review">
+                      <thead><tr><th>التاريخ</th><th>النوع</th><th>الوصف</th><th className="ts-end">خارج</th><th className="ts-end">داخل</th><th className="ts-end">ضريبة مسجلة</th><th>ما يحتاج تأكيدًا</th></tr></thead>
+                      <tbody>
+                        {v.review.map((r, i) => (
+                          <tr key={r.id || i}>
+                            <td data-label="التاريخ" data-k="date" data-iso={r.date || ''}>{r.date ? day(r.date) : '—'}</td>
+                            <td data-label="النوع" data-k="type">{cleanLabel(r.type)}</td>
+                            <td data-label="الوصف" data-k="desc" className="rpt-desc">{r.description || '—'}</td>
+                            <Cell v={r.out} k="out" label="خارج" /><Cell v={r.in} k="in" label="داخل" /><Cell v={r.vat} k="vat" label="ضريبة مسجلة" />
+                            <td data-label="ما يحتاج تأكيدًا" data-k="reason" className="rpt-reason">{r.reasonText}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              )}
+
+              {v.inputVatEntries.length > 0 && (
+                <Panel title={`فواتير المشتريات — ضريبة المدخلات (${v.inputVatEntries.length})`} icon={Receipt} clip
+                  action={<span className="rpt-panel-total"><Num v={v.inputVat} k="vat.entriesHead" /></span>}>
+                  <div className="rpt-scroll">
+                    <table className="ts-table rpt-table" data-table="vat.entries">
+                      <thead><tr><th>التاريخ</th><th>البند</th><th>الوصف</th><th className="ts-end">المبلغ الإجمالي</th><th className="ts-end">الضريبة</th></tr></thead>
+                      <tbody>
+                        {v.inputVatEntries.map((e, i) => {
+                          const total = e.signedGross   // بإشارة القيد: الآجل موجبًا والمرتجع سالبًا (vatFigures)
                           return (
-                            <tr key={e.id || i} className="hover:bg-amber-50/30 transition-colors">
-                              <td className="px-4 py-3 text-xs text-slate-500">{e.date}</td>
-                              <td className="px-4 py-3 text-xs font-medium" style={{ color: NAVY }}>{e.type || '—'}</td>
-                              <td className="px-4 py-3 text-xs text-slate-500 max-w-48 truncate">{e.description || '—'}</td>
-                              <td className="px-4 py-3 text-xs font-mono tabular-nums text-right" style={{ color: NAVY }}>{fmt(total)}</td>
-                              <td className="px-4 py-3 text-xs font-mono tabular-nums font-bold text-right text-red-600">{fmt(e.vat_amount)}</td>
+                            <tr key={e.id || i}>
+                              <td data-k="date" data-iso={e.date || ''}>{e.date ? day(e.date) : '—'}</td>
+                              <td data-k="type">{cleanLabel(e.type) || '—'}</td>
+                              <td data-k="desc" className="rpt-desc">{e.description || '—'}</td>
+                              <td className="ts-end"><Num v={total} k="total" /></td>
+                              <td className="ts-end"><strong><Num v={e.signedVat} k="vat" /></strong></td>
                             </tr>
                           )
                         })}
                       </tbody>
                       <tfoot>
-                        <tr style={{ background: NAVY }}>
-                          <td colSpan={3} className="px-4 py-3 text-xs font-bold text-white">إجمالي ضريبة المدخلات</td>
-                          <td className="px-4 py-3 text-xs font-mono text-right font-bold" style={{ color: '#e5e7eb' }}>{fmt(data.vatEntries.reduce((s,e)=>{const t=(e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0);return s+t},0))}</td>
-                          <td className="px-4 py-3 text-xs font-mono tabular-nums font-bold text-right" style={{ color: '#fca5a5' }}>{fmt(data.inputVat)}</td>
+                        <tr>
+                          <td colSpan={3}>إجمالي ضريبة المدخلات</td>
+                          <td className="ts-end"><Num v={v.inputVatEntries.reduce((s, e) => s + e.signedGross, 0)} k="total" /></td>
+                          <td className="ts-end"><Num v={v.inputVat} k="vat" /></td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
-                </div>
+                </Panel>
               )}
 
-              {data.vatEntries?.length === 0 && (
-                <div className="bg-white rounded-2xl p-8 text-center text-slate-400 shadow-sm" style={{ border: '1px solid #e8e5dc' }}>
-                  <span className="text-3xl block mb-2">📭</span>
-                  <p className="text-sm">لا توجد فواتير مشتريات تحتوي ضريبة في هذه الفترة</p>
-                </div>
+              {v.inputVatEntries.length === 0 && (
+                <Panel><EmptyState icon={Receipt}>لا توجد فواتير مشتريات تحتوي ضريبة في هذه الفترة</EmptyState></Panel>
               )}
-            </div>
-          )}
 
-          {/* ══════════════════ TAB 3: الأرصدة ══════════════════ */}
-          {activeTab === 'balance' && balances && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {[
-                  { label:'رصيد الصندوق', icon:'🏧', value:balances.cash,    bg:'#f0fdf4', border:'#bbf7d0', color:'#16a34a' },
-                  { label:'رصيد البنك',   icon:'🏦', value:balances.bank,    bg:'#eff6ff', border:'#bfdbfe', color:'#1d4ed8' },
-                  { label:'رصيد العهدة',  icon:'👤', value:balances.custody, bg:'#fffbeb', border:'#fde68a', color:'#b45309' },
-                ].map(c => (
-                  <div key={c.label} className="rounded-2xl p-5 shadow-sm text-center"
-                    style={{ background: c.bg, border: `2px solid ${c.border}` }}>
-                    <div className="flex flex-col items-center gap-1 mb-3">
-                      <span className="text-2xl">{c.icon}</span>
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{c.label}</span>
-                    </div>
-                    <div className="text-2xl font-bold font-mono tabular-nums"
-                      style={{ color: c.value < 0 ? '#dc2626' : c.color }}>
-                      {Math.abs(c.value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </div>
-                    {c.value < 0 && <div className="text-xs text-red-500 font-semibold mt-2">⚠️ رصيد سالب</div>}
-                  </div>
-                ))}
-              </div>
-
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-                <div className="px-5 py-4" style={{ background: NAVY }}>
-                  <h2 className="font-bold text-white text-sm">ملخص الفترة</h2>
-                  <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</p>
-                </div>
-                <div className="p-5 space-y-0">
-                  <IncomeRow label="إجمالي المدين (الدخل)"   value={data.totalIn}                   bold color="#16a34a" />
-                  <IncomeRow label="إجمالي الدائن (الخروج)"  value={data.totalOut}                  bold color="#dc2626" />
-                  <IncomeRow label="صافي الفترة"             value={data.totalIn - data.totalOut}   bold line color={data.totalIn>=data.totalOut?'#1d4ed8':'#dc2626'} />
-                  <IncomeRow label="إجمالي الأرصدة النقدية"  value={balances.cash+balances.bank+balances.custody} bold line />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ══════════════════ TAB 3: ملخص الأرصدة ══════════════════ */}
-          {activeTab === 'trial' && (
-            <div className="bg-white rounded-2xl shadow-sm overflow-hidden" style={cardBorder}>
-              <div className="px-5 py-4 flex items-center justify-between" style={{ background: NAVY }}>
-                <h2 className="font-bold text-white text-sm">📋 ملخص الأرصدة</h2>
-                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>{from} — {to}</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr style={{ background: '#f5f4f0', borderBottom: `2px solid ${GOLD}` }}>
-                      <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>البند</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold text-green-700">مدين</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold text-red-600">دائن</th>
-                      <th className="px-4 py-3 text-right text-xs font-bold" style={{ color: NAVY }}>الرصيد</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y" style={{ '--tw-divide-opacity': 1, borderColor: '#D4E8E6' }}>
-                    {trialBalance.length === 0 && (
-                      <tr><td colSpan={4} className="text-center py-12 text-slate-400">لا توجد بيانات في هذه الفترة</td></tr>
-                    )}
-                    {trialBalance.map((row, i) => {
-                      const net = row.debit - row.credit
-                      return (
-                        <tr key={i} className="transition-colors hover:bg-amber-50/40">
-                          <td className="px-4 py-3 font-medium text-sm" style={{ color: NAVY }}>{row.type}</td>
-                          <td className="px-4 py-3 font-mono tabular-nums text-green-700 text-right text-xs">
-                            {row.debit > 0 ? fmt(row.debit) : '—'}
-                          </td>
-                          <td className="px-4 py-3 font-mono tabular-nums text-red-600 text-right text-xs">
-                            {row.credit > 0 ? fmt(row.credit) : '—'}
-                          </td>
-                          <td className="px-4 py-3 font-mono tabular-nums font-bold text-right text-xs"
-                            style={{ color: net >= 0 ? '#1d4ed8' : '#dc2626' }}>
-                            {fmt(Math.abs(net))} {net < 0 ? '(دائن)' : net > 0 ? '(مدين)' : ''}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  {trialBalance.length > 0 && (
-                    <tfoot>
-                      <tr style={{ background: NAVY }}>
-                        <td className="px-4 py-3 text-sm font-bold text-white">الإجمالي</td>
-                        <td className="px-4 py-3 font-mono tabular-nums text-right text-xs font-bold" style={{ color: '#86efac' }}>
-                          {fmt(trialBalance.reduce((s,r) => s+r.debit,0))}
-                        </td>
-                        <td className="px-4 py-3 font-mono tabular-nums text-right text-xs font-bold" style={{ color: '#fca5a5' }}>
-                          {fmt(trialBalance.reduce((s,r) => s+r.credit,0))}
-                        </td>
-                        <td className="px-4 py-3 font-mono tabular-nums text-right text-xs font-bold" style={{ color: GOLD }}>
-                          {fmt(data.totalIn - data.totalOut)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* ══════════════════ TAB 2: تقرير المشتريات ══════════════════ */}
-          {activeTab === 'purchases' && (() => {
-            const strip = s => (s || '').replace(/^[^؀-ۿ]+/, '').trim()
-            // بناء هيكل هرمي: category_main → { total, subs, rows }
-            const mainMap = {}
-
-            // التجميع بالاسم بعد تجريد الإيموجي — المساران أدناه يبنيان المفتاح من
-            // مصدرين مختلفين: قيد له بنود يأخذ category_main النظيف ("مصروفات ثابتة")،
-            // وقيد بلا بنود يأخذ e.type الحامل للإيموجي ("💰 مصروفات ثابتة"). بلا تجريد
-            // يصيران مفتاحين مختلفين، فيظهر التصنيف الواحد بصفّين منفصلين.
-            // نحتفظ بأغنى تسمية (التي تحمل الإيموجي) للعرض فقط.
-            const hasEmoji = s => /[^؀-ۿ\s]/.test(s || '')
-            const addItem = (rawMain, rawSub, amount, label) => {
-              if (!rawMain || rawMain.includes('مبيعات') || amount <= 0) return
-              const mainKey = strip(rawMain) || rawMain
-              if (!mainMap[mainKey]) mainMap[mainKey] = { total: 0, subs: {}, rows: [], label: rawMain }
-              if (hasEmoji(rawMain) && !hasEmoji(mainMap[mainKey].label)) mainMap[mainKey].label = rawMain
-              mainMap[mainKey].total += amount
-              mainMap[mainKey].rows.push({ label: label || rawSub || rawMain, amount })
-
-              const subKey = rawSub ? (strip(rawSub) || rawSub) : '__uncat__'
-              if (!mainMap[mainKey].subs[subKey]) mainMap[mainKey].subs[subKey] = { total: 0, rows: [], label: rawSub || '' }
-              if (rawSub && hasEmoji(rawSub) && !hasEmoji(mainMap[mainKey].subs[subKey].label)) {
-                mainMap[mainKey].subs[subKey].label = rawSub
-              }
-              mainMap[mainKey].subs[subKey].total += amount
-              mainMap[mainKey].subs[subKey].rows.push({ label: label || rawMain, amount })
-            }
-
-            // المصروفات الحقيقية فقط (بدون مسحوبات / أقساط / قروض)
-            ;(entries || []).forEach(e => {
-              // صافي بعد طرح ضريبة المدخلات — ليتطابق التفصيل مع بطاقة المصروفات
-              const out = expenseAmountNet(e)
-              if (out <= 0) return
-              if (isExcluded(e.type) || isSales(e.type)) return
-              if (isWithdrawal(e.type) || isDebt(e.type)) return
-
-              // فواتير البنود: توزيع out تناسبياً على تصنيف كل بند الفعلي (بدل category_sub الفارغ على القيد نفسه)
-              const matchingItems = e.journal_number ? docItems.filter(it => it.journal_number === e.journal_number) : []
-              const itemsTotal    = matchingItems.reduce((s, it) => s + (Number(it.amount) || 0), 0)
-              if (matchingItems.length > 0 && itemsTotal > 0) {
-                matchingItems.forEach(it => {
-                  const share = out * (Number(it.amount) || 0) / itemsTotal   // مجموع الحصص = out تماماً
-                  addItem(it.category_main || e.type || '— غير محدد', it.category_sub || null, share, it.description || e.description)
-                })
-              } else {
-                addItem(e.type || '— غير محدد', e.category_sub || null, out, e.description)
-              }
-            })
-
-            // المسحوبات والالتزامات — للعرض المنفصل
-            const fmt2 = v => (v||0).toLocaleString('en-US',{minimumFractionDigits:2})
-            const sumOut = arr => arr.reduce((s,e)=>s+(e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0),0)
-            const withdrawalEntries = (entries||[]).filter(e=>!isExcluded(e.type)&&isWithdrawal(e.type))
-            const debtEntries       = (entries||[]).filter(e=>!isExcluded(e.type)&&isDebt(e.type))
-            const totalW = sumOut(withdrawalEntries)
-            const totalD = sumOut(debtEntries)
-            const hasObligations = totalW > 0 || totalD > 0
-
-            const mainRows = Object.entries(mainMap)
-              .map(([cat, v]) => ({
-                cat,                       // مفتاح مجرَّد من الإيموجي — للتجميع والمطابقة
-                label: v.label || cat,     // التسمية المعروضة (تحتفظ بالإيموجي إن وُجد)
-                total: v.total,
-                rows: v.rows,
-                subs: Object.entries(v.subs)
-                  .map(([s, sv]) => ({
-                    cat:     s === '__uncat__' ? 'غير مصنف' : s,
-                    label:   s === '__uncat__' ? 'غير مصنف' : (sv.label || s),
-                    total:   sv.total,
-                    rows:    sv.rows,
-                    isUncat: s === '__uncat__',
-                  }))
-                  .sort((a, b) => a.isUncat ? 1 : b.isUncat ? -1 : b.total - a.total),
-              }))
-              .sort((a, b) => b.total - a.total)
-            // إجمالي البطاقة = مجموع التفاصيل مباشرة (نفس المصدر)
-            const grandTotal = mainRows.reduce((sum, cat) => sum + cat.total, 0)
-
-            // تقسيم: تكلفة البضاعة المباعة / المصروفات التشغيلية
-            const cogsRows  = mainRows.filter(r => isCOGS(r.cat))
-            const opexRows  = mainRows.filter(r => !isCOGS(r.cat))
-            const cogsTotal = cogsRows.reduce((s, r) => s + r.total, 0)
-            const opexTotal = opexRows.reduce((s, r) => s + r.total, 0)
-            const _sales    = engineSummary?.totalSales || data?.totalSales || 0
-
-            const toggleCat = cat => setExpandedCats(prev => {
-              const next = new Set(prev)
-              next.has(cat) ? next.delete(cat) : next.add(cat)
-              return next
-            })
-
-            const mainCatColors = [
-              { bg: '#eff6ff', border: '#bfdbfe', color: '#1d4ed8' },
-              { bg: '#f0fdf4', border: '#bbf7d0', color: '#15803d' },
-              { bg: '#faf5ff', border: '#e9d5ff', color: '#7e22ce' },
-              { bg: '#fff7ed', border: '#fed7aa', color: '#c2410c' },
-              { bg: '#fef2f2', border: '#fecaca', color: '#b91c1c' },
-              { bg: '#f0f9ff', border: '#bae6fd', color: '#0369a1' },
-            ]
-
-            return (
-              <div className="space-y-4">
-
-                {/* أكورديون: تكلفة البضاعة المباعة — هرم مزدوج (category_sub داخل parent واحد) */}
-                {cogsRows.length > 0 && (() => {
-                  // تجميع كل مدخلات COGS حسب category_sub (بصرف النظر عن category_main)
-                  const cogsBySubMap = {}
-                  cogsRows.forEach(mainCat => {
-                    mainCat.subs.forEach(sub => {
-                      const key = sub.isUncat ? '__uncat__' : sub.cat
-                      if (!cogsBySubMap[key]) cogsBySubMap[key] = { cat: sub.cat, label: sub.label, total: 0, rows: [], isUncat: sub.isUncat }
-                      cogsBySubMap[key].total += sub.total
-                      cogsBySubMap[key].rows.push(...sub.rows)
-                    })
-                  })
-                  const cogsBySubRows = Object.values(cogsBySubMap)
-                    .sort((a, b) => a.isUncat ? 1 : b.isUncat ? -1 : b.total - a.total)
-                  const cogsParentOpen = expandedCats.has('__cogs_parent__')
-                  const clr = { bg: '#eff6ff', border: '#bfdbfe', color: '#1d4ed8' }
-                  const cogsPct = _sales > 0 ? (cogsTotal / _sales * 100).toFixed(1) : 0
-                  return (
-                    <div className="rounded-2xl overflow-hidden shadow-sm" style={{ border: `1.5px solid ${clr.border}` }}>
-                        {/* المستوى 1 — تكلفة البضاعة المباعة (parent واحد) */}
-                        <button onClick={() => toggleCat('__cogs_parent__')}
-                          className="w-full flex items-center gap-3 px-4 py-3 text-right transition-colors"
-                          style={{ background: clr.bg, cursor: 'pointer' }}>
-                          <span className="text-sm font-bold transition-transform duration-200"
-                            style={{ color: clr.color, transform: cogsParentOpen ? 'rotate(90deg)' : 'none', display: 'inline-block', minWidth: '1rem' }}>▶</span>
-                          <span className="flex-1 font-bold text-sm text-right" style={{ color: clr.color }}>🥩 تكلفة البضاعة المباعة</span>
-                          <div className="text-left">
-                            <div className="font-bold font-mono tabular-nums text-sm" style={{ color: clr.color }}>{fmt(cogsTotal)}</div>
-                            {_sales > 0 && <div className="text-xs opacity-60" style={{ color: clr.color }}>{cogsPct}% من المبيعات</div>}
-                          </div>
-                          <div className="w-20">
-                            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.1)' }}>
-                              <div className="h-full rounded-full" style={{ width: `${Math.min(Number(cogsPct), 100)}%`, background: clr.color }} />
-                            </div>
-                          </div>
-                        </button>
-                        {/* المستوى 2 — التصنيفات الفرعية (category_sub) */}
-                        {cogsParentOpen && (
-                          <div className="border-t" style={{ borderColor: clr.border }}>
-                            {cogsBySubRows.map((sub, si) => {
-                              const subKey  = `__cogs__${sub.cat}`
-                              const subOpen = expandedCats.has(subKey)
-                              return (
-                                <div key={si}>
-                                  <button onClick={() => toggleCat(subKey)}
-                                    className="w-full flex items-center gap-3 px-5 py-2.5 text-right transition-colors"
-                                    style={{ background: subOpen ? '#dbeafe' : si % 2 === 0 ? '#fff' : '#fafafa', borderBottom: `1px solid ${clr.border}` }}>
-                                    <span className="text-xs transition-transform duration-150"
-                                      style={{ color: clr.color, transform: subOpen ? 'rotate(90deg)' : 'none', display: 'inline-block', opacity: 0.7 }}>▶</span>
-                                    <span className={`flex-1 text-sm font-medium text-right ${sub.isUncat ? 'text-slate-400 italic' : 'text-slate-700'}`}>
-                                      {sub.isUncat ? '📋 غير مصنف' : `📌 ${sub.label}`}
-                                    </span>
-                                    <span className="font-mono tabular-nums text-sm font-semibold" style={{ color: clr.color }}>{fmt(sub.total)}</span>
-                                    {_sales > 0 && <span className="text-xs shrink-0" style={{ color: clr.color, opacity: 0.55 }}>({(sub.total / _sales * 100).toFixed(1)}% من المبيعات)</span>}
-                                  </button>
-                                  {/* المستوى 3 — الفواتير الفردية */}
-                                  {subOpen && (
-                                    <div style={{ borderBottom: `1px solid ${clr.border}` }}>
-                                      {sub.rows.map((row, ri) => (
-                                        <div key={ri} className="flex items-center gap-3 px-8 py-2"
-                                          style={{ background: ri % 2 === 0 ? '#f8faff' : '#f0f5ff', borderBottom: ri < sub.rows.length - 1 ? '1px solid #e8f0fe' : 'none' }}>
-                                          <span className="text-slate-300 text-xs">└</span>
-                                          <span className="flex-1 text-xs text-slate-600 truncate">{row.label || '—'}</span>
-                                          <span className="font-mono tabular-nums text-xs font-semibold shrink-0" style={{ color: clr.color }}>{fmt(row.amount)}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                  )
-                })()}
-
-                {/* أكورديون التصنيفات الهرمية (التشغيلية) */}
-                {opexRows.length > 0 ? (
-                  <div className="space-y-2">
-                    {opexRows.map((r, idx) => {
-                      const _baseSales = engineSummary?.totalSales || data?.totalSales || 0
-                      const pct  = _baseSales > 0 ? ((r.total / _baseSales) * 100).toFixed(1) : 0
-                      const open = expandedCats.has(r.cat)
-                      const clr  = mainCatColors[idx % mainCatColors.length]
-                      return (
-                        <div key={r.cat} className="rounded-2xl overflow-hidden shadow-sm"
-                          style={{ border: `1.5px solid ${clr.border}` }}>
-                          {/* المستوى 1 — التصنيف الرئيسي */}
-                          <button
-                            onClick={() => toggleCat(r.cat)}
-                            className="w-full flex items-center gap-3 px-4 py-3 text-right transition-colors"
-                            style={{ background: clr.bg, cursor: 'pointer' }}>
-                            <span className="text-sm font-bold transition-transform duration-200"
-                              style={{ color: clr.color, transform: open ? 'rotate(90deg)' : 'none', display: 'inline-block', minWidth: '1rem' }}>▶</span>
-                            <span className="flex-1 font-bold text-sm text-right" style={{ color: clr.color }}>{r.label}</span>
-                            <div className="text-left">
-                              <div className="font-bold font-mono tabular-nums text-sm" style={{ color: clr.color }}>{fmt(r.total)}</div>
-                              <div className="text-xs opacity-60" style={{ color: clr.color }}>{pct}% من المبيعات</div>
-                            </div>
-                            <div className="w-20">
-                              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(0,0,0,0.1)' }}>
-                                <div className="h-full rounded-full" style={{ width: `${Math.min(pct, 100)}%`, background: clr.color }} />
-                              </div>
-                            </div>
-                          </button>
-
-                          {/* المستوى 2 — category_sub */}
-                          {open && (
-                            <div className="border-t" style={{ borderColor: clr.border }}>
-                              {r.subs.map((sub, si) => {
-                                const subKey  = `${r.cat}__${sub.cat}`
-                                const subOpen = expandedCats.has(subKey)
-                                const sPct    = _baseSales > 0 ? ((sub.total / _baseSales) * 100).toFixed(1) : 0
-                                return (
-                                  <div key={si}>
-                                    <button onClick={() => toggleCat(subKey)}
-                                      className="w-full flex items-center gap-3 px-5 py-2.5 text-right transition-colors"
-                                      style={{ background: subOpen ? clr.bg : si % 2 === 0 ? '#fff' : '#fafafa', borderBottom: `1px solid ${clr.border}` }}>
-                                      <span className="text-xs transition-transform duration-150"
-                                        style={{ color: clr.color, transform: subOpen ? 'rotate(90deg)' : 'none', display: 'inline-block', opacity: 0.7 }}>▶</span>
-                                      <span className={`flex-1 text-sm font-medium text-right ${sub.isUncat ? 'text-slate-400 italic' : 'text-slate-700'}`}>
-                                        {sub.isUncat ? '📋 غير مصنف' : `📌 ${sub.label}`}
-                                      </span>
-                                      <span className="font-mono tabular-nums text-sm font-semibold" style={{ color: clr.color }}>{fmt(sub.total)}</span>
-                                      {_baseSales > 0 && <span className="text-xs shrink-0" style={{ color: clr.color, opacity: 0.55 }}>({sPct}% من المبيعات)</span>}
-                                    </button>
-                                    {/* المستوى 3 — الفواتير الفردية */}
-                                    {subOpen && (
-                                      <div style={{ borderBottom: `1px solid ${clr.border}` }}>
-                                        {sub.rows.map((row, ri) => (
-                                          <div key={ri} className="flex items-center gap-3 px-8 py-2"
-                                            style={{ background: ri % 2 === 0 ? '#fafafa' : '#f5f5f5', borderBottom: ri < sub.rows.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
-                                            <span className="text-slate-300 text-xs">└</span>
-                                            <span className="flex-1 text-xs text-slate-600 truncate">{row.label || '—'}</span>
-                                            <span className="font-mono tabular-nums text-xs font-semibold shrink-0" style={{ color: clr.color }}>{fmt(row.amount)}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : null}
-
-                {mainRows.length === 0 && !hasObligations && (
-                  <div className="bg-white rounded-2xl p-12 text-center text-slate-400"
-                    style={{ border: '1px solid #e8e5dc' }}>
-                    <div className="text-4xl mb-3">🛒</div>
-                    <p className="font-medium">لا توجد فواتير مشتريات مصنّفة في هذه الفترة</p>
-                    <p className="text-xs mt-1">تظهر البيانات بعد اعتماد فواتير مسؤول المشتريات</p>
-                  </div>
-                )}
-
-                {/* ── قسم المسحوبات والالتزامات المالية ── */}
-                {hasObligations && (() => {
-                  const groupByType = arr => {
-                    const map = {}
-                    arr.forEach(e => {
-                      const key = e.type || '— غير محدد'
-                      const out = (e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0)
-                      if (!out) return
-                      map[key] = (map[key]||0) + out
-                    })
-                    return Object.entries(map).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([type,total])=>({type,total}))
-                  }
-                  const wGroups = groupByType(withdrawalEntries)
-                  const dGroups = groupByType(debtEntries)
-
-                  const OblAccordion = ({ icon, title, total, groups, accentBg, accentBorder, accentColor, expandKey }) => {
-                    if (!groups.length) return null
-                    const open = expandedCats.has(expandKey)
-                    return (
-                      <div className="rounded-2xl overflow-hidden shadow-sm" style={{ border: `1.5px solid ${accentBorder}` }}>
-                        <button onClick={() => toggleCat(expandKey)}
-                          className="w-full flex items-center gap-3 px-4 py-3 text-right transition-colors"
-                          style={{ background: accentBg, cursor: 'pointer' }}>
-                          <span className="text-sm font-bold transition-transform duration-200"
-                            style={{ color: accentColor, transform: open ? 'rotate(90deg)' : 'none', display: 'inline-block', minWidth: '1rem' }}>▶</span>
-                          <span className="flex-1 font-bold text-sm text-right" style={{ color: accentColor }}>{icon} {title}</span>
-                          <div className="text-left">
-                            <div className="font-bold font-mono tabular-nums text-sm" style={{ color: accentColor }}>{fmt2(total)}</div>
-                          </div>
-                        </button>
-                        {open && (
-                          <div className="border-t" style={{ borderColor: accentBorder }}>
-                            {groups.map((g, i) => (
-                              <div key={i} className="flex items-center justify-between px-5 py-2.5"
-                                style={{ background: i%2===0?'#fff':'#fafafa', borderBottom: i<groups.length-1?`1px solid ${accentBorder}`:'none' }}>
-                                <span className="text-sm font-medium text-slate-700">└ {g.type}</span>
-                                <span className="font-mono tabular-nums text-sm font-semibold" style={{ color: accentColor }}>{fmt2(g.total)}</span>
-                              </div>
-                            ))}
-                            <div className="flex items-center justify-between px-4 py-2"
-                              style={{ background: accentBg, borderTop: `1px solid ${accentBorder}` }}>
-                              <span className="text-xs font-bold" style={{ color: accentColor }}>مجموع {title}</span>
-                              <span className="font-mono tabular-nums text-sm font-bold" style={{ color: accentColor }}>{fmt2(total)}</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  }
-
-                  return (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3 py-1">
-                        <div className="flex-1 border-t" style={{ borderColor: '#e8e5dc' }}/>
-                        <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
-                          💼 المسحوبات والالتزامات — لا تدخل في صافي الربح
-                        </span>
-                        <div className="flex-1 border-t" style={{ borderColor: '#e8e5dc' }}/>
-                      </div>
-                      <OblAccordion icon="💼" title="المسحوبات" total={totalW} groups={wGroups}
-                        accentBg="#fffbeb" accentBorder="#fde68a" accentColor="#b45309" expandKey="__withdrawals__" />
-                      <OblAccordion icon="💳" title="الأقساط والقروض" total={totalD} groups={dGroups}
-                        accentBg="#fffbeb" accentBorder="#fde68a" accentColor="#b45309" expandKey="__debts__" />
-                      {(totalW + totalD) > 0 && (
-                        <div className="rounded-2xl px-4 py-3 flex items-center justify-between"
-                          style={{ background: '#78350f' }}>
-                          <span className="font-bold text-white text-sm">إجمالي المسحوبات والالتزامات</span>
-                          <span className="font-mono tabular-nums font-bold text-lg" style={{ color: '#fde68a' }}>{fmt2(totalW + totalD)}</span>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
-              </div>
+              <Scope tab="vat" />
+            </>
             )
           })()}
 
-        </>
+          {/* ══════════ الأرصدة ══════════ */}
+          {activeTab === 'balance' && balances && (
+            <>
+              <div className="ts-metrics" data-k="balance.cards">
+                {[
+                  { label: 'رصيد الصندوق', k: 'balance.cash',    value: balances.cash },
+                  { label: 'رصيد البنك',   k: 'balance.bank',    value: balances.bank },
+                  { label: 'رصيد العهدة',  k: 'balance.custody', value: balances.custody },
+                ].map(c => (
+                  <Metric key={c.k} label={c.label} icon={Wallet} tone={c.value < 0 ? 'bad' : undefined}
+                    foot={c.value < 0 ? <span className="rpt-down">رصيد سالب</span> : <>حتى {day(to)}</>}>
+                    <span data-k={c.k}><Money value={c.value} /></span>
+                  </Metric>
+                ))}
+              </div>
+
+              <Panel title="ملخص الفترة" icon={Landmark} subtitle={`${rangeText}`}>
+                <div className="ts-panel-body">
+                  <CalcRows k="balance.calc" rows={[
+                    { label: 'إجمالي المدين (الدخل)', value: data.totalIn, strong: true },
+                    { label: 'إجمالي الدائن (الخروج)', value: data.totalOut, strong: true },
+                    { label: 'صافي الفترة', value: data.totalIn - data.totalOut, strong: true, line: true },
+                    { label: 'إجمالي الأرصدة النقدية', value: balances.cash + balances.bank + balances.custody, strong: true, line: true },
+                  ]} />
+                </div>
+              </Panel>
+
+              <Scope tab="balance" />
+            </>
+          )}
+        </div>
       )}
 
-      {/* ── PDF Template (hidden) ── */}
-      <div ref={pdfRef} style={{ display:'none', width:'794px', fontFamily:'Cairo,Arial,sans-serif', direction:'rtl', background:'#fff', padding:'36px', color:'#1e293b' }}>
-        <div style={{ textAlign:'center', borderBottom:`4px solid ${GOLD}`, paddingBottom:'16px', marginBottom:'24px' }}>
-          <div style={{ fontSize:'26px', fontWeight:'bold', color:NAVY }}>تحسيب</div>
-          <div style={{ fontSize:'16px', fontWeight:'bold', marginTop:'4px', color:'#374151' }}>خدمة المتابعة المالية</div>
-          <div style={{ fontSize:'13px', color:'#6b7280', marginTop:'6px' }}>الفترة من {from} إلى {to}</div>
-          <div style={{ fontSize:'11px', color:'#9ca3af', marginTop:'3px' }}>تاريخ الطباعة: {new Date().toLocaleDateString('en-GB')}</div>
-        </div>
-
-        {data && <>
-          <div style={{ marginBottom:'24px' }}>
-            <div style={{ fontSize:'14px', fontWeight:'bold', background:NAVY, color:'#fff', padding:'8px 14px', borderRadius:'6px', marginBottom:'10px' }}>
-              ملخص قائمة الدخل
-            </div>
-            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'12px' }}>
-              <tbody>
-                {(engineSummary ? [
-                  ['المبيعات شاملة الضريبة',   fmt(engineSummary.grossSales),                 false, true,  '#7e22ce'],
-                  ['ناقصاً ضريبة المخرجات',    `(${fmt(engineSummary.outputVat)})`,           false, true,  '#b45309'],
-                  ['إجمالي المبيعات (صافي)',   fmt(engineSummary.totalSales),                 true,  false, NAVY],
-                  ['إجمالي المصروفات (صافي)',  `(${fmt(engineSummary.totalExpenses)})`,       false, true,  '#dc2626'],
-                  ['صافي الربح',               fmt(engineSummary.netProfit),                  true,  false, engineSummary.netProfit>=0?'#16a34a':'#dc2626'],
-                ] : [
-                  ['إجمالي المبيعات', fmt(data.totalSales), true, false, NAVY],
-                ]).map(([label, value, bold, indent, color], i) => (
-                  <tr key={i} style={{ borderBottom:'1px solid #f1f5f9' }}>
-                    <td style={{ padding:'7px 8px', paddingRight:indent?'24px':'8px', fontWeight:bold?'bold':'normal' }}>{label}</td>
-                    <td style={{ padding:'7px 8px', textAlign:'left', fontWeight:bold?'bold':'normal', color }}>{value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={{ display:'flex', gap:'10px', marginBottom:'24px' }}>
-            {[
-              { label:'إجمالي المدين', value:fmt(data.totalIn),  color:'#16a34a', bg:'#f0fdf4' },
-              { label:'إجمالي الدائن', value:fmt(data.totalOut), color:'#dc2626', bg:'#fef2f2' },
-              { label:'الرصيد',         value:fmt(data.totalIn-data.totalOut), color:'#1d4ed8', bg:'#eff6ff' },
-            ].map(b => (
-              <div key={b.label} style={{ flex:1, background:b.bg, border:`1px solid ${b.color}30`, borderRadius:'8px', padding:'12px', textAlign:'center' }}>
-                <div style={{ fontSize:'10px', color:'#6b7280', marginBottom:'4px' }}>{b.label}</div>
-                <div style={{ fontSize:'15px', fontWeight:'bold', color:b.color }}>{b.value}</div>
-              </div>
-            ))}
-          </div>
-
-          {entriesDisplay.length > 0 && (
-            <div style={{ marginBottom:'24px' }}>
-              <div style={{ fontSize:'14px', fontWeight:'bold', background:NAVY, color:'#fff', padding:'8px 14px', borderRadius:'6px', marginBottom:'10px' }}>
-                تفاصيل الحركات ({entriesDisplay.length} حركة)
-              </div>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'10px' }}>
-                <thead>
-                  <tr style={{ background:'#f5f4f0', borderBottom:`2px solid ${GOLD}` }}>
-                    {['رقم الحركة','التاريخ','النوع','الوصف','مدين','دائن'].map(h => (
-                      <th key={h} style={{ padding:'7px 6px', textAlign:'right', fontWeight:'bold', color:NAVY }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {entriesDisplay.map((e, i) => {
-                    const debit  = (e.cash_in||0)+(e.bank_in||0)+(e.custody_in||0)
-                    const credit = (e.cash_out||0)+(e.bank_out||0)+(e.custody_out||0)
-                    return (
-                      <tr key={e.id} style={{ borderBottom:'1px solid #f1f5f9', background:i%2===0?'#fff':'#fafaf8' }}>
-                        <td style={{ padding:'5px 6px', color:e.journal_number?GOLD:'#9ca3af', fontWeight:'bold' }}>{e._displayNum}</td>
-                        <td style={{ padding:'5px 6px', color:'#374151' }}>{e.date}</td>
-                        <td style={{ padding:'5px 6px', color:'#374151' }}>{e.type}</td>
-                        <td style={{ padding:'5px 6px', color:'#6b7280', maxWidth:'150px' }}>{e.description}</td>
-                        <td style={{ padding:'5px 6px', color:'#16a34a', fontWeight:debit>0?'bold':'normal' }}>{debit>0?fmt(debit):'—'}</td>
-                        <td style={{ padding:'5px 6px', color:'#dc2626', fontWeight:credit>0?'bold':'normal' }}>{credit>0?fmt(credit):'—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr style={{ background:NAVY, fontWeight:'bold' }}>
-                    <td colSpan={4} style={{ padding:'7px 6px', color:'#fff' }}>الإجمالي</td>
-                    <td style={{ padding:'7px 6px', color:'#86efac' }}>{fmt(data.totalIn)}</td>
-                    <td style={{ padding:'7px 6px', color:'#fca5a5' }}>{fmt(data.totalOut)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
-
-          {docs.length > 0 && (
-            <div style={{ marginBottom:'16px' }}>
-              <div style={{ fontSize:'14px', fontWeight:'bold', background:NAVY, color:'#fff', padding:'8px 14px', borderRadius:'6px', marginBottom:'10px' }}>
-                المستندات المعتمدة ({docs.length} مستند)
-              </div>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'10px' }}>
-                <thead>
-                  <tr style={{ background:'#f5f4f0', borderBottom:`2px solid ${GOLD}` }}>
-                    {['رقم القيد','اسم المستند','رُفع بواسطة','تاريخ الرفع','المبلغ'].map(h => (
-                      <th key={h} style={{ padding:'7px 6px', textAlign:'right', fontWeight:'bold', color:NAVY }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {docs.map((d, i) => {
-                    const res    = d.analysis_result
-                    const amount = res?.type==='sales'?((res.cashSales||0)+(res.networkSales||0)):(res?.amount||0)
-                    return (
-                      <tr key={i}
-                        style={{ borderBottom:'1px solid #f1f5f9', background:i%2===0?'#fff':'#fafaf8' }}>
-                        <td style={{ padding:'5px 6px', color:GOLD, fontWeight:'bold' }}>{d.journal_number||'—'}</td>
-                        <td style={{ padding:'5px 6px', color:'#374151' }}>
-                          {cleanFileName(d.file_name)}
-                        </td>
-                        <td style={{ padding:'5px 6px', color:'#374151' }}>{ROLE_AR[d.uploaded_by]||d.uploaded_by}</td>
-                        <td style={{ padding:'5px 6px', color:'#374151' }}>{fmtD(d.uploaded_at)}</td>
-                        <td style={{ padding:'5px 6px', fontWeight:'bold', color:NAVY }}>{amount>0?fmt(amount)+'':'—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div style={{ borderTop:`2px solid ${GOLD}`, paddingTop:'12px', textAlign:'center', color:'#9ca3af', fontSize:'10px', marginTop:'16px' }}>
-            تم إنشاء هذا التقرير بواسطة تحسيب — {new Date().toLocaleString('en-US')}
-          </div>
-        </>}
-      </div>
     </div>
   )
 }

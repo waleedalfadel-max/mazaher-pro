@@ -6,7 +6,7 @@ import { build } from 'esbuild'
 
 // نختبر أزرار المكوّنين الفعليين وclaude.js؛ الشبكة والتخزين وReact hooks فقط محاكية.
 // لا حسابات حقيقية ولا اتصالات خارجية. يُبنى JSX بالتبعية الموجودة أصلًا في المشروع.
-const pages = ['InvoiceUpload', 'CashierDashboard']
+const pages = ['InvoiceUpload']   // صفحة الكاشير (CashierDashboard) أُلغيت بقرار المالك
 const bundles = new Map()
 const mocks = {
   react: `const r = globalThis.doubles.react; export default r;
@@ -17,6 +17,22 @@ const mocks = {
     export const getSignedUrl = async () => 'test-path';`,
   imageCompress: 'export const compressImage = async file => file;',
   projectSettings: 'export const getProjectSettings = async () => ({ settings: {} });',
+  // مكوّنات العرض بدائل بسيطة بلا hooks: نختبر منطق الصفحتين ونصوصهما، لا شكل المكوّنات
+  'components.jsx': `const h = (...a) => globalThis.doubles.react.createElement(...a);
+    export const Button = ({ children, onClick, disabled }) => h('button', { onClick, disabled }, children);
+    export const IconButton = ({ label, onClick, disabled }) => h('button', { onClick, disabled, 'aria-label': label });
+    export const Note = ({ title, children, action }) => h('div', {}, title, children, action);
+    export const Panel = ({ title, action, children }) => h('section', {}, title, action, children);
+    export const Status = ({ children }) => h('span', {}, children);
+    export const Chip = ({ children }) => h('span', {}, children);
+    export const Field = ({ label, hint, children }) => h('div', {}, label, children, hint);
+    export const Select = ({ options = [], placeholder, ...p }) => h('select', p, ...options.map(o => h('option', { value: o.value }, o.label)));`,
+  'UploadKit.jsx': `const h = (...a) => globalThis.doubles.react.createElement(...a);
+    export const DropZone = ({ onFiles, inputProps = {}, title }) => h('div', {}, title, h('input', { type: 'file', ...inputProps, onChange: e => onFiles(e.target.files) }));
+    export const MyUploads = () => h('div', {});
+    export const fileIcon = () => () => null;`,
+  'lucide-react': ['Ban', 'Building2', 'Camera', 'CircleAlert', 'CircleCheck', 'FileText', 'Info', 'LoaderCircle', 'Plus', 'RotateCcw', 'ShoppingCart', 'Upload', 'X']
+    .map(n => `export const ${n} = () => null;`).join('\n'),
 }
 for (const page of pages) {
   const built = await build({
@@ -41,7 +57,10 @@ function harness(page, { responses = [{ status: 200, body: success }], saveError
   const states = [], documents = [], calls = []
   let cursor = 0, requestIndex = 0, uploadCount = 0
   const react = {
-    createElement: (type, props, ...children) => ({ type, props: { ...props, children: children.flat(Infinity) } }),
+    // مكوّنات الدوال (البدائل أعلاه) تُوسَّع فورًا إلى عناصرها
+    createElement: (type, props, ...children) => typeof type === 'function'
+      ? type({ ...props, children: children.flat(Infinity) })
+      : { type, props: { ...props, children: children.flat(Infinity) } },
     Fragment: Symbol('Fragment'),
     useState(initial) {
       const index = cursor++
@@ -113,7 +132,7 @@ function harness(page, { responses = [{ status: 200, body: success }], saveError
       const input = walk(render()).find(node => node.type === 'input' && node.props.type === 'file')
       const files = Array.from({ length: count }, (_, i) => ({ name: `test-${i}.pdf`, type: 'application/pdf', size: 100 }))
       input.props.onChange({ target: { files } })
-      const button = walk(render()).find(node => node.type === 'button' && text(node).includes('⬆️ رفع'))
+      const button = walk(render()).find(node => node.type === 'button' && /^\s*رفع\s+(\d+\s+مستند|المستند)/.test(text(node)))
       assert.ok(button, 'زر الرفع الحقيقي موجود')
       await button.props.onClick()
       await new Promise(resolve => setImmediate(resolve))
@@ -151,7 +170,7 @@ for (const page of pages) {
       assert.equal(app.calls.length, 1)
       assert.match(output, /محفوظ للمراجعة/)
       assert.match(output, /لا حاجة لرفعه مرة أخرى/)
-      assert.doesNotMatch(output, /تم التحليل|تم استلام الملخص|تعذّر حفظ المستندات|PRIVATE_|CLAUDE_API_KEY/)
+      assert.doesNotMatch(output, /تم التحليل|تم استلام المستند|تعذّر حفظ المستندات|PRIVATE_|CLAUDE_API_KEY/)
     })
   }
   for (const option of ['saveError', 'missingSavedRow']) {
@@ -160,7 +179,7 @@ for (const page of pages) {
       const output = text(await app.upload())
       assert.equal(app.documents[0].status, 'uploaded')
       assert.match(output, /محفوظ للمراجعة/)
-      assert.doesNotMatch(output, /تم التحليل|تم استلام الملخص|PRIVATE_/)
+      assert.doesNotMatch(output, /تم التحليل|تم استلام المستند|PRIVATE_/)
     })
   }
   test(`${page}: التحليل المحفوظ ينجح`, async () => {
@@ -168,7 +187,7 @@ for (const page of pages) {
     const output = text(await app.upload())
     assert.equal(app.documents.length, 1)
     assert.equal(app.documents[0].status, 'analyzed')
-    assert.match(output, page === 'InvoiceUpload' ? /تم التحليل/ : /تم استلام الملخص/)
+    assert.match(output, page === 'InvoiceUpload' ? /تم التحليل/ : /تم استلام المستند/)
     assert.doesNotMatch(output, /تعذّر إكمال التحليل التلقائي/)
   })
   test(`${page}: فشل الرفع لا يُدّعى معه حفظ المستند`, async () => {
@@ -177,7 +196,7 @@ for (const page of pages) {
     assert.equal(app.documents.length, 0)
     assert.equal(app.calls.length, 0)
     assert.match(output, /تعذّر رفع الملف/)
-    assert.doesNotMatch(output, /محفوظ للمراجعة|تم التحليل|تم استلام الملخص/)
+    assert.doesNotMatch(output, /محفوظ للمراجعة|تم التحليل|تم استلام المستند/)
   })
 }
 

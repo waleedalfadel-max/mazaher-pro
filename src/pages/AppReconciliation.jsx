@@ -7,6 +7,7 @@ import { normCat } from '../lib/bankReconciliation'
 import { getTransactionTypes } from '../lib/projectSettings'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { uploadToStorage } from '../lib/storage'
+import { activeCategories } from '../lib/categorySettings'
 
 const fmt = v => (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -53,10 +54,10 @@ export default function AppReconciliation() {
     if (!projectId) return
     getTransactionTypes(projectId).then(setTransTypes)
     supabase.from('categories')
-      .select('id,name,parent_id,type,sort_order')
+      .select('id,name,parent_id,type,sort_order,is_active')
       .eq('project_id', projectId)
       .order('sort_order')
-      .then(({ data }) => setCategories(data || []))
+      .then(({ data }) => setCategories(activeCategories(data)))   // الاختيار للجديد من الفعّال فقط
   }, [projectId])
 
   if (!modules.includes('app_reconciliation')) {

@@ -11,22 +11,9 @@ export async function getOrCreateJournalNumber(projectId, date) {
     p_date: date,
   })
   if (!error && data) return data
-
-  // سقوط احتياطي للقراءة المباشرة — يبقى عاملاً قبل إنشاء الدالة، ويصبح
-  // بلا أثر بعد فرض الأدوار (حينها ينجح المسار الأول دائماً)
-  const year = new Date(date).getFullYear()
-  const { data: last } = await supabase
-    .from('ledger_entries')
-    .select('journal_number')
-    .eq('project_id', projectId)
-    .like('journal_number', `QD-${year}-%`)
-    .order('journal_number', { ascending: false })
-    .limit(1)
-
-  const seq = last?.[0]?.journal_number
-    ? (parseInt(last[0].journal_number.split('-').pop()) || 0) + 1
-    : 1
-  return `QD-${year}-${String(seq).padStart(3, '0')}`
+  // لا حساب بديل في المتصفح: قراءة آخر رقم ثم +1 بلا قفل هي الطريقة المعيبة نفسها (تكرار تحت التزامن، و1000 بعد 999
+  // مرة بعد مرة). الرقم يُحجز من العدّاد في القاعدة وحده؛ إن تعذّر، تتوقف العملية عند هذه الخطوة وتظهر رسالة.
+  throw new Error('تعذّر حجز رقم القيد، فتوقفت العملية. أعد المحاولة.' + (error?.message ? ` (${error.message})` : ''))
 }
 
 // احتفظ بالاسم القديم للتوافق مع أي استخدام مباشر

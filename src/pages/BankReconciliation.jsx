@@ -7,6 +7,8 @@ import { matchLinesToLedger, computeNetworkAggregate, buildLedgerInsertRow, norm
 import { getTransactionTypes } from '../lib/projectSettings'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { uploadToStorage } from '../lib/storage'
+import { activeCategories } from '../lib/categorySettings'
+import { isSupplierPaymentType, SUPPLIER_PAYMENT_ONLY_MSG } from '../lib/supplierPayments'
 
 const BANK_CAT_LABEL = {
   pos_credit:       'نقاط بيع / دائنة التاجر',
@@ -79,10 +81,10 @@ export default function BankReconciliation() {
     if (!projectId) return
     getTransactionTypes(projectId).then(setTransTypes)
     supabase.from('categories')
-      .select('id,name,parent_id,type,sort_order')
+      .select('id,name,parent_id,type,sort_order,is_active')
       .eq('project_id', projectId)
       .order('sort_order')
-      .then(({ data }) => setCategories(data || []))
+      .then(({ data }) => setCategories(activeCategories(data)))   // الاختيار للجديد من الفعّال فقط
   }, [projectId])
 
   function handleFile(f) {
@@ -155,6 +157,8 @@ export default function BankReconciliation() {
 
   async function approveReview(item) {
     if (!item._transType) { setError('يرجى اختيار نوع الحركة قبل الاعتماد'); return }
+    // قيد «سداد مورد» عام بلا تخفيض المستحق يرفضه الخادم (20261013120000): الدفعة تُسجَّل من «الموردين» ثم تُطابَق هنا
+    if (isSupplierPaymentType(item._transType)) { setError(SUPPLIER_PAYMENT_ONLY_MSG); return }
     setError('')
     updateReview(item._key, { _busy: true })
     try {

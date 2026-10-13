@@ -1,21 +1,61 @@
 import React, { useState, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import {
+  Archive, ArrowLeft, BookOpen, ChartColumn, ChartLine, Eye, FileText, House, Landmark, LogOut, Menu, NotebookText,
+  PanelRightClose, PanelRightOpen, Scale, Settings, Smartphone, Store, TriangleAlert, Upload, Users,
+} from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { Brand, Button, Dialog } from '../ui/components.jsx'
+import VersionNotice from './VersionNotice.jsx'
 
-const NAVY  = '#1B3A5C'
-const TEAL  = '#6EB7B0'
+// العناصر والأدوار والوحدات والشروط كما كانت حرفيًا؛ التغيير في الشكل فقط. أُزيلت لوحة الكاشير والإدخال السريع للمبيعات بقرار المالك:
+// الكاشير، مثل المشتريات، يرفع المستندات من زر الرفع وحده.
+function navItems(pendingCount) {
+  return [
+    { to: '/',                label: 'لوحة التحكم',      icon: House,        roles: ['owner', 'accountant'] },
+    { to: '/reports',         label: 'التقارير',          icon: ChartColumn,  roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant'], module: 'suppliers' },
+    { to: '/ledger',          label: 'سجل الدفتر',       icon: BookOpen,     roles: ['accountant', 'superadmin'] },
+    { to: '/journal',         label: 'سجل الحركات',      icon: NotebookText, roles: ['accountant', 'superadmin'] },
+    { to: '/archive',         label: 'أرشيف الحركات',    icon: Archive,      roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/loans',           label: 'القروض',           icon: Landmark,     roles: ['accountant', 'superadmin'] },
+    { to: '/bank-reconciliation', label: 'المطابقة البنكية', icon: Scale,    roles: ['accountant', 'superadmin'] },
+    { to: '/app-reconciliation', label: 'مطابقة التطبيقات', icon: Smartphone, roles: ['accountant', 'superadmin'], module: 'app_reconciliation' },
+    { to: '/pending',         label: 'مستندات جديدة',    icon: FileText,     roles: ['accountant', 'superadmin'], badge: pendingCount },
+    { to: '/users',           label: 'المستخدمون',       icon: Users,        roles: ['accountant'] },
+    { to: '/admin',           label: 'إدارة العملاء',    icon: Settings,     roles: ['superadmin'] },
+    { to: '/settings',        label: 'الإعدادات',        icon: Settings,     roles: ['owner'] },
+  ]
+}
+const UPLOAD_ROLES = ['purchasing', 'accountant', 'cashier', 'owner']
+const PREVIEW_ROLES = [
+  { r: 'owner', label: 'المالك' }, { r: 'accountant', label: 'المحاسب' },
+  { r: 'cashier', label: 'الكاشير' }, { r: 'purchasing', label: 'المشتريات' },
+]
+const endMatch = to => to === '/'
+
+// رفض عرض المنشأة لمدير المنصة (admin_view_project) — رسالة واضحة بدل أرقام صفرية
+const VIEW_ERRORS = {
+  forbidden: 'لا تملك صلاحية عرض بيانات المنشآت.',
+  no_session: 'انتهت الجلسة أو أُوقف الحساب. سجّل الدخول من جديد.',
+  not_found: 'المنشأة غير موجودة.',
+  view_not_applied: 'تعذّر تفعيل عرض المنشأة في الخادم.',
+  network: 'تعذّر تحميل بيانات المنشأة. تحقق من الاتصال وأعد المحاولة.',
+}
 
 export default function Layout({ children }) {
   const { role, roleLabel, userName, projectId, projectName, isSuperAdmin, modules, logout,
-          canImpersonate, isImpersonating, startImpersonation, stopImpersonation } = useAuth()
+          canImpersonate, isImpersonating, startImpersonation, stopImpersonation,
+          viewState, viewError, retryProjectView, leaveProjectView } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
-  const [desktopOpen, setDesktopOpen] = useState(true)
-  const [mobileOpen, setMobileOpen]   = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
+  const [moreOpen, setMoreOpen]   = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
 
-  useEffect(() => { setMobileOpen(false) }, [location.pathname])
+  useEffect(() => { setMoreOpen(false) }, [location.pathname])
 
   useEffect(() => {
     if (role !== 'accountant' && !isSuperAdmin) return
@@ -34,234 +74,179 @@ export default function Layout({ children }) {
     setPendingCount(count || 0)
   }
 
-  const NAV_ITEMS = [
-    { to: '/',                label: 'لوحة التحكم',      icon: '📊', roles: ['owner', 'accountant'] },
-    { to: '/cashier',         label: 'لوحة الكاشير',     icon: '💰', roles: ['cashier'] },
-    { to: '/quick-sale',      label: 'إدخال سريع للمبيعات', icon: '💵', roles: ['cashier'], cond: n => n === 'ديوانية مزاهر' },
-    { to: '/reports',         label: 'التقارير',          icon: '📈', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/suppliers',       label: 'الموردين',          icon: '🏪', roles: ['accountant'], module: 'suppliers' },
-    { to: '/ledger',          label: 'سجل الدفتر',       icon: '📒', roles: ['accountant', 'superadmin'] },
-    { to: '/journal',         label: 'سجل الحركات',      icon: '📓', roles: ['accountant', 'superadmin'] },
-    { to: '/archive',         label: 'أرشيف الحركات',    icon: '🗂️', roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/loans',           label: 'القروض',           icon: '🏦', roles: ['accountant', 'superadmin'] },
-    { to: '/bank-reconciliation', label: 'المطابقة البنكية', icon: '🧮', roles: ['accountant', 'superadmin'] },
-    { to: '/app-reconciliation', label: 'مطابقة التطبيقات', icon: '📱', roles: ['accountant', 'superadmin'], module: 'app_reconciliation' },
-    { to: '/pending',         label: 'مستندات جديدة',    icon: '🔔', roles: ['accountant', 'superadmin'], badge: pendingCount },
-    { to: '/users',           label: 'المستخدمون',       icon: '👥', roles: ['accountant'] },
-    { to: '/admin',           label: 'إدارة العملاء',    icon: '⚙️', roles: ['superadmin'] },
-  ]
-
-  const UPLOAD_ROLES = ['purchasing', 'accountant', 'cashier', 'owner']
-  const visibleItems = NAV_ITEMS.filter(item =>
+  const visibleItems = navItems(pendingCount).filter(item =>
     item.roles.includes(role) &&
     (!item.module || modules.includes(item.module)) &&
     (!item.cond || item.cond(projectName))
   )
+  const canUpload = UPLOAD_ROLES.includes(role)
 
   function handleLogout() { logout(); navigate('/login') }
+  // مدير المنصة خارج لوحة المنصة = يعرض منشأة للقراءة فقط
+  const adminViewing = isSuperAdmin && location.pathname !== '/admin'
+  function backToAdmin() { leaveProjectView(); navigate('/admin') }
 
-  const SidebarContent = ({ collapsed }) => (
-    <>
-      {/* Logo */}
-      <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', padding: collapsed ? '16px 10px' : '0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: collapsed ? '4px 2px' : '20px 16px 16px' }}>
-          <img
-            src="/شعار تحسيب الجديد.png"
-            alt="تحسيب"
-            style={{ height: collapsed ? '32px' : '38px', objectFit: 'contain' }}
-            onError={e => { e.target.style.display = 'none' }}
-          />
+  // الشريط السفلي للجوال: الرئيسية لكل دور، ثم شاشة المستندات إن وُجدت، ثم الرفع، ثم «المزيد» لبقية العناصر
+  const homeItem = visibleItems[0]
+  const docsItem = visibleItems.find(i => i.to === '/pending') || visibleItems.find(i => i !== homeItem && i.to === '/reports')
+  const moreItems = visibleItems.filter(i => i !== homeItem && i !== docsItem)
+  const moreActive = moreItems.some(i => location.pathname.startsWith(i.to) && i.to !== '/')
+  // مراجعة مستند على الجوال: شريط الإجراءات يحل محل الشريط السفلي (كما في النموذج المراجَع)
+  const onReview = location.pathname === '/pending' && new URLSearchParams(location.search).has('doc')
+
+  const link = ({ isActive }) => `ts-nav-link${isActive ? ' is-active' : ''}`
+  const NavItem = ({ item }) => {
+    const Icon = item.icon
+    return (
+      <NavLink to={item.to} end={endMatch(item.to)} className={link} title={collapsed ? item.label : undefined}>
+        <Icon className="ts-icon" aria-hidden="true" />
+        {!collapsed && <span className="ts-nav-text">{item.label}</span>}
+        {item.badge > 0 && <span className="ts-nav-count" aria-label={`${item.badge} بانتظار المراجعة`}>{item.badge}</span>}
+      </NavLink>
+    )
+  }
+
+  const RolePreview = () => canImpersonate ? (
+    <div className="ts-role-preview">
+      <div className="ts-nav-label"><Eye className="ts-icon--sm" aria-hidden="true" /> معاينة بدور آخر</div>
+      <div className="ts-segment ts-segment--full ts-segment--dark" role="group" aria-label="معاينة بدور آخر">
+        {PREVIEW_ROLES.map(o => (
+          <button key={o.r} type="button" aria-pressed={role === o.r}
+            onClick={() => o.r === 'owner' ? stopImpersonation() : startImpersonation(o.r)}>{o.label}</button>
+        ))}
+      </div>
+    </div>
+  ) : null
+
+  return (
+    <div className="ts-app" dir="rtl">
+      <VersionNotice />
+      <aside className={`ts-sidebar${collapsed ? ' is-collapsed' : ''}`} aria-label="القائمة الرئيسية">
+        {collapsed ? <div className="ts-mark ts-mark--dark" aria-label="تحسيب"><span /><span /><span /></div> : <Brand product="المطاعم" dark />}
+        {!collapsed && (
+          <div className="ts-business">
+            <span className="ts-avatar">{(userName || '؟')[0]}</span>
+            <div>
+              {projectName && <strong>{projectName}</strong>}
+              <small>{userName} · {roleLabel}</small>
+            </div>
+          </div>
+        )}
+        {!collapsed && <RolePreview />}
+        {isSuperAdmin && projectId && !collapsed && (
+          <Button size="sm" icon={ArrowLeft} className="ts-sidebar-back" onClick={() => navigate('/admin')}>رجوع لإدارة العملاء</Button>
+        )}
+        {canUpload && (
+          <NavLink to="/invoice" className={({ isActive }) => `ts-btn ts-btn--primary ts-btn--full${isActive ? ' is-active' : ''}`} title={collapsed ? 'رفع مستند' : undefined}>
+            <Upload className="ts-icon" aria-hidden="true" />{!collapsed && 'رفع مستند'}
+          </NavLink>
+        )}
+        <nav className="ts-nav">
+          {visibleItems.map(item => <NavItem key={item.to} item={item} />)}
+        </nav>
+        <div className="ts-sidebar-foot">
+          <button type="button" className="ts-nav-link" onClick={() => setCollapsed(v => !v)}>
+            {collapsed ? <PanelRightOpen className="ts-icon" aria-hidden="true" /> : <PanelRightClose className="ts-icon" aria-hidden="true" />}
+            {!collapsed && <span className="ts-nav-text">طي القائمة</span>}
+          </button>
+          <button type="button" className="ts-nav-link ts-nav-link--logout" onClick={handleLogout}>
+            <LogOut className="ts-icon" aria-hidden="true" />{!collapsed && <span className="ts-nav-text">خروج</span>}
+          </button>
         </div>
+      </aside>
+
+      <div className="ts-main">
+        <header className="ts-topbar">
+          <div className="ts-breadcrumb"><span>تحسيب المطاعم</span>{projectName && <><span aria-hidden="true">/</span><strong>{projectName}</strong></>}</div>
+          <div className="ts-mobile-brand">
+            <Brand product="المطاعم" small />
+            {projectName && <span className="ts-business-name">{projectName}</span>}
+          </div>
+          <div className="ts-top-meta ts-desktop-only"><span className="ts-muted">{userName} · {roleLabel}</span></div>
+        </header>
+
+        {/* تحذير دائم أثناء المعاينة بدور آخر — لا يُغلق ولا يختفي بتغيير الصفحة */}
+        {isImpersonating && (
+          <div className="ts-impersonation" role="status">
+            <TriangleAlert className="ts-icon--sm" aria-hidden="true" />
+            <span>معاينة بدور <strong>{roleLabel}</strong> — أنت المالك فعليًا، والكتابة بهذا الوضع مرفوضة خادميًا</span>
+            <Button size="sm" onClick={stopImpersonation}>ارجع لدورك</Button>
+          </div>
+        )}
+
+        {/* مدير المنصة يعرض منشأة للقراءة فقط */}
+        {adminViewing && projectId && viewState === 'ok' && (
+          <div className="ts-impersonation" role="status" data-admin-view={projectId}>
+            <TriangleAlert className="ts-icon--sm" aria-hidden="true" />
+            <span>عرض للقراءة فقط: <strong>{projectName}</strong> — بصفتك مدير المنصة، لا تعديل ولا اعتماد</span>
+            <Button size="sm" onClick={backToAdmin}>لوحة المنصة</Button>
+          </div>
+        )}
+
+        <main className="ts-scroll">
+          <div className="ts-content ts-legacy">
+            {!adminViewing ? children
+              : !projectId ? (
+                <div className="ts-note" data-view-state="none">
+                  <span>اختر منشأة من لوحة المنصة لعرض بياناتها.</span>
+                  <Button size="sm" onClick={backToAdmin}>لوحة المنصة</Button>
+                </div>
+              ) : viewState === 'ok' ? (
+                // مفتاح المنشأة: تبديلها يعيد بناء الصفحة كلها، فلا تبقى بيانات المنشأة السابقة ولا نتائج طلباتها المتأخرة
+                <div key={projectId} data-view-state="ok">{children}</div>
+              ) : viewState === 'error' ? (
+                <div className="ts-note ts-note--error" role="alert" data-view-state="error">
+                  <span>{VIEW_ERRORS[viewError] || VIEW_ERRORS.network} لم تُعرض أي أرقام.</span>
+                  <Button size="sm" variant="primary" onClick={retryProjectView}>إعادة المحاولة</Button>
+                  <Button size="sm" onClick={backToAdmin}>لوحة المنصة</Button>
+                </div>
+              ) : (
+                <div className="ts-note" role="status" data-view-state="checking"><span>جارٍ فتح بيانات {projectName || 'المنشأة'}…</span></div>
+              )}
+          </div>
+        </main>
+
+        {!onReview && (
+        <nav className="ts-bottomnav" aria-label="التنقل">
+          {homeItem && (
+            <NavLink to={homeItem.to} end={endMatch(homeItem.to)} className={({ isActive }) => (isActive ? 'is-active' : '')}>
+              <House className="ts-icon" aria-hidden="true" />الرئيسية
+            </NavLink>
+          )}
+          {docsItem && (
+            <NavLink to={docsItem.to} className={({ isActive }) => (isActive ? 'is-active' : '')}>
+              <docsItem.icon className="ts-icon" aria-hidden="true" />{docsItem.to === '/pending' ? 'المستندات' : docsItem.label}
+              {docsItem.badge > 0 && <span className="ts-nav-count">{docsItem.badge}</span>}
+            </NavLink>
+          )}
+          {canUpload && (
+            <NavLink to="/invoice" className={({ isActive }) => `ts-upload-tab${isActive ? ' is-active' : ''}`}>
+              <Upload className="ts-icon" aria-hidden="true" />رفع مستند
+            </NavLink>
+          )}
+          <button type="button" className={moreActive ? 'is-active' : ''} onClick={() => setMoreOpen(true)}>
+            <Menu className="ts-icon" aria-hidden="true" />المزيد
+          </button>
+        </nav>
+        )}
       </div>
 
-      {/* Role Badge */}
-      {!collapsed && (
-        <div className="mx-3 mt-4 mb-1 px-3 py-2.5 rounded-xl"
-          style={{ background: 'rgba(110,183,176,0.15)', border: '1px solid rgba(110,183,176,0.3)' }}>
-          {projectName && (
-            <div className="text-xs mb-1 font-bold" style={{ color: TEAL }}>{projectName}</div>
-          )}
-          <div className="text-white font-semibold text-sm">{userName}</div>
-          <div className="text-xs mt-0.5" style={{ color: 'rgba(110,183,176,0.8)' }}>{roleLabel}</div>
-        </div>
-      )}
-
-      {/* مبدّل الأدوار — للمالك وحده. تبديل بصري: يغيّر ما يُعرَض لا ما يُسمح به */}
-      {canImpersonate && !collapsed && (
-        <div className="px-3 pb-2 pt-1">
-          <div className="text-[10px] mb-1.5" style={{ color: 'rgba(255,255,255,0.45)' }}>
-            معاينة بدور آخر
-          </div>
-          <div className="flex gap-1">
-            {[
-              { r: 'owner',      label: 'المالك',   icon: '👑' },
-              { r: 'accountant', label: 'المحاسب',  icon: '📊' },
-              { r: 'cashier',    label: 'الكاشير',  icon: '💰' },
-              { r: 'purchasing', label: 'المشتريات', icon: '🛒' },
-            ].map(o => (
-              <button
-                key={o.r}
-                title={o.label}
-                onClick={() => o.r === 'owner' ? stopImpersonation() : startImpersonation(o.r)}
-                className="flex-1 py-1.5 rounded-lg text-sm transition-all"
-                style={role === o.r
-                  ? { background: TEAL, color: '#fff' }
-                  : { background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.6)' }}
-              >
-                {o.icon}
+      <Dialog open={moreOpen} onClose={() => setMoreOpen(false)} title="المزيد" description={`${userName || ''} · ${roleLabel || ''}`}>
+        {moreItems.length > 0 && (
+          <div className="ts-choice-list">
+            {moreItems.map(item => (
+              <button key={item.to} type="button" className="ts-choice" onClick={() => navigate(item.to)}>
+                <item.icon className="ts-icon" aria-hidden="true" style={{ color: 'var(--ts-petrol-text)' }} />
+                {item.label}
+                {item.badge > 0 && <span className="ts-nav-count" style={{ marginInlineStart: 'auto' }}>{item.badge}</span>}
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* زر رجوع للإدارة — يظهر للـ superadmin فقط عندما يكون داخل مشروع */}
-      {isSuperAdmin && projectId && !collapsed && (
-        <div className="px-2 pb-2">
-          <button onClick={() => navigate('/admin')}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all"
-            style={{ background: 'rgba(110,183,176,0.15)', color: TEAL, border: '1px solid rgba(110,183,176,0.3)' }}>
-            ← رجوع لإدارة العملاء
-          </button>
-        </div>
-      )}
-
-      {/* Nav */}
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto scrollbar-thin">
-        {visibleItems.map(item => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/' || item.to === '/cashier'}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 text-sm font-medium group relative"
-            style={({ isActive }) => isActive
-              ? { background: TEAL, color: '#ffffff' }
-              : { color: 'rgba(255,255,255,0.6)' }
-            }
-            onMouseEnter={e => { if (!e.currentTarget.style.background.includes(TEAL.slice(1))) e.currentTarget.style.background = 'rgba(255,255,255,0.07)' }}
-            onMouseLeave={e => { if (!e.currentTarget.style.background.includes(TEAL.slice(1))) e.currentTarget.style.background = '' }}
-          >
-            <span className="text-base shrink-0">{item.icon}</span>
-            {!collapsed && <span className="flex-1">{item.label}</span>}
-            {item.badge > 0 && (
-              <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-                {item.badge}
-              </span>
-            )}
-          </NavLink>
-        ))}
-      </nav>
-
-      {/* Bottom */}
-      <div className="px-2 pb-4 pt-3 space-y-1 shrink-0"
-        style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-        {UPLOAD_ROLES.includes(role) && (
-          <NavLink to="/invoice"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-bold w-full"
-            style={({ isActive }) => ({
-              background: isActive ? '#4A9E97' : TEAL,
-              color: '#ffffff',
-            })}
-          >
-            <span className="text-base shrink-0">📤</span>
-            {!collapsed && <span className="flex-1">رفع مستند</span>}
-          </NavLink>
         )}
-        <button
-          onClick={() => setDesktopOpen(v => !v)}
-          className="hidden md:flex w-full items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm"
-          style={{ color: 'rgba(255,255,255,0.45)' }}
-          onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
-          onMouseLeave={e => e.currentTarget.style.background = ''}
-        >
-          <span className="text-base shrink-0">{collapsed ? '▶' : '◀'}</span>
-          {!collapsed && <span>طي القائمة</span>}
-        </button>
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm"
-          style={{ color: 'rgba(255,255,255,0.45)' }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220,38,38,0.2)'; e.currentTarget.style.color = '#fca5a5' }}
-          onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}
-        >
-          <span className="text-base shrink-0">🚪</span>
-          {!collapsed && <span>خروج</span>}
-        </button>
-      </div>
-    </>
-  )
-
-  return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#F4F8F7' }} dir="rtl">
-
-      {/* ── ديسكتوب ── */}
-      <aside className={`hidden md:flex flex-col shrink-0 transition-all duration-300 ${desktopOpen ? 'w-64' : 'w-16'}`}
-        style={{ background: NAVY }}>
-        <SidebarContent collapsed={!desktopOpen} />
-      </aside>
-
-      {/* ── جوال: خلفية ── */}
-      {mobileOpen && (
-        <div className="fixed inset-0 bg-black/60 z-40 md:hidden backdrop-blur-sm"
-          onClick={() => setMobileOpen(false)} />
-      )}
-
-      {/* ── جوال: درج ── */}
-      <aside className={`fixed inset-y-0 right-0 z-50 w-72 flex flex-col transition-transform duration-300 md:hidden ${mobileOpen ? 'translate-x-0' : 'translate-x-full'}`}
-        style={{ background: NAVY }}>
-        <SidebarContent collapsed={false} />
-      </aside>
-
-      {/* ── المحتوى ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-
-        {/* شريط علوي — جوال فقط */}
-        <header className="md:hidden flex items-center justify-between px-4 py-3 shrink-0 shadow-sm"
-          style={{ background: '#fff', borderBottom: `3px solid ${TEAL}` }}>
-          <img
-            src="/شعار تحسيب الجديد.png"
-            alt="تحسيب"
-            style={{ height: '32px', objectFit: 'contain' }}
-            onError={e => { e.target.style.display = 'none' }}
-          />
-          <div className="flex items-center gap-3">
-            {pendingCount > 0 && (
-              <span className="bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                {pendingCount}
-              </span>
-            )}
-            <button onClick={() => setMobileOpen(v => !v)}
-              className="w-10 h-10 flex flex-col items-center justify-center gap-1.5 rounded-xl transition-colors"
-              style={{ background: '#EEF4F3' }}>
-              <span className="block w-5 h-0.5 rounded" style={{ background: NAVY }}/>
-              <span className="block w-5 h-0.5 rounded" style={{ background: NAVY }}/>
-              <span className="block w-5 h-0.5 rounded" style={{ background: NAVY }}/>
-            </button>
-          </div>
-        </header>
-
-        {/* شريط تحذير دائم أثناء التلبّس — لا يُغلَق، ولا يختفي بتغيير الصفحة */}
-        {isImpersonating && (
-          <div className="flex items-center justify-between gap-3 px-4 py-2 text-sm font-bold shrink-0"
-            style={{ background: '#FEF3C7', color: '#92400E', borderBottom: '1px solid #FCD34D' }}>
-            <span>
-              ⚠️ معاينة بدور <span className="underline">{roleLabel}</span> — أنت المالك فعلياً،
-              والكتابة بهذا الوضع مرفوضة خادمياً
-            </span>
-            <button onClick={stopImpersonation}
-              className="px-3 py-1 rounded-lg text-xs font-bold shrink-0 transition-all"
-              style={{ background: '#92400E', color: '#fff' }}>
-              ارجع لدورك
-            </button>
-          </div>
-        )}
-
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-3 sm:p-6 max-w-7xl mx-auto">
-            {children}
-          </div>
-        </main>
-      </div>
+        <RolePreview />
+        {isSuperAdmin && projectId && <Button icon={ArrowLeft} onClick={() => navigate('/admin')}>رجوع لإدارة العملاء</Button>}
+        <Button icon={LogOut} onClick={handleLogout}>خروج</Button>
+      </Dialog>
     </div>
   )
 }

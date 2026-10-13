@@ -6,3 +6,17 @@ dist
 
 .vercel
 .claude
+dist-prototype
+design-review
+local-test/.env.localtest
+local-test/out
+supabase/.temp
+supabase/.branches
+dist-localtest
+local-test/fixtures/generated
+
+# هجرة مولَّدة من استخراج بنية الإنتاج — لا تُدفع (المستودع عام)
+supabase/migrations/20260927000000_prod_mirror.sql
+
+# نسخة مؤقتة من المحرك المنشور (local-test/engine-vs-production.mjs)
+src/lib/__prod_engine.tmp.js

@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useId } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, Building2, Lock, Mail } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
-import staticLogo from '../assets/logo.png'
-import { fetchLogoUrl } from '../lib/appLogo'
+import { Brand } from '../ui/components'
+import { PIN_LENGTH, normalizePin, pinReady, pinTooLong } from '../lib/pinInput'
+import '../ui/login.css'
 
-const NAVY = '#1B3A5C'
-const GOLD = '#6EB7B0'
+// قفل الواجهة المحلي (كما كان): بعد 3 رموز خاطئة متتالية تُقفل الشاشة 5 دقائق في هذا المتصفح.
+// وهو غير حظر الخادم (429 من حد المحاولات في القاعدة) الذي تظهر رسالته ومدته من الخادم نفسه.
 const MAX_ATTEMPTS  = 3
 const LOCK_DURATION = 5 * 60 * 1000
 
@@ -30,8 +32,37 @@ function formatTime(ms) {
 function defaultPath(role) {
   if (role === 'superadmin') return '/admin'
   if (role === 'purchasing') return '/invoice'
-  if (role === 'cashier')    return '/cashier'
+  if (role === 'cashier')    return '/invoice'   // صفحة الكاشير أُلغيت: الكاشير يرفع من صفحة الرفع العامة
   return '/'
+}
+
+/** إطار الدخول بهوية تحسيب: مساحة الهوية الداكنة بجانب النموذج، وفوقه مختصرة على الجوال. */
+function AuthFrame({ children }) {
+  return (
+    <div className="ts-login" dir="rtl">
+      <section className="ts-login-visual">
+        <Brand dark />
+        <h2>أعمالك أوضح.<br />وقرارك أقرب.</h2>
+        <p>مساحة واحدة لمتابعة مبيعاتك ومصروفاتك ومستنداتك، كل يوم.</p>
+        <div className="ts-line-art" aria-hidden="true">
+          {[36, 60, 48, 81, 100].map(h => <span key={h} style={{ height: `${h}%` }} />)}
+        </div>
+        <div className="ts-login-copy">TAHSEEB · BUSINESS, IN FOCUS</div>
+      </section>
+      <section className="ts-login-form">
+        <div className="ts-login-inner">{children}</div>
+      </section>
+    </div>
+  )
+}
+
+/** اسم المنشأة من آلية تحديدها الحالية (النطاق ← get_project_branding). لا اسم ثابت. */
+function BusinessBadge({ subdomain, project }) {
+  const name = subdomain === '__dev__' ? 'بيئة التطوير المحلية'
+    : subdomain === null ? 'إدارة منصة تحسيب'
+    : project?.name || ''
+  if (!name) return null
+  return <div className="ts-login-badge" data-business-badge><Building2 className="ts-icon" aria-hidden="true" /><span className="truncate">{name}</span></div>
 }
 
 export default function Login() {
@@ -41,11 +72,23 @@ export default function Login() {
     return null
   }
 
+  const pinId = useId()
   const [pin,         setPin]         = useState('')
   const [error,       setError]       = useState('')
-  const [shake,       setShake]       = useState(false)
+  // خروج بسبب تعطيل الحساب (AuthContext): رسالة واحدة ثم تُمسح
+  const [notice] = useState(() => {
+    try {
+      const r = sessionStorage.getItem('mz_logout_reason')
+      sessionStorage.removeItem('mz_logout_reason')
+      return r === 'inactive' ? 'أوقف مالك المنشأة حسابك. تواصل معه لإعادة تفعيله.' : ''
+    } catch { return '' }
+  })
   const [loading,     setLoading]     = useState(false)
-  const [logo,        setLogo]        = useState(staticLogo)
+  const inFlight      = useRef(false)   // طلب واحد في كل مرة: لا يُرسل الرمز مرتين أثناء الانتظار
+  const pinRef        = useRef(null)
+  const formRef       = useRef(null)
+  // على الجوال: بعد ظهور لوحة المفاتيح يُمرَّر النموذج ليبقى الحقل وزر الدخول ظاهرين
+  const keepFormVisible = () => setTimeout(() => formRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }), 300)
   const attemptsRef   = useRef(0)
   const [lockedUntil, setLockedUntil] = useState(null)
   const [remaining,   setRemaining]   = useState(0)
@@ -57,14 +100,11 @@ export default function Login() {
 
   const subdomain = getSubdomain()
   const [project, setProject] = useState(null)
-  const accent    = project?.color || GOLD
-
-  useEffect(() => { fetchLogoUrl().then(url => { if (url) setLogo(url) }) }, [])
 
   // بيانات العلامة التجارية — من دالة RPC ضيّقة (نفس نمط login_with_pin)
   // بدل خريطة ثابتة بالكود، حتى لا يحتاج أي مشروع جديد تعديل كود لإضافته.
   // فشل الاستدعاء (شبكة، أو الدالة غير موجودة بعد) يُترَك بصمت — project
-  // يبقى null فيظهر النص العام الافتراضي، لا تعطيل لشاشة الدخول.
+  // يبقى null فلا يظهر اسم منشأة، لا تعطيل لشاشة الدخول.
   useEffect(() => {
     if (!subdomain || subdomain === '__dev__') return
     let cancelled = false
@@ -97,248 +137,138 @@ export default function Login() {
   }, [lockedUntil])
 
   const locked = lockedUntil !== null && remaining > 0
+  const tooLong = pinTooLong(pin)
 
-  async function handleDigit(d) {
-    if (locked || pin.length >= 5 || loading) return
-    const next = pin + d
-    setPin(next)
-    setError('')
-    if (next.length === 5) setTimeout(() => attempt(next), 150)
-  }
-
-  async function attempt(p) {
+  async function submitPin(event) {
+    event?.preventDefault?.()
+    if (locked || inFlight.current || !pinReady(pin)) return
+    inFlight.current = true
     setLoading(true)
+    setError('')
     let r = null
     try {
-      r = await login(p)
-    } catch(e) {
-      setLoading(false)
+      r = await login(pin)
+    } catch (e) {
+      // حظر الخادم (محاولات كثيرة + المدة) أو تعذّر الاتصال: الرسالة من مسار الدخول نفسه
       setError(e.message || 'حدث خطأ')
-      setShake(true)
-      setTimeout(() => setShake(false), 500)
       setPin('')
       return
+    } finally {
+      inFlight.current = false
+      setLoading(false)
     }
-    setLoading(false)
     if (r) {
       attemptsRef.current = 0
       setLockedUntil(null)
       navigate(defaultPath(r))
-    } else {
-      attemptsRef.current += 1
-      const next = attemptsRef.current
-      if (next >= MAX_ATTEMPTS) {
-        attemptsRef.current = 0
-        const until = Date.now() + LOCK_DURATION
-        setLockedUntil(until)
-        setRemaining(LOCK_DURATION)
-      } else {
-        setShake(true)
-        setError(`رمز الدخول غير صحيح — محاولة ${next} من ${MAX_ATTEMPTS}`)
-        setTimeout(() => setShake(false), 500)
-      }
-      setPin('')
+      return
     }
-  }
-
-  function handleBackspace() {
-    if (locked || loading) return
-    setPin(p => p.slice(0, -1))
-    setError('')
+    attemptsRef.current += 1
+    const next = attemptsRef.current
+    setPin('')
+    if (next >= MAX_ATTEMPTS) {
+      attemptsRef.current = 0
+      const until = Date.now() + LOCK_DURATION
+      setLockedUntil(until)
+      setRemaining(LOCK_DURATION)
+    } else {
+      setError(`رمز الدخول غير صحيح — محاولة ${next} من ${MAX_ATTEMPTS}`)
+      pinRef.current?.focus()
+    }
   }
 
   // ── دخول المالك بالبريد — مسار منفصل تماماً عن PIN ──
   async function attemptEmail(e) {
     e?.preventDefault?.()
-    if (loading || !email || !password) return
+    if (loading || inFlight.current || !email || !password) return
+    inFlight.current = true
     setLoading(true)
     setError('')
     try {
       const r = await loginWithEmail(email, password)
-      setLoading(false)
       if (r) navigate(defaultPath(r))
     } catch (err) {
-      setLoading(false)
       setError(err.message || 'تعذّر تسجيل الدخول')
-      setShake(true)
-      setTimeout(() => setShake(false), 500)
+    } finally {
+      inFlight.current = false
+      setLoading(false)
     }
   }
 
-  const DIGITS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
-
-  // ── شاشة القفل ──────────────────────────────────────────────────
+  // ── قفل الواجهة المحلي ──────────────────────────────────────────
   if (locked) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#F4F8F7' }} dir="rtl">
-        <div className="w-full max-w-sm">
-          <div className="text-center mb-8">
-            <img src={logo} alt="تحسيب" className="h-24 w-auto mx-auto mb-4 drop-shadow-lg opacity-40" />
-            {project && (
-              <p className="text-base font-bold opacity-40" style={{ color: NAVY }}>{project.name}</p>
-            )}
-          </div>
-          <div className="rounded-2xl p-8 shadow-xl text-center" style={{ background: '#1a0a0a', border: '2px solid #dc2626' }}>
-            <div className="text-5xl mb-4">🔒</div>
-            <p className="text-white font-bold text-base mb-2">تم قفل الدخول</p>
-            <p className="text-red-300 text-sm mb-6">{MAX_ATTEMPTS} محاولات خاطئة متتالية</p>
-            <div className="rounded-xl py-4 px-6 mb-4" style={{ background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.4)' }}>
-              <div className="text-xs text-red-400 mb-1">الوقت المتبقي للفتح</div>
-              <div className="text-4xl font-bold font-mono tabular-nums" style={{ color: '#f87171' }}>
-                {formatTime(remaining)}
-              </div>
-            </div>
-            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
-              ستفتح الشاشة تلقائياً عند انتهاء المؤقت
-            </p>
-          </div>
+      <AuthFrame>
+        <BusinessBadge subdomain={subdomain} project={project} />
+        <div className="ts-login-lock" role="status" data-ui-lock>
+          <Lock className="ts-icon" aria-hidden="true" />
+          <h1>تم قفل الدخول مؤقتًا</h1>
+          <p>{MAX_ATTEMPTS} محاولات خاطئة متتالية في هذا المتصفح.</p>
+          <div className="ts-login-timer" aria-label="الوقت المتبقي للفتح"><span>الوقت المتبقي للفتح</span><b className="ts-num">{formatTime(remaining)}</b></div>
+          <p className="ts-login-help">تفتح الشاشة تلقائيًا عند انتهاء المؤقت.</p>
         </div>
-      </div>
+      </AuthFrame>
     )
   }
 
-  // ── شاشة الدخول العادية ─────────────────────────────────────────
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: '#F4F8F7' }} dir="rtl">
-      <div className="w-full max-w-sm">
-
-        {/* ── الهيدر ── */}
-        <div className="text-center mb-7">
-          <img src={logo} alt="تحسيب" className="h-24 w-auto mx-auto mb-5 drop-shadow-lg" />
-
-          {project ? (
-            <>
-              <h1 className="text-2xl font-bold mb-1.5" style={{ color: NAVY }}>
-                {project.name}
-              </h1>
-              <p className="text-sm" style={{ color: '#8a9ba8' }}>{project.welcome}</p>
-            </>
-          ) : (
-            <p className="text-sm font-semibold" style={{ color: '#8a7a5a' }}>
-              إدارة مالية احترافية
-            </p>
-          )}
-        </div>
-
-        {/* ── فاصل ناعم — يظهر فقط إذا كان هناك مشروع ── */}
-        {project && (
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px" style={{ background: 'rgba(27,58,92,0.1)' }}/>
-            <span className="text-xs font-semibold" style={{ color: '#b0bec5' }}>
-              {mode === 'email' ? 'دخول المالك' : 'رمز الدخول'}
-            </span>
-            <div className="flex-1 h-px" style={{ background: 'rgba(27,58,92,0.1)' }}/>
-          </div>
-        )}
-
-        {/* ── بطاقة دخول المالك بالبريد ── */}
-        {mode === 'email' ? (
-          <form onSubmit={attemptEmail} className="rounded-2xl p-6 shadow-xl space-y-4" style={{ background: NAVY }}>
-            <p className="text-center text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.7)' }}>
-              دخول المالك بالبريد الإلكتروني
-            </p>
-            <div className={shake ? 'animate-bounce' : ''}>
-              <input
-                type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }}
-                placeholder="البريد الإلكتروني" dir="ltr" autoComplete="email"
-                className="w-full rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}
-              />
-              <input
-                type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }}
-                placeholder="كلمة المرور" dir="ltr" autoComplete="current-password"
-                className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
-                style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.15)' }}
-              />
-            </div>
-            {error && <p className="text-center text-red-400 text-sm font-medium">{error}</p>}
-            <button
-              type="submit" disabled={loading || !email || !password}
-              className="w-full h-12 rounded-xl text-base font-semibold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center"
-              style={{ background: accent, color: NAVY }}
-            >
-              {loading
-                ? <span className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin inline-block" style={{ borderColor: NAVY, borderTopColor: 'transparent' }}/>
-                : 'دخول'}
-            </button>
-            <button
-              type="button" onClick={() => { setMode('pin'); setError(''); setPassword('') }}
-              className="w-full text-center text-xs font-semibold pt-1" style={{ color: 'rgba(255,255,255,0.5)' }}
-            >
-              ← الرجوع لرمز الدخول (PIN)
-            </button>
-          </form>
-        ) : (
-        /* ── بطاقة PIN ── */
-        <div className="rounded-2xl p-6 shadow-xl" style={{ background: NAVY }}>
-          {!project && (
-            <p className="text-center text-sm font-semibold mb-5" style={{ color: 'rgba(255,255,255,0.7)' }}>
-              أدخل رمز الدخول
-            </p>
-          )}
-
-          <div className={`flex justify-center gap-3 mb-6 ${shake ? 'animate-bounce' : ''}`}>
-            {[0,1,2,3,4].map(i => (
-              <div key={i} className="w-3.5 h-3.5 rounded-full transition-all duration-200"
-                style={{
-                  background:  i < pin.length ? accent : 'rgba(255,255,255,0.15)',
-                  transform:   i < pin.length ? 'scale(1.15)' : 'scale(1)',
-                }}
-              />
-            ))}
-          </div>
-
-          {error && <p className="text-center text-red-400 text-sm mb-4 font-medium">{error}</p>}
-
-          {loading && (
-            <div className="flex justify-center mb-4">
-              <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
-                style={{ borderColor: accent, borderTopColor: 'transparent' }}/>
-            </div>
-          )}
-
-          <div className="grid grid-cols-3 gap-3">
-            {DIGITS.map((d, i) => (
-              <button
-                key={i}
-                onClick={() => d === '⌫' ? handleBackspace() : d !== '' ? handleDigit(d) : null}
-                disabled={d === '' || loading}
-                className="h-14 rounded-xl text-xl font-semibold transition-all duration-150 active:scale-95"
-                style={{
-                  visibility: d === '' ? 'hidden' : 'visible',
-                  background: d === '⌫' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.1)',
-                  color: d === '⌫' ? 'rgba(255,255,255,0.5)' : '#fff',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  opacity: loading ? 0.5 : 1,
-                }}
-                onMouseEnter={e => { if (d && !loading) { e.currentTarget.style.background = accent; e.currentTarget.style.color = NAVY } }}
-                onMouseLeave={e => { e.currentTarget.style.background = d === '⌫' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = d === '⌫' ? 'rgba(255,255,255,0.5)' : '#fff' }}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-
-        </div>
-        )}
-
-        {/* ── رابط دخول المالك بالبريد — يظهر في وضع PIN فقط ── */}
-        {mode === 'pin' && (
-          <button
-            onClick={() => { setMode('email'); setError(''); setPin('') }}
-            className="w-full text-center text-xs font-semibold mt-5 transition-colors"
-            style={{ color: '#8a9ba8' }}
-          >
-            👤 دخول المالك بالبريد الإلكتروني
+  // ── دخول المالك بالبريد ─────────────────────────────────────────
+  if (mode === 'email') {
+    return (
+      <AuthFrame>
+        <BusinessBadge subdomain={subdomain} project={project} />
+        <h1>دخول المالك</h1>
+        <p>بالبريد الإلكتروني وكلمة المرور.</p>
+        <form onSubmit={attemptEmail} noValidate className="ts-login-stack">
+          <label className="ts-field">
+            <span>البريد الإلكتروني</span>
+            <input type="email" value={email} onChange={e => { setEmail(e.target.value); setError('') }}
+              dir="ltr" autoComplete="email" className="ts-input" autoFocus />
+          </label>
+          <label className="ts-field">
+            <span>كلمة المرور</span>
+            <input type="password" value={password} onChange={e => { setPassword(e.target.value); setError('') }}
+              dir="ltr" autoComplete="current-password" className="ts-input" />
+          </label>
+          <button type="submit" className="ts-btn ts-btn--primary ts-btn--lg ts-btn--full" disabled={loading || !email || !password} aria-busy={loading || undefined}>
+            {loading ? 'جارٍ التحقق…' : <>دخول<ArrowLeft className="ts-icon" aria-hidden="true" /></>}
           </button>
-        )}
+          <div className="ts-login-feedback" role="alert">{error}</div>
+        </form>
+        <button type="button" className="ts-login-switch" onClick={() => { setMode('pin'); setError(''); setPassword('') }}>
+          الرجوع إلى رمز الدخول
+        </button>
+      </AuthFrame>
+    )
+  }
 
-        {/* ── تذييل ── */}
-        <p className="text-center text-xs mt-4" style={{ color: '#b0bec5' }}>
-          تحسيب © {new Date().getFullYear()}
-        </p>
-
-      </div>
-    </div>
+  // ── رمز الدخول ──────────────────────────────────────────────────
+  const feedback = error || (tooLong ? `رمز الدخول ${PIN_LENGTH} أرقام` : '')
+  return (
+    <AuthFrame>
+      <BusinessBadge subdomain={subdomain} project={project} />
+      <h1>حيّاك في تحسيب</h1>
+      <p>أدخل رمزك للوصول إلى مساحة عملك.</p>
+      <form ref={formRef} onSubmit={submitPin} noValidate className="ts-login-stack">
+        <div className="ts-field">
+          <label htmlFor={pinId}>رمز الدخول</label>
+          {/* حقل مخفي المحتوى بلوحة أرقام الجوال الأصلية؛ يقبل الكتابة واللصق ولوحة الحاسب، بأرقام عربية أو لاتينية */}
+          <input id={pinId} ref={pinRef} type="password" inputMode="numeric" pattern="[0-9]*" autoComplete="off" autoFocus
+            name="pin" maxLength={24} dir="ltr" placeholder={'•'.repeat(PIN_LENGTH)} value={pin}
+            onChange={e => { setPin(normalizePin(e.target.value)); setError('') }} onFocus={keepFormVisible}
+            aria-invalid={!!feedback || undefined} aria-describedby="login-feedback" disabled={loading}
+            className="ts-pin" />
+        </div>
+        <button type="submit" className="ts-btn ts-btn--primary ts-btn--lg ts-btn--full" disabled={loading || !pinReady(pin)} aria-busy={loading || undefined}>
+          {loading ? 'جارٍ التحقق…' : <>دخول<ArrowLeft className="ts-icon" aria-hidden="true" /></>}
+        </button>
+        <div id="login-feedback" className="ts-login-feedback" role="alert">
+          {feedback || (notice ? <span className="ts-login-notice" data-logout-notice>{notice}</span> : null)}
+        </div>
+      </form>
+      <div className="ts-login-help">لكل مستخدم رمزه وصلاحياته.</div>
+      <button type="button" className="ts-login-switch" onClick={() => { setMode('email'); setError(''); setPin('') }}>
+        <Mail className="ts-icon" aria-hidden="true" />دخول المالك بالبريد الإلكتروني
+      </button>
+    </AuthFrame>
   )
 }

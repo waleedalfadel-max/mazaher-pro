@@ -4,8 +4,8 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Cairo', 'sans-serif'],
-        mono: ['IBM Plex Mono', 'ui-monospace', 'monospace'],
+        sans: ['IBM Plex Sans Arabic', 'system-ui', 'sans-serif'],
+        mono: ['Manrope Variable', 'IBM Plex Sans Arabic', 'ui-monospace', 'monospace'],
       },
       colors: {
         primary: {

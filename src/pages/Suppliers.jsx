@@ -1,45 +1,87 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, Info, Plus, RefreshCw, Store, Wallet } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getOrCreateJournalNumber } from '../lib/journalNumber'
+import { fetchEveryRow } from '../lib/fetchAll.js'
+import { Button, DateInput, Dialog, EmptyState, Field, Input, Panel, Select, Status } from '../ui/components.jsx'
+import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
 
-const NAVY = '#1B3A5C'
-const GOLD = '#6EB7B0'
+// تحديث 20261010130000: الدفعة بدالة خادم واحدة (supplier_payment_record) تخفض الالتزام ولا تُحتسب تكلفة ثانية، وقسم لموردي «آجل — باسم المورد».
+// الموردون بالهوية الجديدة. الحسابات والعمليات كما كانت حرفيًا: الموردون النشطون بالاسم، ورصيد كل مورد = الرصيد الافتتاحي + فواتيره
+// − دفعاته (من supplier_transactions)، وإجمالي المستحقات = مجموع الأرصدة الموجبة؛ وتسجيل دفعة = رقم قيد من العدّاد ثم حركة «دفعة» للمورد
+// ثم قيد «🏪 سداد مورد» في الدفتر من البنك أو الصندوق؛ وإضافة مورد بالحقول نفسها. الصلاحيات من المسار كما هي.
+// التغيير: الموردون وحركاتهم تُحمَّل كاملة بترتيب ثابت (src/lib/fetchAll.js) بدل طلب واحد بحد الخادم وبلا فحص خطأ، وفشل أي جزء رسالة
+// بإعادة محاولة بلا أرصدة ناقصة؛ وأي فشل في الدفعة أو الإضافة يظهر في الحوار (كان يُتجاهل)؛ والمبلغ يُقرأ بدقة أو يُرفض.
+// المقارنة قبل وبعد: local-test/suppliers-loans-figures.mjs؛ العمليات والفشل: local-test/suppliers-loans-ui.mjs.
 
 function todayStr() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-const fmt = v => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })
+const fmt = v => formatNumber(Number(v || 0), 2)
+const reason = error => (/failed to fetch|network|load failed/i.test(error?.message || '') ? 'تعذّر الاتصال بالخادم؛ تحقق من الاتصال ثم أعد المحاولة.' : (error?.message || 'خطأ غير معروف'))
+const PAY_SOURCES = [{ value: 'bank', label: 'البنك / تحويل' }, { value: 'cash', label: 'الصندوق' }]
+const blankPay = () => ({ amount: '', date: todayStr(), notes: '', paySource: 'bank' })
+const blankNew = () => ({ name: '', phone: '', opening_balance: '', notes: '' })
+const PAY_MESSAGES = {
+  no_session: 'انتهت الجلسة. سجّل الدخول من جديد.', forbidden: 'تسجيل الدفعات للمحاسب فقط.', project_inactive: 'المنشأة موقوفة.',
+  amount_invalid: 'مبلغ غير صالح؛ اكتب رقمًا أكبر من صفر بمنزلتين على الأكثر.', date_required: 'أدخل تاريخًا صحيحًا.', source_invalid: 'اختر مصدر الدفع.',
+  not_found: 'المورد غير موجود في منشأتك. حدّث الصفحة.', exceeds_balance: 'المبلغ أكبر من المستحق لهذا المورد.', bad_request: 'طلب غير صالح. حدّث الصفحة.',
+  // R4-01: الطلب نفسه بعد حذف دفعته (من «سجل الدفتر») لا يعيد تسجيلها؛ التسجيل من جديد قرار جديد بحوار جديد
+  payment_deleted: 'هذه الدفعة سُجّلت ثم حُذفت من «سجل الدفتر»، فلم تُسجَّل مرة أخرى. إن أردت تسجيلها فأغلق هذا الحوار وافتح «تسجيل دفعة» من جديد.',
+}
 
 export default function Suppliers() {
   const { projectId } = useAuth()
   const [suppliers, setSuppliers]   = useState([])
   const [loading, setLoading]       = useState(true)
+  const [loadError, setLoadError]   = useState('')
   const [selected, setSelected]     = useState(null)
   const [txns, setTxns]             = useState([])
   const [txnLoading, setTxnLoading] = useState(false)
+  const [txnError, setTxnError]     = useState('')
   const [payModal, setPayModal]     = useState(null)
   const [addModal, setAddModal]     = useState(false)
   const [saving, setSaving]         = useState(false)
-  const [payForm, setPayForm]       = useState({ amount: '', date: todayStr(), notes: '', paySource: 'bank' })
-  const [newForm, setNewForm]       = useState({ name: '', phone: '', opening_balance: '', notes: '' })
+  const [formError, setFormError]   = useState('')
+  const [payDateValid, setPayDateValid] = useState(true)
+  const [paymentIncomplete, setPaymentIncomplete] = useState(false)
+  const [payForm, setPayForm]       = useState(blankPay())
+  const [newForm, setNewForm]       = useState(blankNew())
+  const loadSeq = useRef(0), txnSeq = useRef(0)
+  const savingRef = useRef(false)
+  const payRequest = useRef(null)
+  const [payables, setPayables] = useState([])   // موردو «آجل — باسم المورد»: الرصيد من قيود الدفتر (الالتزام − السداد)
 
   useEffect(() => { if (projectId) loadSuppliers() }, [projectId])
 
+  // الموردون النشطون ثم كل حركاتهم كاملتين؛ الرصيد من الحركات كلها. أي فشل ← رسالة بلا موردين ولا أرصدة.
   async function loadSuppliers() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('suppliers')
-      .select('id,name,phone,opening_balance,notes,supplier_transactions(type,amount)')
+    const seq = ++loadSeq.current
+    setLoading(true); setLoadError('')
+    const list = await fetchEveryRow(() => supabase.from('suppliers')
+      .select('id,name,phone,opening_balance,notes')
+      .eq('project_id', projectId).eq('is_active', true)
+      .order('name').order('id'))
+    const ts = list.error ? null : await fetchEveryRow(() => supabase.from('supplier_transactions')
+      .select('supplier_id,type,amount')
       .eq('project_id', projectId)
-      .eq('is_active', true)
-      .order('name')
-
-    const withBalance = (data || []).map(s => {
-      const ts       = s.supplier_transactions || []
-      const invoices = ts.filter(t => t.type === 'invoice').reduce((sum, t) => sum + Number(t.amount || 0), 0)
-      const payments = ts.filter(t => t.type === 'payment').reduce((sum, t) => sum + Number(t.amount || 0), 0)
+      .order('id'))
+    const ps = list.error || ts?.error ? null : await fetchEveryRow(() => supabase.from('payable_suppliers').select('id,name').eq('project_id', projectId).order('name').order('id'))
+    const pl = !ps || ps.error ? null : await fetchEveryRow(() => supabase.from('ledger_entries').select('supplier_id,payable_in,payable_out')
+      .eq('project_id', projectId).not('supplier_id', 'is', null).in('status', ['approved', 'auto']).order('id'))
+    if (seq !== loadSeq.current) return
+    const failed = list.error || ts?.error || ps?.error || pl?.error
+    if (failed) { setSuppliers([]); setPayables([]); setLoadError(`${list.error ? 'الموردون' : ts?.error ? 'حركات الموردين' : 'موردو الآجل باسم المورد'}: ${reason(failed)}`); setLoading(false); return }
+    const owed = {}
+    pl.data.forEach(e => { owed[e.supplier_id] = (owed[e.supplier_id] || 0) + Math.round((Number(e.payable_in) || 0) * 100) - Math.round((Number(e.payable_out) || 0) * 100) })
+    setPayables(ps.data.map(p => ({ ...p, kind: 'payable', balance: (owed[p.id] || 0) / 100 })).filter(p => owed[p.id]))
+    const bySupplier = {}
+    ts.data.forEach(t => { (bySupplier[t.supplier_id] ||= []).push(t) })
+    const withBalance = list.data.map(s => {
+      const own      = bySupplier[s.id] || []
+      const invoices = own.filter(t => t.type === 'invoice').reduce((sum, t) => sum + Number(t.amount || 0), 0)
+      const payments = own.filter(t => t.type === 'payment').reduce((sum, t) => sum + Number(t.amount || 0), 0)
       const balance  = Number(s.opening_balance || 0) + invoices - payments
       return { ...s, balance, invoices, payments }
     })
@@ -47,281 +89,239 @@ export default function Suppliers() {
     setLoading(false)
   }
 
+  // حركات المورد المختار كاملة، الأحدث أولًا بترتيب ثابت
   async function loadTxns(supplierId) {
-    setTxnLoading(true)
-    const { data } = await supabase
-      .from('supplier_transactions')
+    const seq = ++txnSeq.current
+    setTxnLoading(true); setTxnError('')
+    const res = await fetchEveryRow(() => supabase.from('supplier_transactions')
       .select('*')
       .eq('supplier_id', supplierId)
-      .order('date', { ascending: false })
-    setTxns(data || [])
+      .order('date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }))
+    if (seq !== txnSeq.current) return
+    if (res.error) { setTxns([]); setTxnError(reason(res.error)) } else setTxns(res.data)
     setTxnLoading(false)
   }
 
   function selectSupplier(sup) {
-    if (selected?.id === sup.id) { setSelected(null); setTxns([]) }
+    if (selected?.id === sup.id) { ++txnSeq.current; setSelected(null); setTxns([]); setTxnError('') }
     else { setSelected(sup); loadTxns(sup.id) }
   }
 
+  const payAmount = parseAmount(payForm.amount)
+  const payAmountBad = payForm.amount !== '' && !(payAmount > 0)
+
+  // الدفعة في معاملة خادم واحدة (supplier_payment_record، 20261010130000): رقم القيد وحركة «دفعة» للمورد وقيد «سداد مورد» يخفض الالتزام
+  // معًا أو لا شيء. معرّف الطلب ثابت للحوار المفتوح، فإعادة المحاولة بعد انقطاع لا تكرر الدفعة (يعيد الخادم نتيجتها الأولى).
+  // الدفعة ليست تكلفة جديدة: الشراء احتُسب بفاتورته؛ وحده ما يغطي رصيدًا لم يدخل الدفتر قط (افتتاحي أو فواتير سابقة) يبقى تكلفة عند السداد.
   async function recordPayment() {
-    if (!payModal || !payForm.amount || !payForm.date) return
-    setSaving(true)
+    if (savingRef.current || !payModal || !(payAmount > 0) || !payForm.date || !payDateValid) return
+    savingRef.current = true
+    setSaving(true); setFormError('')
     try {
-      const amount = Number(payForm.amount)
-      const jn = await getOrCreateJournalNumber(projectId, payForm.date)
-      await supabase.from('supplier_transactions').insert({
-        supplier_id: payModal.id, project_id: projectId,
-        type: 'payment', amount, date: payForm.date,
-        notes: payForm.notes || null, journal_number: jn,
+      const { data, error } = await supabase.rpc('supplier_payment_record', {
+        p_kind: payModal.kind || 'list', p_supplier: payModal.id, p_amount: payAmount, p_date: payForm.date,
+        p_source: payForm.paySource, p_notes: payForm.notes || null, p_request: payRequest.current,
       })
-      await supabase.from('ledger_entries').insert({
-        project_id: projectId, date: payForm.date,
-        type: '🏪 سداد مورد',
-        description: `سداد مستحقات ${payModal.name}`,
-        cash_out:    payForm.paySource === 'cash' ? amount : 0,
-        bank_out:    payForm.paySource === 'bank' ? amount : 0,
-        custody_out: 0, cash_in: 0, bank_in: 0, custody_in: 0,
-        vat_amount: 0, total_amount: amount,
-        status: 'approved', file_url: '', journal_number: jn,
-      })
-      setPayModal(null)
-      setPayForm({ amount: '', date: todayStr(), notes: '', paySource: 'bank' })
+      if (error) {
+        if (/failed to fetch|network|load failed/i.test(error.message || '')) {
+          setPaymentIncomplete(true)
+          setFormError('تعذّر تأكيد حفظ الدفعة لانقطاع الاتصال. أعد المحاولة من هذا الحوار: إن كانت وصلت لن تُسجَّل مرتين.')
+        } else setFormError('لم تُسجَّل الدفعة: ' + reason(error))
+        return
+      }
+      if (!data?.ok) { if (data?.code === 'payment_deleted') loadSuppliers(); setFormError(PAY_MESSAGES[data?.code] || `لم تُسجَّل الدفعة (${data?.code || 'غير معروف'}).`); return }
+      const supId = payModal.id
       loadSuppliers()
-      if (selected?.id === payModal.id) loadTxns(payModal.id)
-    } catch(e) { alert(e.message) }
-    setSaving(false)
+      if (selected?.id === supId) loadTxns(supId)
+      setPayModal(null)
+      setPayForm(blankPay())
+    } catch (e) {
+      setPaymentIncomplete(true)
+      setFormError('تعذّر تأكيد حفظ الدفعة. أعد المحاولة من هذا الحوار: إن كانت وصلت لن تُسجَّل مرتين. ' + reason(e))
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
   }
 
+  const openingAmount = parseAmount(newForm.opening_balance)
+  const openingBad = Number.isNaN(openingAmount)
+
   async function addSupplier() {
-    if (!newForm.name.trim()) return
-    setSaving(true)
+    if (savingRef.current || !newForm.name.trim() || openingBad) return
+    savingRef.current = true
+    setSaving(true); setFormError('')
     try {
-      await supabase.from('suppliers').insert({
+      const { error } = await supabase.from('suppliers').insert({
         project_id: projectId,
         name:            newForm.name.trim(),
         phone:           newForm.phone.trim() || null,
-        opening_balance: Number(newForm.opening_balance) || 0,
+        opening_balance: openingAmount || 0,
         notes:           newForm.notes.trim() || null,
       })
+      if (error) { setFormError('لم يُضَف المورد: ' + reason(error)); return }
       setAddModal(false)
-      setNewForm({ name: '', phone: '', opening_balance: '', notes: '' })
+      setNewForm(blankNew())
       loadSuppliers()
-    } catch(e) { alert(e.message) }
-    setSaving(false)
+    } catch (e) { setFormError('تعذّر تأكيد إضافة المورد: ' + reason(e)) }
+    finally { savingRef.current = false; setSaving(false) }
   }
 
-  const totalOutstanding = suppliers.reduce((s, sup) => s + Math.max(0, sup.balance), 0)
-
-  if (loading) return (
-    <div className="flex justify-center h-64 items-center">
-      <div className="w-8 h-8 border-4 border-t-transparent rounded-full animate-spin"
-        style={{ borderColor: GOLD, borderTopColor: 'transparent' }}/>
-    </div>
-  )
+  // المستحقات الشاملة: موردو القائمة وموردو «آجل — باسم المورد» معًا، مع مجموع كل قسم (بالهللات)
+  const listOutstanding = useMemo(() => suppliers.reduce((s, sup) => s + Math.max(0, Math.round(sup.balance * 100)), 0) / 100, [suppliers])
+  const payablesOutstanding = useMemo(() => payables.reduce((s, p) => s + Math.max(0, Math.round(p.balance * 100)), 0) / 100, [payables])
+  const totalOutstanding = Math.round((listOutstanding + payablesOutstanding) * 100) / 100
+  const openPay = sup => { setFormError(''); setPayModal(sup); setPayForm(blankPay()); setPayDateValid(true); setPaymentIncomplete(false); payRequest.current = crypto.randomUUID() }
 
   return (
-    <div className="space-y-5" dir="rtl">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="ldg-page sup-page">
+      <div className="ts-heading">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: NAVY }}>الموردين</h1>
-          <p className="text-slate-500 text-sm mt-0.5">{suppliers.length} مورد نشط</p>
+          <h1>الموردون</h1>
+          <p className="ldg-showing"><Store className="ts-icon--sm" aria-hidden="true" /><span data-k="sup.count">{loading || loadError ? '—' : `${suppliers.length} مورد نشط`}</span></p>
         </div>
-        <button onClick={() => setAddModal(true)}
-          className="px-4 py-2 rounded-xl text-sm font-bold"
-          style={{ background: NAVY, color: '#fff' }}>
-          + إضافة مورد
-        </button>
+        <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => { setFormError(''); setAddModal(true) }}>إضافة مورد</Button>
       </div>
 
-      {/* تنبيه المستحقات */}
-      {totalOutstanding > 0 && (
-        <div className="rounded-2xl p-4" style={{ background: '#fef3c7', border: '2px solid #fcd34d' }}>
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">⚠️</span>
-            <div>
-              <div className="font-bold text-amber-800 text-sm">إجمالي المستحقات المتبقية</div>
-              <div className="text-2xl font-bold font-mono tabular-nums text-amber-900">{fmt(totalOutstanding)}</div>
-            </div>
+      {loading ? (
+        <Panel><div className="ldg-loading" aria-busy="true">جارٍ تحميل الموردين…</div></Panel>
+      ) : loadError ? (
+        <div className="ts-note ts-note--error ldg-load-error" data-k="sup.loadError" role="alert">
+          <Info className="ts-icon" aria-hidden="true" />
+          <div className="ts-note-body">
+            <strong>تعذّر تحميل الموردين وأرصدتهم كاملة، فلم تُعرض الأرصدة.</strong>
+            رصيد من حركات ناقصة يكون خاطئًا. {loadError}
+            <div className="ts-note-action"><Button size="sm" variant="primary" icon={RefreshCw} onClick={loadSuppliers}>إعادة المحاولة</Button></div>
           </div>
         </div>
-      )}
-
-      {/* قائمة الموردين */}
-      {suppliers.length === 0 ? (
-        <div className="bg-white rounded-2xl p-12 text-center shadow-sm" style={{ border: '1px solid #e8e5dc' }}>
-          <div className="text-4xl mb-3">🏪</div>
-          <p className="text-slate-400 font-medium">لا يوجد موردون — أضف مورداً جديداً</p>
-        </div>
-      ) : suppliers.map(sup => (
-        <div key={sup.id} className="bg-white rounded-2xl shadow-sm overflow-hidden"
-          style={{ border: `2px solid ${sup.balance > 0 ? '#fcd34d' : '#e8e5dc'}` }}>
-
-          {/* صف المورد */}
-          <div className="p-4 flex items-center gap-3 cursor-pointer" onClick={() => selectSupplier(sup)}>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-lg"
-              style={{ background: sup.balance > 0 ? '#fef3c7' : '#f5f4f0' }}>
-              🏪
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-bold text-sm" style={{ color: NAVY }}>{sup.name}</div>
-              {sup.phone && <div className="text-xs text-slate-400 mt-0.5">{sup.phone}</div>}
-              <div className="text-xs text-slate-400 mt-0.5">
-                فواتير: {fmt(sup.invoices)} | مدفوع: {fmt(sup.payments)}
-              </div>
-            </div>
-            <div className="text-center shrink-0 mx-2">
-              <div className="text-xs text-slate-400 mb-0.5">المتبقي</div>
-              <div className={`text-lg font-bold font-mono tabular-nums ${sup.balance > 0 ? 'text-amber-700' : 'text-green-600'}`}>
-                {fmt(sup.balance)}
-              </div>
-            </div>
-            <button
-              onClick={e => { e.stopPropagation(); setPayModal(sup); setPayForm({ amount: '', date: todayStr(), notes: '', paySource: 'bank' }) }}
-              disabled={sup.balance <= 0}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 disabled:opacity-40"
-              style={{ background: GOLD, color: NAVY }}>
-              تسجيل دفعة
-            </button>
-            <span className="text-slate-400 text-sm">{selected?.id === sup.id ? '▲' : '▼'}</span>
-          </div>
-
-          {/* الحركات */}
-          {selected?.id === sup.id && (
-            <div style={{ borderTop: '1px solid #f5f4f0' }}>
-              {txnLoading ? (
-                <div className="p-4 text-center text-slate-400 text-sm">جارٍ التحميل...</div>
-              ) : txns.length === 0 ? (
-                <div className="p-4 text-center text-slate-400 text-sm">لا توجد حركات مسجّلة</div>
-              ) : (
-                <div className="divide-y" style={{ borderColor: '#f5f4f0' }}>
-                  {txns.map(t => (
-                    <div key={t.id} className="flex items-center justify-between px-4 py-2.5">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${t.type === 'invoice' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
-                            {t.type === 'invoice' ? '📄 فاتورة' : '✅ دفعة'}
-                          </span>
-                          {t.notes && <span className="text-xs text-slate-400">{t.notes}</span>}
-                        </div>
-                        <div className="text-xs text-slate-400 mt-0.5">{t.date}</div>
-                      </div>
-                      <div className={`font-mono font-bold text-sm ${t.type === 'invoice' ? 'text-red-700' : 'text-green-700'}`}>
-                        {t.type === 'invoice' ? '+' : '−'}{fmt(t.amount)}
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex justify-between px-4 py-2.5 font-semibold text-sm"
-                    style={{ background: '#f9f8f5' }}>
-                    <span style={{ color: NAVY }}>الرصيد الحالي</span>
-                    <span className={`font-mono ${sup.balance > 0 ? 'text-amber-700' : 'text-green-600'}`}>{fmt(sup.balance)}</span>
-                  </div>
-                </div>
-              )}
+      ) : (
+        <>
+          {totalOutstanding > 0 && (
+            <div className="sup-due" data-k="sup.totalOutstanding">
+              <Wallet className="ts-icon" aria-hidden="true" />
+              <span>إجمالي المستحقات المتبقية</span>
+              <strong className="ts-num">{fmt(totalOutstanding)}</strong>
+              {payablesOutstanding > 0 && <small className="sup-due-split">موردو القائمة <span className="ts-num" data-k="sup.listOutstanding">{fmt(listOutstanding)}</span> · آجل باسم المورد <span className="ts-num" data-k="sup.payablesOutstanding">{fmt(payablesOutstanding)}</span></small>}
             </div>
           )}
-        </div>
-      ))}
 
-      {/* مودال تسجيل دفعة */}
-      {payModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setPayModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h2 className="text-base font-bold mb-4" style={{ color: NAVY }}>تسجيل دفعة — {payModal.name}</h2>
-            <div className="mb-3 text-sm text-amber-700 font-semibold bg-amber-50 rounded-xl px-3 py-2">
-              المستحق: {fmt(payModal.balance)}
+          {suppliers.length === 0 ? (
+            <Panel><EmptyState icon={Store}>لا يوجد موردون — أضف مورداً جديداً.</EmptyState></Panel>
+          ) : (
+            <div className="sup-list">
+              {suppliers.map(sup => {
+                const isOpen = selected?.id === sup.id
+                return (
+                  <section key={sup.id} className={`sup-item${isOpen ? ' is-open' : ''}${sup.balance > 0 ? ' is-due' : ''}`} data-supplier={sup.id}>
+                    <div className="sup-head">
+                      <button type="button" className="sup-toggle" data-k="toggle" aria-expanded={isOpen} onClick={() => selectSupplier(sup)}>
+                        <ChevronDown className="ts-icon jar-chev" aria-hidden="true" />
+                        <span className="sup-name">
+                          <strong data-k="name">{sup.name}</strong>
+                          {sup.phone && <span className="ts-num" data-k="phone">{sup.phone}</span>}
+                          <small>فواتير: <span className="ts-num" data-k="invoices">{fmt(sup.invoices)}</span> · مدفوع: <span className="ts-num" data-k="payments">{fmt(sup.payments)}</span></small>
+                        </span>
+                        <span className="sup-bal">
+                          <small>المتبقي</small>
+                          <strong className={`ts-num ${sup.balance > 0 ? 'amt-due' : 'amt-clear'}`} data-k="balance">{fmt(sup.balance)}</strong>
+                        </span>
+                      </button>
+                      <Button size="sm" variant="primary" data-k="pay" disabled={sup.balance <= 0} onClick={() => openPay(sup)}>تسجيل دفعة</Button>
+                    </div>
+
+                    {isOpen && (
+                      <div className="sup-body">
+                        {txnLoading ? (
+                          <div className="ldg-loading" aria-busy="true">جارٍ تحميل الحركات…</div>
+                        ) : txnError ? (
+                          <div className="ts-note ts-note--error" data-k="sup.txnError" role="alert">
+                            <Info className="ts-icon" aria-hidden="true" />
+                            <div className="ts-note-body"><strong>تعذّر تحميل حركات المورد كاملة.</strong> {txnError}
+                              <div className="ts-note-action"><Button size="sm" variant="primary" icon={RefreshCw} onClick={() => loadTxns(sup.id)}>إعادة المحاولة</Button></div>
+                            </div>
+                          </div>
+                        ) : txns.length === 0 ? (
+                          <EmptyState icon={Store}>لا توجد حركات مسجّلة.</EmptyState>
+                        ) : (
+                          <ul className="sup-txns" data-table="sup.txns">
+                            {txns.map(t => (
+                              <li key={t.id} data-id={t.id}>
+                                <span className="sup-txn-main">
+                                  <Status tone={t.type === 'invoice' ? 'danger' : 'success'}><span data-k="type">{t.type === 'invoice' ? 'فاتورة' : 'دفعة'}</span></Status>
+                                  {t.notes && <span className="sup-notes" data-k="notes">{t.notes}</span>}
+                                  <span className="sup-date" data-k="date" data-iso={t.date || ''}>{t.date ? formatDate(t.date, { year: true }) : '—'}</span>
+                                </span>
+                                <strong className={`ts-num ${t.type === 'invoice' ? 'amt-due' : 'amt-clear'}`} data-k="amount">{t.type === 'invoice' ? '+' : '−'}{fmt(t.amount)}</strong>
+                              </li>
+                            ))}
+                            <li className="sup-txn-total">
+                              <span>الرصيد الحالي</span>
+                              <strong className={`ts-num ${sup.balance > 0 ? 'amt-due' : 'amt-clear'}`} data-k="currentBalance">{fmt(sup.balance)}</strong>
+                            </li>
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )
+              })}
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">المبلغ</label>
-                <input type="number" value={payForm.amount} autoFocus
-                  onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
-                  placeholder="0.00"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">التاريخ</label>
-                <input type="date" value={payForm.date}
-                  onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">مصدر الدفع</label>
-                <select value={payForm.paySource} onChange={e => setPayForm(f => ({ ...f, paySource: e.target.value }))}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                  <option value="bank">🏦 البنك / تحويل</option>
-                  <option value="cash">💵 الصندوق</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">ملاحظات</label>
-                <input value={payForm.notes} onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))}
-                  placeholder="اختياري"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setPayModal(null)}
-                className="flex-1 py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors">
-                إلغاء
-              </button>
-              <button onClick={recordPayment} disabled={saving || !payForm.amount}
-                className="flex-1 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
-                style={{ background: GOLD, color: NAVY }}>
-                {saving ? 'جارٍ الحفظ...' : 'تسجيل الدفعة'}
-              </button>
-            </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
 
-      {/* مودال إضافة مورد */}
-      {addModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setAddModal(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h2 className="text-base font-bold mb-4" style={{ color: NAVY }}>إضافة مورد جديد</h2>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">اسم المورد *</label>
-                <input value={newForm.name} autoFocus
-                  onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="اسم الشركة أو المورد"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">رقم الجوال</label>
-                <input value={newForm.phone} onChange={e => setNewForm(f => ({ ...f, phone: e.target.value }))}
-                  placeholder="اختياري"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">رصيد افتتاحي (مديونية سابقة)</label>
-                <input type="number" value={newForm.opening_balance}
-                  onChange={e => setNewForm(f => ({ ...f, opening_balance: e.target.value }))}
-                  placeholder="0.00"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">ملاحظات</label>
-                <input value={newForm.notes} onChange={e => setNewForm(f => ({ ...f, notes: e.target.value }))}
-                  placeholder="اختياري"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setAddModal(false)}
-                className="flex-1 py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors">
-                إلغاء
-              </button>
-              <button onClick={addSupplier} disabled={saving || !newForm.name.trim()}
-                className="flex-1 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
-                style={{ background: NAVY, color: '#fff' }}>
-                {saving ? 'جارٍ الحفظ...' : 'إضافة مورد'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {!loading && !loadError && payables.length > 0 && (
+        <Panel title="موردو «آجل — باسم المورد»" subtitle="المستحق من فواتير مسجلة في الدفتر آجلًا ناقص ما سُدد منها. الدفعة تخفض المستحق ولا تُحتسب تكلفة ثانية.">
+          <ul className="sup-txns" data-table="sup.payables">
+            {payables.map(p => (
+              <li key={p.id} data-payable={p.id}>
+                <span className="sup-txn-main"><strong data-k="name">{p.name}</strong></span>
+                <strong className={`ts-num ${p.balance > 0 ? 'amt-due' : 'amt-clear'}`} data-k="balance">{fmt(p.balance)}</strong>
+                <Button size="sm" variant="primary" data-k="pay" disabled={p.balance <= 0} onClick={() => openPay(p)}>تسجيل دفعة</Button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
       )}
+
+      {/* تسجيل دفعة */}
+      <Dialog open={!!payModal} onClose={() => !saving && setPayModal(null)} title={payModal ? `تسجيل دفعة — ${payModal.name}` : ''}
+        description={payModal ? `المستحق: ${fmt(payModal.balance)}` : ''}
+        footer={<>
+          <Button variant="primary" disabled={saving || !(payAmount > 0) || !payForm.date || !payDateValid} onClick={recordPayment}>{saving ? 'جارٍ الحفظ…' : paymentIncomplete ? 'إعادة المحاولة' : 'تسجيل الدفعة'}</Button>
+          <Button onClick={() => setPayModal(null)} disabled={saving}>{paymentIncomplete ? 'إغلاق' : 'إلغاء'}</Button>
+        </>}>
+        {payModal && (
+          <div className="ts-form-grid">
+            <Field label="المبلغ" error={payAmountBad ? 'مبلغ غير صالح؛ اكتب رقمًا أكبر من صفر.' : undefined}>
+              <Input numeric disabled={saving || paymentIncomplete} value={payForm.amount} placeholder="0.00" data-k="payAmount" onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} />
+            </Field>
+            <Field label="التاريخ" error={!payDateValid ? 'أدخل تاريخًا صحيحًا.' : undefined}><DateInput disabled={saving || paymentIncomplete} value={payForm.date} onValidityChange={setPayDateValid} onChange={iso => setPayForm(f => ({ ...f, date: iso }))} /></Field>
+            <Field label="مصدر الدفع"><Select disabled={saving || paymentIncomplete} value={payForm.paySource} options={PAY_SOURCES} onChange={e => setPayForm(f => ({ ...f, paySource: e.target.value }))} /></Field>
+            <Field label="ملاحظات"><Input disabled={saving || paymentIncomplete} value={payForm.notes} placeholder="اختياري" onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} /></Field>
+          </div>
+        )}
+        {payModal && formError && <p className="ts-field-error" role="alert" data-k="sup.formError">{formError}</p>}
+      </Dialog>
+
+      {/* إضافة مورد */}
+      <Dialog open={addModal} onClose={() => !saving && setAddModal(false)} title="إضافة مورد جديد"
+        footer={<>
+          <Button variant="primary" disabled={saving || !newForm.name.trim() || openingBad} onClick={addSupplier}>{saving ? 'جارٍ الحفظ…' : 'إضافة مورد'}</Button>
+          <Button onClick={() => setAddModal(false)} disabled={saving}>إلغاء</Button>
+        </>}>
+        {addModal && (
+          <div className="ts-form-grid">
+            <Field label="اسم المورد" span><Input value={newForm.name} placeholder="اسم الشركة أو المورد" data-k="newName" onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} /></Field>
+            <Field label="رقم الجوال"><Input value={newForm.phone} placeholder="اختياري" onChange={e => setNewForm(f => ({ ...f, phone: e.target.value }))} /></Field>
+            <Field label="رصيد افتتاحي (مديونية سابقة)" error={openingBad ? 'مبلغ غير صالح.' : undefined}>
+              <Input numeric value={newForm.opening_balance} placeholder="0.00" data-k="newOpening" onChange={e => setNewForm(f => ({ ...f, opening_balance: e.target.value }))} />
+            </Field>
+            <Field label="ملاحظات" span><Input value={newForm.notes} placeholder="اختياري" onChange={e => setNewForm(f => ({ ...f, notes: e.target.value }))} /></Field>
+          </div>
+        )}
+        {addModal && formError && <p className="ts-field-error" role="alert" data-k="sup.formError">{formError}</p>}
+      </Dialog>
     </div>
   )
 }

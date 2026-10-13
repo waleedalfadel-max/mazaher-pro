@@ -28,7 +28,8 @@
   --sidebar-hover:        #243F63;
 }
 
-* { font-family: 'Cairo', sans-serif !important; }
+/* الخطوط من src/ui/fonts.js و src/ui/theme.css (IBM Plex Sans Arabic، والأرقام بـ Manrope)،
+   مضمّنة مع التطبيق بلا طلب إلى خدمة خطوط خارجية. */
 
 body {
   direction: rtl;

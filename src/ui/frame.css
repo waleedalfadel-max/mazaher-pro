@@ -1,0 +1,87 @@
+/* إطار التطبيق: شريط جانبي على الكمبيوتر، وشريط سفلي على الجوال فيه زر رفع واضح. */
+
+.ts-app { display: flex; height: 100dvh; overflow: hidden; background: var(--ts-bg); }
+
+.ts-sidebar {
+  width: 216px; flex-shrink: 0; background: var(--ts-navy); color: #D9E3E5;
+  display: flex; flex-direction: column; gap: 20px; padding: 24px 12px 16px; overflow-y: auto;
+}
+.ts-sidebar .ts-brand { padding-inline: 10px; }
+.ts-business {
+  margin: 0 2px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+  border-radius: 10px; padding: 10px 11px; display: flex; gap: 9px; align-items: center; min-width: 0;
+}
+.ts-business-icon { display: grid; place-items: center; background: rgba(255,255,255,.07); width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; color: #CFE3E4; }
+.ts-business strong { display: block; color: #fff; font-size: 13px; font-weight: 500; line-height: 1.4; }
+.ts-business small { display: block; color: #9EB3BA; font-size: 11.5px; }
+.ts-nav { display: grid; gap: 3px; }
+.ts-nav-label { color: #8EA6AF; font-size: 11px; padding: 10px 12px 4px; }
+.ts-nav-link {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 9px;
+  color: var(--ts-sidebar-text); font-size: 13.5px; text-decoration: none; border: 0; background: transparent; text-align: right; cursor: pointer;
+  transition: background var(--ts-fast), color var(--ts-fast);
+}
+.ts-nav-link:hover { background: rgba(255,255,255,.05); color: #fff; }
+.ts-nav-link.is-active { background: var(--ts-petrol); color: #fff; }
+.ts-nav-link.is-later { color: #A9BEC5; }
+.ts-nav-count {
+  margin-inline-start: auto; min-width: 22px; padding: 0 6px; border-radius: 6px; text-align: center;
+  background: #9A5B12; color: #fff; font-family: var(--ts-font-num); font-size: 11.5px; font-weight: 600;
+}
+.ts-nav-tag { margin-inline-start: auto; font-size: 10.5px; color: #7F98A1; }
+.ts-profile { margin-top: auto; border-top: 1px solid rgba(255,255,255,.1); padding: 14px 6px 0; display: flex; align-items: center; gap: 9px; }
+.ts-profile strong { display: block; font-size: 13px; font-weight: 500; color: #fff; }
+.ts-profile small { display: block; color: #91A9B2; font-size: 11.5px; }
+.ts-avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; background: var(--ts-mint); color: var(--ts-petrol-text); font-weight: 600; }
+
+.ts-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ts-topbar {
+  height: 62px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 0 26px; background: #fff; border-bottom: 1px solid var(--ts-line);
+}
+.ts-breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ts-muted); min-width: 0; }
+.ts-breadcrumb strong { color: var(--ts-navy); font-weight: 600; }
+.ts-top-meta { display: flex; align-items: center; gap: 10px; }
+.ts-mobile-brand { display: none; }
+.ts-scroll { flex: 1; overflow-y: auto; }
+.ts-content { padding: 22px 26px 36px; max-width: 1260px; margin-inline: auto; }
+.ts-bottomnav { display: none; }
+
+.ts-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.ts-heading h1 { font-size: 25px; font-weight: 700; line-height: 1.35; letter-spacing: -.5px; }
+.ts-heading p { font-size: 13px; color: var(--ts-muted); margin-top: 2px; }
+.ts-heading-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ts-back { display: inline-flex; align-items: center; gap: 6px; color: var(--ts-petrol-text); font-size: 13px; font-weight: 500; text-decoration: none; margin-bottom: 8px; min-height: 30px; background: none; border: 0; padding: 0; cursor: pointer; }
+.ts-back:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .ts-sidebar { width: 190px; }
+  .ts-content { padding: 20px; }
+}
+
+@media (max-width: 650px) {
+  .ts-sidebar, .ts-breadcrumb { display: none; }
+  .ts-topbar { height: 56px; padding-inline: 14px; }
+  .ts-mobile-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .ts-mobile-brand .ts-business-name { font-size: 12.5px; color: var(--ts-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ts-content { padding: 16px 16px 24px; }
+  .ts-heading { margin-bottom: 14px; }
+  .ts-heading h1 { font-size: 22px; }
+
+  .ts-bottomnav {
+    display: grid; grid-template-columns: 1fr 1fr 1.25fr 1fr; align-items: center; gap: 4px; flex-shrink: 0;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: #fff; border-top: 1px solid var(--ts-line);
+  }
+  .ts-bottomnav a, .ts-bottomnav button {
+    position: relative; display: grid; justify-items: center; gap: 1px; min-height: 50px; padding: 5px 2px; border: 0; border-radius: 10px;
+    background: transparent; color: #4F666C; font-size: 11.5px; text-decoration: none; cursor: pointer;
+  }
+  .ts-bottomnav .is-active { color: var(--ts-petrol-text); background: #EDF7F3; font-weight: 600; }
+  .ts-bottomnav .ts-upload-tab { background: var(--ts-petrol); color: #fff; font-weight: 600; box-shadow: 0 6px 14px rgba(8,127,140,.25); }
+  .ts-bottomnav .ts-upload-tab:active { background: var(--ts-petrol-hover); }
+  .ts-bottomnav .ts-nav-count { position: absolute; top: 2px; left: calc(50% - 24px); margin: 0; min-width: 18px; height: 18px; line-height: 18px; padding: 0 5px; border-radius: 9px; }
+}
+
+/* الشعار لا ينكمش؛ اسم المنشأة الطويل يُختصر بعده */
+.ts-mobile-brand .ts-brand { flex-shrink: 0; min-width: auto; }
+.ts-mobile-brand .ts-business-name { min-width: 0; flex: 1; }

@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { adminCreateStaff } from '../lib/staffCredentials'
+import { normalizePin } from '../lib/pinInput'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadAppLogo, fetchLogoUrl } from '../lib/appLogo'
 import { clearProjectCache } from '../lib/projectSettings'
@@ -16,6 +18,14 @@ const ROLES = [
   { value: 'cashier',    label: 'الكاشير' },
 ]
 
+const ADMIN_USERS_ERRORS = {
+  no_session: 'انتهت الجلسة أو أُوقف الحساب. سجّل الدخول من جديد.',
+  forbidden: 'هذه الشاشة لمدير المنصة فقط.',
+  not_found: 'المنشأة غير موجودة. حدّث الصفحة.',
+  invalid: 'طلب غير صالح. حدّث الصفحة.',
+  network: 'انقطع الاتصال أو لم يصل الرد.',
+}
+
 const ROLE_COLORS = {
   owner:      { bg: '#eff6ff', color: '#1d4ed8' },
   accountant: { bg: '#f0fdf4', color: '#15803d' },
@@ -23,17 +33,19 @@ const ROLE_COLORS = {
   cashier:    { bg: '#fdf4ff', color: '#7e22ce' },
 }
 
-function UserRow({ user, onSave, onDelete }) {
+// صف موظف في شاشة مدير المنصة: الاسم والدور والفرع والحالة. رمز الدخول لا يصل إلى الشاشة أصلًا (admin_project_users).
+function UserRow({ user, onSave }) {
   const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState({ name: user.name, role: user.role, pin: user.pin, branch: user.branch || '' })
-  const [showPin, setShowPin] = useState(false)
+  const [form, setForm] = useState({ name: user.name, role: user.role, branch: user.branch || '' })
   const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
 
   async function save() {
-    if (!form.name.trim() || !form.pin.trim()) return
-    setSaving(true)
-    await onSave(user.id, form)
+    if (!form.name.trim()) return
+    setSaving(true); setErr('')
+    const res = await onSave(user.id, form)
     setSaving(false)
+    if (res?.error) { setErr(res.error); return }
     setEditing(false)
   }
 
@@ -55,29 +67,23 @@ function UserRow({ user, onSave, onDelete }) {
         placeholder="الفرع (اختياري)" dir="rtl"
         className="border rounded-lg px-2 py-1.5 text-sm focus:outline-none w-32"
         style={{ borderColor: '#d1c9b8' }} />
-      <div className="flex items-center gap-1">
-        <input value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
-          type={showPin ? 'text' : 'password'}
-          placeholder="الرمز" dir="ltr"
-          className="border rounded-lg px-2 py-1.5 text-sm focus:outline-none w-20"
-          style={{ borderColor: '#d1c9b8' }} />
-        <button onClick={() => setShowPin(v => !v)} className="text-slate-400 hover:text-slate-600 text-xs px-1">
-          {showPin ? '🙈' : '👁'}
-        </button>
-      </div>
       <button onClick={save} disabled={saving}
         className="px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
         style={{ background: GOLD, color: NAVY }}>
         {saving ? '...' : 'حفظ'}
       </button>
-      <button onClick={() => setEditing(false)} className="text-xs text-slate-400 hover:text-red-500 px-1">✕</button>
+      <button onClick={() => { setEditing(false); setErr('') }} className="text-xs text-slate-400 hover:text-red-500 px-1">✕</button>
+      {err && <p className="w-full text-xs text-red-500" role="alert">{err}</p>}
     </div>
   )
 
   return (
-    <div className="flex items-center gap-3 py-2 border-b last:border-0" style={{ borderColor: '#D4E8E6' }}>
+    <div className="flex items-center gap-3 py-2 border-b last:border-0" style={{ borderColor: '#D4E8E6' }} data-user-row>
       <div className="flex-1 min-w-0">
         <span className="font-medium text-sm" style={{ color: NAVY }}>{user.name}</span>
+        {user.is_active === false && (
+          <span className="text-xs text-slate-500 bg-slate-100 rounded-full px-2 py-0.5 mr-2">معطّل</span>
+        )}
         {user.branch && (
           <span className="text-xs text-slate-400 mr-2">🏢 {user.branch}</span>
         )}
@@ -86,15 +92,7 @@ function UserRow({ user, onSave, onDelete }) {
         style={{ background: roleStyle.bg, color: roleStyle.color }}>
         {roleLabel}
       </span>
-      <span className="text-xs font-mono text-slate-400 w-14 text-center">
-        {showPin ? user.pin : '••••'}
-      </span>
-      <button onClick={() => setShowPin(v => !v)} className="text-slate-300 hover:text-slate-500 text-xs">
-        {showPin ? '🙈' : '👁'}
-      </button>
       <button onClick={() => setEditing(true)} className="text-slate-300 hover:text-slate-600 text-xs">✏️</button>
-      <button onClick={() => onDelete(user.id)}
-        className="text-slate-300 hover:text-red-500 text-xs transition-colors">🗑</button>
     </div>
   )
 }
@@ -107,10 +105,11 @@ function AddUserRow({ projectId, onAdded }) {
 
   async function add() {
     if (!form.name.trim() || !form.pin.trim()) { setErr('الاسم والرمز مطلوبان'); return }
+    if (!/^\d{5}$/.test(form.pin.trim())) { setErr('رمز الدخول 5 أرقام بالضبط'); return }
     setSaving(true); setErr('')
-    const { error } = await supabase.from('app_users')
-      .insert({ project_id: projectId, name: form.name.trim(), role: form.role, pin: form.pin.trim(), branch: form.branch.trim() || null })
-    if (error) { setErr(error.message); setSaving(false); return }
+    // عبر الخادم: يتحقق من مدير المنصة ومن عدم تكرار الرمز في المنشأة، ويخزنه للتحقق فقط
+    const r = await adminCreateStaff(supabase, { projectId, name: form.name, role: form.role, branch: form.branch, pin: form.pin.trim() })
+    if (!r.ok) { setErr(r.message); setSaving(false); return }
     setForm({ name: '', role: 'accountant', pin: '', branch: '' })
     setSaving(false)
     onAdded()
@@ -134,7 +133,7 @@ function AddUserRow({ projectId, onAdded }) {
           className="border rounded-lg px-2 py-1.5 text-sm focus:outline-none w-32"
           style={{ borderColor: '#d1c9b8' }} />
         <div className="flex items-center gap-1">
-          <input value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))}
+          <input value={form.pin} onChange={e => setForm(f => ({ ...f, pin: normalizePin(e.target.value).slice(0, 5) }))} inputMode="numeric" autoComplete="off"
             type={showPin ? 'text' : 'password'}
             placeholder="الرمز" dir="ltr"
             className="border rounded-lg px-2 py-1.5 text-sm focus:outline-none w-20"
@@ -241,41 +240,53 @@ function SettingsSection({ projectId }) {
   )
 }
 
-function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
+function ProjectCard({ p, countsLoading, onRename, onToggleActive, onEnter }) {
   const [editingName, setEditingName] = useState(false)
   const [editName, setEditName]       = useState('')
   const [activeTab, setActiveTab]     = useState(null) // null | 'users' | 'settings'
   const [users, setUsers]             = useState([])
-  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [usersState, setUsersState]   = useState('idle') // idle | loading | ready | error
+  const [usersError, setUsersError]   = useState('')
+  const [usersNotice, setUsersNotice] = useState('')   // نتيجة تعديل فشل، تبقى بعد إعادة التحميل
+  const usersReq = useRef(0)
 
+  // موظفو هذه المنشأة من الخادم (مدير منصة نشط وحده؛ بلا رموز). الفشل حالة مستقلة، لا قائمة فارغة.
   async function loadUsers() {
-    setLoadingUsers(true)
-    const { data } = await supabase.from('app_users')
-      .select('id, name, role, pin, branch')
-      .eq('project_id', p.id)
-      .order('role')
-    setUsers(data || [])
-    setLoadingUsers(false)
+    const req = ++usersReq.current
+    setUsersState('loading'); setUsersError(''); setUsers([])
+    let res
+    try {
+      const { data, error } = await supabase.rpc('admin_project_users', { p_project_id: p.id })
+      res = error ? { ok: false, code: 'network' } : data
+    } catch { res = { ok: false, code: 'network' } }
+    if (req !== usersReq.current) return   // رد متأخر لطلب أقدم
+    if (res?.ok && res.project_id === p.id && Array.isArray(res.members)) {
+      setUsers(res.members); setUsersState('ready')
+    } else {
+      setUsersError(ADMIN_USERS_ERRORS[res?.code] || ADMIN_USERS_ERRORS.network); setUsersState('error')
+    }
   }
 
   function openTab(tab) {
+    setUsersNotice('')
     if (activeTab === tab) { setActiveTab(null); return }
     if (tab === 'users' && activeTab !== 'users') loadUsers()
     setActiveTab(tab)
   }
 
+  // التعديل كتابة مباشرة كما كان (بلا رمز)؛ النتيجة تُقرأ من الخادم بعده، فلا يُعرض حفظٌ لم يحدث
   async function saveUser(id, form) {
-    await supabase.from('app_users')
-      .update({ name: form.name.trim(), role: form.role, pin: form.pin.trim(), branch: form.branch?.trim() || null })
+    setUsersNotice('')
+    const { data, error } = await supabase.from('app_users')
+      .update({ name: form.name.trim(), role: form.role, branch: form.branch?.trim() || null })
       .eq('id', id)
-    setUsers(us => us.map(u => u.id === id ? { ...u, ...form } : u))
+      .select('id')
+    const failed = error ? error.message : !data?.length ? 'لا صلاحية لتعديل موظفي هذه المنشأة من هذه الشاشة.' : ''
+    await loadUsers()
+    if (failed) setUsersNotice(`لم يُحفظ التعديل: ${failed}`)
+    return failed ? { error: failed } : {}
   }
 
-  async function deleteUser(id) {
-    if (!confirm('حذف هذا المستخدم؟')) return
-    await supabase.from('app_users').delete().eq('id', id)
-    setUsers(us => us.filter(u => u.id !== id))
-  }
 
   const fmt = d => d ? new Date(d).toLocaleDateString('en-GB') : '—'
 
@@ -308,8 +319,8 @@ function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
             </div>
           )}
           <div className="flex gap-4 mt-1 text-xs text-slate-400 flex-wrap">
-            <span>👥 {p.userCount} مستخدم</span>
-            <span>📋 {p.entryCount} قيد</span>
+            <span data-user-count>👥 {countsLoading ? '…' : p.userCount == null ? '—' : p.userCount} مستخدم</span>
+            <span data-entry-count>📋 {countsLoading ? '…' : p.entryCount == null ? '—' : p.entryCount} قيد</span>
             <span>📅 منذ {fmt(p.created_at)}</span>
           </div>
         </div>
@@ -348,23 +359,29 @@ function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
       {activeTab === 'users' && (
         <div className="px-5 pb-5" style={{ borderTop: '1px solid #D4E8E6' }}>
           <div className="pt-4">
-            {loadingUsers ? (
-              <div className="flex justify-center py-4">
+            {usersState === 'loading' || usersState === 'idle' ? (
+              <div className="flex justify-center py-4" data-users-state="loading">
                 <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
                   style={{ borderColor: GOLD, borderTopColor: 'transparent' }} />
               </div>
+            ) : usersState === 'error' ? (
+              <div className="flex items-center gap-3 py-2 flex-wrap" role="alert" data-users-state="error">
+                <p className="text-xs text-red-600">تعذّر تحميل الموظفين. {usersError}</p>
+                <button onClick={loadUsers} className="px-3 py-1 rounded-lg text-xs font-bold"
+                  style={{ background: NAVY, color: '#fff' }}>إعادة المحاولة</button>
+              </div>
             ) : users.length === 0 ? (
-              <p className="text-xs text-slate-400 py-2">لا يوجد مستخدمون</p>
+              <p className="text-xs text-slate-400 py-2" data-users-state="empty">لا يوجد موظفون في هذه المنشأة.</p>
             ) : (
-              <div>
+              <div data-users-state="ready">
+                {usersNotice && <p className="text-xs text-red-600 pb-2" role="alert" data-users-notice>{usersNotice}</p>}
                 <div className="flex items-center gap-3 pb-1 text-xs font-bold text-slate-400">
                   <span className="flex-1">الاسم</span>
                   <span className="w-24">الدور</span>
-                  <span className="w-14 text-center">الرمز</span>
                   <span className="w-16"></span>
                 </div>
                 {users.map(u => (
-                  <UserRow key={u.id} user={u} onSave={saveUser} onDelete={deleteUser} />
+                  <UserRow key={u.id} user={u} onSave={saveUser} />
                 ))}
               </div>
             )}
@@ -386,7 +403,7 @@ function ProjectCard({ p, onRename, onToggleActive, onEnter }) {
 }
 
 export default function SuperAdmin() {
-  const { switchProject } = useAuth()
+  const { enterProjectView } = useAuth()
   const navigate = useNavigate()
   const [projects, setProjects]         = useState([])
   const [loading,  setLoading]          = useState(true)
@@ -403,32 +420,46 @@ export default function SuperAdmin() {
     fetchLogoUrl().then(url => { if (url) setLogoUrl(url) })
   }, [])
 
+  // أرقام المنشآت من دالتي خادم لمدير المنصة وحده (مجاميع فقط؛ قراءة الدفاتر مباشرة محصورة في منشأة الجلسة، فكانت تعطي صفرًا).
+  // إن تعذّر رقم يُعرض «—» ورسالة وإعادة محاولة، لا صفر.
+  const [countsState, setCountsState] = useState('loading')   // loading | ready | error
+  async function fetchCounts() {
+    const call = fn => supabase.rpc(fn).then(r => (!r.error && r.data?.ok === true ? r.data.counts || {} : null), () => null)
+    const [users, entries] = await Promise.all([call('admin_project_user_counts'), call('admin_project_entry_counts')])
+    return {
+      userCount: users ? Object.fromEntries(Object.entries(users).map(([id, c]) => [id, c.total])) : null,
+      entryCount: entries,
+    }
+  }
+  const withCounts = (list, { userCount, entryCount }) => list.map(p => ({
+    ...p,
+    userCount:  userCount ? (userCount[p.id] || 0) : null,
+    entryCount: entryCount ? (entryCount[p.id] || 0) : null,
+  }))
+
   async function loadProjects() {
     setLoading(true)
     const { data: projs } = await supabase
       .from('projects').select('id, name, created_at').order('created_at')
     if (!projs) { setLoading(false); return }
 
-    const [{ data: settings }, { data: users }, { data: entries }] = await Promise.all([
+    const [{ data: settings }, counts] = await Promise.all([
       supabase.from('project_settings').select('project_id, active'),
-      supabase.from('app_users').select('project_id').not('project_id', 'is', null),
-      supabase.from('ledger_entries').select('project_id'),
+      fetchCounts(),
     ])
 
     const settingsMap = {}
     ;(settings || []).forEach(s => { settingsMap[s.project_id] = s.active })
-    const userCount = {}
-    ;(users || []).forEach(u => { userCount[u.project_id] = (userCount[u.project_id] || 0) + 1 })
-    const entryCount = {}
-    ;(entries || []).forEach(e => { entryCount[e.project_id] = (entryCount[e.project_id] || 0) + 1 })
-
-    setProjects(projs.map(p => ({
-      ...p,
-      active:     settingsMap[p.id] !== false,
-      userCount:  userCount[p.id]  || 0,
-      entryCount: entryCount[p.id] || 0,
-    })))
+    setProjects(withCounts(projs.map(p => ({ ...p, active: settingsMap[p.id] !== false })), counts))
+    setCountsState(counts.userCount && counts.entryCount ? 'ready' : 'error')
     setLoading(false)
+  }
+
+  async function retryCounts() {
+    setCountsState('loading')
+    const counts = await fetchCounts()
+    setProjects(ps => withCounts(ps, counts))
+    setCountsState(counts.userCount && counts.entryCount ? 'ready' : 'error')
   }
 
   async function handleLogoChange(e) {
@@ -529,15 +560,26 @@ export default function SuperAdmin() {
         </div>
       )}
 
+      {/* أرقام المنشآت: رسالة وإعادة محاولة بدل صفر مضلل */}
+      {countsState === 'error' && (
+        <div className="flex items-center gap-3 rounded-xl px-4 py-3 flex-wrap" role="alert" data-counts-state="error"
+          style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+          <p className="text-sm text-red-700 flex-1">تعذّر تحميل أرقام المنشآت (المستخدمون والقيود). الأرقام غير المتاحة تظهر «—».</p>
+          <button onClick={retryCounts} className="px-3 py-1.5 rounded-lg text-xs font-bold"
+            style={{ background: NAVY, color: '#fff' }}>إعادة المحاولة</button>
+        </div>
+      )}
+
       {/* قائمة العملاء */}
-      <div className="space-y-3">
+      <div className="space-y-3" data-counts-state={countsState}>
         {projects.map(p => (
           <ProjectCard
             key={p.id}
             p={p}
+            countsLoading={countsState === 'loading'}
             onRename={renameProject}
             onToggleActive={toggleActive}
-            onEnter={(id, name) => { switchProject(id, name); navigate('/') }}
+            onEnter={(id, name) => { enterProjectView(id, name); navigate('/') }}
           />
         ))}
       </div>

@@ -1,0 +1,212 @@
+// الاعتماد الجديد (v2): العمليات كلها في الخادم (دوال approval_* في قاعدة البيانات، معاملة واحدة لكل اعتماد).
+// هذه الوحدة تبني البيانات المرسلة وتفحص المبالغ بالهللة قبل الإرسال وتترجم رموز الخادم إلى رسائل.
+// الفحص هنا للعرض فقط؛ الخادم يعيد الفحص نفسه ويرفض ما يخالفه.
+import { STALE_MESSAGE } from './appVersion.js'
+
+/** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
+export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : 'network' })
+
+const LATIN = { '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+  '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9', '٫': '.' }
+
+/**
+ * المبلغ بالهللة عددًا صحيحًا، من نص أو رقم، بلا حساب عشري تقريبي.
+ * يعيد null للفارغ، وNaN لغير الصالح أو لأكثر من هللتين (لا تقريب صامت).
+ */
+export function toHalalas(value) {
+  if (value == null || value === '') return null
+  let s = typeof value === 'number' ? (Number.isFinite(value) ? String(value) : 'x') : String(value)
+  s = s.replace(/[٠-٩۰-۹٫]/g, c => LATIN[c]).replace(/[,٬\s]/g, '')
+  if (/e/i.test(s)) s = Number(s).toFixed(10).replace(/0+$/, '').replace(/\.$/, '')
+  const m = s.match(/^(-?)(\d*)(?:\.(\d*))?$/)
+  if (!m || (m[2] === '' && !m[3])) return NaN
+  const frac = (m[3] || '').replace(/0+$/, '')
+  if (frac.length > 2) return NaN
+  const h = Number(m[2] || '0') * 100 + Number((frac + '00').slice(0, 2))
+  return m[1] ? -h : h
+}
+export const fromHalalas = h => (h / 100).toFixed(2)
+
+/**
+ * مطابقة البنود والإجمالي بالهللة على أساس المستند، بعد الخصم على الإجمالي إن وُجد:
+ *  inclusive — مجموع البنود − الخصم = الإجمالي؛ exclusive — مجموع البنود − الخصم + الضريبة = الإجمالي.
+ *  مبلغ البند هو بعد خصم البند نفسه (خصم البند للتدقيق فقط).
+ * لا هامش: أي فرق يجب أن يُفسَّر (بند ظاهر) قبل الاعتماد.
+ */
+export function exactTotals(inv) {
+  const items = Array.isArray(inv?.items) ? inv.items : []
+  const basis = inv?.amountsBasis === 'exclusive' ? 'exclusive' : 'inclusive'
+  const total = toHalalas(inv?.totalAmount ?? inv?.amount)
+  const vat = toHalalas(inv?.vatAmount) ?? 0
+  const discount = toHalalas(inv?.invoiceDiscount) ?? 0          // خصم على إجمالي الفاتورة (موجب)
+  const amounts = items.map(it => toHalalas(it.amount) ?? 0)     // مبلغ البند بعد خصمه
+  const invalid = [total, vat, discount, ...amounts].some(x => Number.isNaN(x)) || discount < 0 || amounts.some(a => a < 0)
+  const itemsSum = amounts.reduce((a, b) => a + b, 0)
+  const base = { basis, total: total ?? 0, vat, discount, itemsTotal: itemsSum, diff: 0 }
+  if (invalid) return { ...base, status: 'invalid' }
+  if (!items.length) return { ...base, status: discount ? 'invalid' : 'none' }
+  if (discount && discount >= itemsSum) return { ...base, status: 'invalid' }
+  const diff = basis === 'inclusive' ? itemsSum - discount - (total ?? 0) : itemsSum - discount + vat - (total ?? 0)
+  return { ...base, status: diff === 0 ? 'match' : 'mismatch', diff }
+}
+
+/** توزيع الضريبة على البنود بالهللة بطريقة الباقي الأكبر (مطابق لـ approval_private.allocate). للعرض. */
+export function allocateHalalas(weights, amount) {
+  const sum = weights.reduce((a, b) => a + b, 0)
+  if (!weights.length) return []
+  if (sum === 0) return weights.map(() => 0)
+  const base = weights.map(w => Math.floor((amount * w) / sum))
+  const rem = weights.map((w, i) => ({ i, r: (amount * w) % sum }))
+  let left = amount - base.reduce((a, b) => a + b, 0)
+  for (const { i } of rem.sort((a, b) => b.r - a.r || a.i - b.i)) { if (left-- <= 0) break; base[i]++ }
+  return base
+}
+
+// مطابقة الاسم كما في الخادم (approval_private.norm_cat): تُحذف الرموز والإيموجي، وتُوحَّد الأرقام والمسافات وحالة
+// الحروف اللاتينية؛ تبقى الحروف العربية واللاتينية والأرقام فلا يتطابق اسمان مختلفان.
+export const normCat = s => String(s || '').replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0))
+  .replace(/[^A-Za-z0-9؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+/**
+ * التصنيف الأساسي الفعلي للبند: المختار إن كان الفرعي تحته (أو لا فرعي)، وإلا أبو الفرعي بالاسم (قراءة وضعت الفرعي
+ * تحت رئيسي آخر)، وإلا المكتوب، وإلا تصنيف الفاتورة. المختار أولًا حتى لا يحسم اسمُ فرعي متكرر تحت رئيسيين الاختيارَ.
+ */
+export function itemMainCategory(categories, item, fallbackTransType) {
+  const cats = categories || [], subName = normCat(item.category_sub || '')
+  const chosen = item.category_main ? cats.find(p => !p.parent_id && normCat(p.name) === normCat(item.category_main)) : null
+  if (chosen && (!subName || cats.some(c => c.parent_id === chosen.id && normCat(c.name) === subName))) return chosen.name
+  // بلا رئيسي مختار: الفرعي يحسمه فقط إن كان اسمه وحيدًا في المنشأة؛ الملتبس (مثل «أخرى» تحت رئيسيين) يرفضه الخادم ويطلب الاختيار
+  const subs = subName ? cats.filter(c => c.parent_id && normCat(c.name) === subName) : []
+  const sub = subs.length === 1 ? subs[0] : null
+  if (sub) { const parent = categories.find(p => p.id === sub.parent_id); if (parent) return parent.name }
+  return item.category_main || normCat(fallbackTransType) || null
+}
+/** نوع قيد التصنيف: نوع الحركة المطابق لاسمه في إعدادات المنشأة، وإلا نوع الفاتورة. */
+export function ledgerTypeFor(main, transTypes, fallbackTransType) {
+  return (transTypes || []).find(t => normCat(t) === normCat(main)) || fallbackTransType || '🛒 مصروفات تشغيلية'
+}
+
+const CHANNEL_LABEL = { cash: 'النقدي', network: 'الشبكة', transfer: 'التحويل', hunger: 'هنقر', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
+const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'التاريخ', invoiceNumber: 'رقم الفاتورة', totalAmount: 'الإجمالي', amount: 'المبلغ',
+  vatAmount: 'الضريبة', paySource: 'مصدر الدفع', transType: 'التصنيف الأساسي', category_sub: 'التصنيف الفرعي', amountsBasis: 'أساس المبالغ',
+  type: 'نوع المستند', cashSales: 'نقدي', networkSales: 'شبكة', transferSales: 'تحويل', hungerSales: 'هنقر ستيشن', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
+const same = (a, b) => String(a ?? '') === String(b ?? '')
+
+/** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
+export function reviewChanges(original, final) {
+  if (!original) return ['فاتورة أضافها المراجع (لم تكن في القراءة)']
+  const out = []
+  for (const [k, label] of Object.entries(FIELD_LABEL)) {
+    if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${original[k] ?? '—'}» ← «${final[k] ?? '—'}»`)
+  }
+  const a = original.items || [], b = final.items || []
+  const n = Math.max(a.length, b.length)
+  for (let i = 0; i < n; i++) {
+    if (!a[i]) { out.push(`بند ${i + 1} أُضيف: ${b[i].description || '—'} ${b[i].amount ?? ''}`); continue }
+    if (!b[i]) { out.push(`بند ${i + 1} حُذف: ${a[i].description || '—'} ${a[i].amount ?? ''}`); continue }
+    for (const k of ['description', 'amount', 'category_main', 'category_sub']) {
+      if (!same(a[i][k], b[i][k])) out.push(`بند ${i + 1} — ${{ description: 'الوصف', amount: 'المبلغ', category_main: 'التصنيف', category_sub: 'الفرعي' }[k]}: «${a[i][k] ?? '—'}» ← «${b[i][k] ?? '—'}»`)
+    }
+  }
+  return out
+}
+
+/**
+ * الفاتورة كما تُرسل للخادم: تصنيف كل بند ونوع قيده، وسجل التعديلات. لا تُحسب هنا أي مبالغ نهائية؛
+ * الخادم يحسب القيود والضريبة ويرفض الفرق.
+ */
+export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
+  const transType = purchaseCategory || inv.transType || ''
+  // التصنيف بمعرّفه الثابت (الخادم يأخذ منه نوع القيد والرمز المالي)؛ الاسم للعرض والتوافق فقط
+  const byName = (name, parentId = null) => (categories || []).find(c => (c.parent_id || null) === parentId && normCat(c.name) === normCat(name || ''))
+  const items = (inv.items || []).map(it => {
+    const main = itemMainCategory(categories, it, transType)
+    const cat = byName(main)
+    const sub = cat && it.category_sub ? byName(it.category_sub, cat.id) : null
+    return { ...it, category_main: main, category_id: cat?.id || it.category_id || null, subcategory_id: sub?.id || it.subcategory_id || null,
+      ledger_type: cat?.ledger_type || ledgerTypeFor(main, transTypes, transType) }
+  })
+  const invCat = (categories || []).find(c => !c.parent_id && c.ledger_type && c.ledger_type === transType) || byName(inv.category_main || transType)
+  // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
+  const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
+  const payload = { ...inv, transType: effectiveType, items, category_main: inv.category_main || normCat(transType) || null, category_id: invCat?.id || inv.category_id || null }
+  if (inv.paySource === 'credit' && supplierId) payload.supplier_id = supplierId
+  delete payload._localStub
+  payload.review_changes = reviewChanges(original, payload)
+  return payload
+}
+
+export const newRequestId = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16)))
+
+/** المبالغ في رسائل الاعتماد: منزلتان دائمًا. */
+export const money = v => (v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+
+const SALES_CHANNEL_NAMES = { cash: 'النقدي', network: 'الشبكة', transfer: 'التحويل', hunger: 'هنقر', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
+/** ما تغيّر في تقرير المبيعات بالتصحيح، لكل قناة: «النقدي من 1,184.35 إلى 1,250.35». */
+export function salesCorrectionChanges(previous, corrected) {
+  return Object.keys(SALES_CHANNEL_NAMES).filter(k => Number(previous?.[k] || 0) !== Number(corrected?.[k] || 0))
+    .map(k => `${SALES_CHANNEL_NAMES[k]} من ${money(previous?.[k] || 0)} إلى ${money(corrected?.[k] || 0)}`)
+}
+
+/** رسالة عربية لرمز الخادم. linked: بيانات المستند المرتبط إن وُجد. */
+export function approvalMessage(res) {
+  const d = res || {}
+  const M = {
+    no_session: 'انتهت الجلسة. سجّل الدخول من جديد ثم أعد المحاولة.',
+    not_found: 'المستند غير موجود أو لا يخص منشأتك.',
+    forbidden: 'الاعتماد للمحاسب في المنشأة فقط.',
+    legacy_mode: 'الاعتماد الجديد غير مفعّل لهذه المنشأة.',
+    paused: 'الاعتماد متوقف مؤقتًا لهذه المنشأة. لم يُسجَّل شيء.',
+    already_approved: `اعتُمد هذا المستند مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. لم يُسجَّل شيء جديد.`,
+    invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
+    stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
+    bad_status: 'حالة المستند لا تسمح بالاعتماد.',
+    empty: 'لا فواتير للاعتماد.',
+    duplicate_in_batch: 'في المستند فاتورتان بالرقم نفسه للمورد نفسه.',
+    supplier_payment_via_suppliers: 'سداد الموردين لا يُعتمد من المستندات: سجّله من صفحة «الموردين» (تخفض المستحق للمورد مع القيد). غيّر نوع هذه الفاتورة أو استبعدها. لم يُسجَّل شيء.',
+    date_required: 'التاريخ مطلوب.',
+    pay_required: 'اختر مصدر الدفع.',
+    type_required: 'اختر التصنيف الأساسي.',
+    amount_required: 'المبلغ مطلوب.',
+    vat_invalid: 'الضريبة يجب أن تكون بين صفر والإجمالي.',
+    invalid_amount: 'في المبالغ قيمة غير رقمية.',
+    too_many_decimals: 'المبالغ بهللتين على الأكثر.',
+    negative_items: 'لا بنود سالبة: سجّل الخصم في «خصم البند» أو «خصم على الإجمالي». المرتجعات مستند مستقل لم يُدعم بعد.',
+    invalid_discount: 'الخصم يجب أن يكون موجبًا وأقل من مجموع البنود.',
+    discount_needs_items: 'الخصم على الإجمالي يوزَّع على البنود؛ أضف بنود الفاتورة أولًا.',
+    zero_items_nonzero_vat: 'البنود صفرية والضريبة ليست صفرًا.',
+    amounts_mismatch: `البنود${d.discount ? ' بعد الخصم' : ''} لا تطابق الإجمالي: الفرق ${money(Math.abs(d.difference ?? 0))} ر.س. طابق مبالغ البنود وخصوماتها والضريبة مع المستند؛ لا يُعتمد بفرق.`,
+    supplier_required: 'اختر المورد.',
+    supplier_decision_required: `«${d.name || ''}» غير مسجّل في الموردين. أكّد أنه مورد جديد أو اختر المورد الموجود.`,
+    duplicate_invoice: 'هذه الفاتورة معتمدة مسبقًا (الرقم نفسه للمورد نفسه). لا يمكن اعتمادها مرة ثانية.',
+    suspected_duplicate: 'يشبه مستندًا معتمدًا. راجع المرتبط؛ إن كان مختلفًا فاكتب السبب ثم اعتمد.',
+    branch_required: 'اختر الفرع لتقرير المبيعات.',
+    sales_report_exists: d.changed ? 'صُحّح التقرير من مستند آخر بعد عرضه. راجع أرقامه الحالية أدناه، ثم صحّحه إن لزم؛ لم يُسجَّل شيء.'
+      : 'يوجد تقرير مبيعات معتمد لهذا الفرع في هذا اليوم. لا يُنشأ تقرير ثانٍ؛ يمكن تصحيح الموجود بسبب مكتوب.',
+    report_changed: 'صُحّح التقرير من مستند آخر بعد عرضه. حدّث الصفحة وراجع أرقامه؛ لم يُسجَّل شيء.',
+    report_revision_required: 'حدّث الصفحة ثم أعد التصحيح.',
+    negative_amount: `مبلغ «${FIELD_LABEL[d.field] || CHANNEL_LABEL[d.field] || d.field || ''}» سالب. المبالغ في المستند لا تكون سالبة؛ التخفيض يكون بتصحيح التقرير.`,
+    request_reused: 'هذا الطلب سُجّل من قبل بمحتوى آخر أو لمستخدم آخر. حدّث الصفحة ثم أعد المحاولة.',
+    sales_report_exists_legacy: 'يوجد تقرير مبيعات لهذا اليوم سُجّل بالطريقة السابقة. لا يُنشأ تقرير ثانٍ؛ صحّحه من صفحة المبيعات والدفتر.',
+    no_report_to_correct: 'لا تقرير معتمد لهذا الفرع واليوم لتصحيحه.',
+    no_change: 'الأرقام مطابقة للتقرير الموجود؛ لا تصحيح. غالبًا المستند مكرر ويمكن رفضه.',
+    reason_required: 'اكتب سبب التصحيح.',
+    partially_approved: 'اعتُمدت فاتورة من هذا المستند؛ استبعد الباقي بدل رفض المستند كله.',
+    invoice_unknown: 'الفاتورة غير موجودة في هذا المستند.',
+    invoice_mismatch: 'الفاتورة لا تخص هذا المستند.',
+    invoice_id_missing: 'حدّث الصفحة ثم أعد المحاولة.',
+    mode_locked: 'لا يمكن الرجوع إلى طريقة الاعتماد السابقة بعد تفعيل الجديدة.',
+    category_invalid: 'التصنيف المختار غير موجود في منشأتك. حدّث الصفحة واختره من جديد.',
+    subcategory_invalid: 'التصنيف الفرعي المختار غير موجود في منشأتك. حدّث الصفحة واختره من جديد.',
+    subcategory_mismatch: `الفرعي «${d.name || ''}» لا يتبع «${d.parent || ''}». اختر فرعيًا من تحت التصنيف الرئيسي للبند.`,
+    category_ambiguous: d.needs_main ? `الفرعي «${d.name || ''}» موجود تحت أكثر من تصنيف رئيسي. اختر التصنيف الرئيسي للبند.`
+      : `الاسم «${d.name || ''}» يطابق أكثر من تصنيف${d.parent ? ` تحت «${d.parent}»` : ''}. اختر التصنيف من القائمة.`,
+    category_inactive: `التصنيف «${d.name || ''}»${d.parent ? ` (تحت «${d.parent}»)` : ''} معطّل. اختر تصنيفًا فعّالًا؛ القيود السابقة تبقى مرتبطة به ومحسوبة.`,
+    documents_without_file: `في المنشأة ${d.count || ''} مستند معلّق بلا ملف محفوظ. عالجه قبل تفعيل الاعتماد الجديد.`,
+    request_id_required: 'تعذّر إنشاء معرّف الطلب.',
+    network: 'انقطع الاتصال قبل وصول الرد. أعد المحاولة: لن يُسجَّل المستند مرتين.',
+    app_version_stale: STALE_MESSAGE,
+  }
+  return M[d.code] || `تعذّر الإجراء (${d.code || 'غير معروف'}).`
+}

@@ -1,0 +1,65 @@
+/* شاشة الدخول بهوية تحسيب — مأخوذة من واجهة دخول تحسيب للتجزئة (tatmira-demo/src/theme/tahseeb.css: .ts-login*)
+   مع ما تحتاجه المطاعم: قفل الواجهة المحلي، ودخول المالك بالبريد، وبقاء الحقل والزر ظاهرين فوق لوحة مفاتيح الجوال. */
+.ts-login { display: grid; grid-template-columns: 1fr 1fr; min-height: 100dvh; background: #fff; color: var(--ts-navy); }
+.ts-login-visual { background: var(--ts-navy); color: #fff; padding: 48px 44px; display: flex; flex-direction: column; overflow: hidden; }
+.ts-login-visual h2 { font-size: 38px; line-height: 1.5; font-weight: 600; letter-spacing: -1px; margin: 80px 0 0; max-width: 380px; }
+.ts-login-visual p { color: #B4C8CD; font-size: 15px; line-height: 1.9; margin: 17px 0 0; max-width: 320px; }
+.ts-line-art { margin-top: 50px; display: flex; gap: 12px; align-items: flex-end; direction: ltr; height: 110px; width: 80%; max-width: 360px; }
+.ts-line-art span { width: 17%; background: #2A6970; border-radius: 8px 8px 0 0; }
+.ts-line-art span:nth-child(2n) { background: #459B98; }
+.ts-line-art span:last-child { background: #A7D8CB; }
+.ts-login-copy { margin-top: auto; padding-top: 45px; font-family: var(--ts-font-num); font-size: 11px; letter-spacing: 1px; color: #8BAFB8; direction: ltr; text-align: right; }
+
+.ts-login-form { display: flex; align-items: center; justify-content: center; padding: 40px; }
+.ts-login-inner { width: 100%; max-width: 320px; }
+.ts-login-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 7px; background: #EDF6F3; color: #3E7267; font-size: 13px; margin-bottom: 24px; max-width: 100%; }
+.ts-login-inner h1 { font-size: 29px; font-weight: 700; letter-spacing: -.6px; margin: 0 0 8px; }
+.ts-login-inner > p { color: var(--ts-muted); font-size: 14px; margin: 0 0 26px; }
+.ts-login-stack { display: grid; gap: 14px; }
+.ts-login-stack .ts-field > label, .ts-login-stack .ts-field > span { font-size: 13px; font-weight: 500; }
+
+.ts-pin {
+  width: 100%; min-height: 66px; padding: 10px 0 10px 19px; border: 1px solid #CBDAD7; border-radius: 10px; background: #fff; color: var(--ts-navy);
+  font-family: var(--ts-font-num); font-size: 27px; letter-spacing: 19px; direction: ltr; text-align: center;
+  transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
+  scroll-margin-bottom: 140px;   /* يبقى الحقل والزر تحته ظاهرين عند ظهور لوحة المفاتيح */
+}
+.ts-pin::placeholder { color: #C0CFCC; }
+.ts-pin:focus { outline: none; border-color: var(--ts-focus-line); box-shadow: 0 0 0 3px rgba(8,127,140,.12); }
+.ts-pin[aria-invalid="true"] { border-color: var(--ts-danger); }
+.ts-pin:disabled { background: var(--ts-soft); }
+
+.ts-login-help { font-size: 13px; color: var(--ts-muted); text-align: center; margin-top: 16px; }
+.ts-login-feedback { min-height: 22px; font-size: 13px; color: var(--ts-danger); }
+.ts-login-notice { color: var(--ts-warning); font-weight: 500; }
+.ts-login-switch {
+  display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 18px; padding: 8px;
+  background: none; border: 0; color: var(--ts-petrol-text, #066A74); font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.ts-login-switch:hover { text-decoration: underline; }
+
+/* قفل الواجهة المحلي (3 محاولات خاطئة): داخل الإطار نفسه، لا شاشة منفصلة */
+.ts-login-lock { display: grid; gap: 8px; justify-items: start; }
+.ts-login-lock > .ts-icon { width: 30px; height: 30px; color: var(--ts-danger); }
+.ts-login-lock h1 { font-size: 25px; font-weight: 700; margin: 0; }
+.ts-login-lock > p { color: var(--ts-muted); font-size: 14px; margin: 0; }
+.ts-login-timer {
+  width: 100%; margin-top: 10px; padding: 14px 16px; border-radius: 10px; background: var(--ts-danger-bg); border: 1px solid #F0D5D1;
+  display: flex; align-items: center; justify-content: space-between; color: var(--ts-danger); font-size: 13px;
+}
+.ts-login-timer b { font-size: 30px; font-weight: 700; }
+
+@media (max-width: 650px) {
+  .ts-login { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  /* منطقة الهوية مختصرة على الجوال: الشعار والعبارة فقط */
+  .ts-login-visual { padding: 22px 20px 20px; }
+  .ts-login-visual .ts-brand { transform-origin: right; }
+  .ts-login-visual h2 { font-size: 21px; line-height: 1.55; margin-top: 14px; max-width: none; }
+  .ts-login-visual p, .ts-line-art, .ts-login-copy { display: none; }
+  .ts-login-form { align-items: flex-start; padding: 24px 20px 40px; }
+  .ts-login-inner { max-width: 420px; }
+  .ts-login-inner h1 { font-size: 24px; }
+  .ts-login-inner > p { margin-bottom: 18px; }
+  .ts-login-badge { margin-bottom: 16px; }
+  .ts-pin { min-height: 58px; font-size: 24px; letter-spacing: 15px; }
+}

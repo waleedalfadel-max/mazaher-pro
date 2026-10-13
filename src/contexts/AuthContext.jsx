@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, setViewProject } from '../lib/supabase'
 import { getProjectModules } from '../lib/projectSettings'
+import { pinLogin, throttleMessage } from '../lib/pinLogin'
 
 export const ROLE_LABELS = {
   owner:      'المالك',
@@ -151,69 +152,23 @@ export function AuthProvider({ children }) {
     return u.role
   }
 
-  // ── جلسة Supabase حقيقية خلف PIN — إضافية وغير حاجبة (المرحلة 2-أ) ──
-  // login() ينتظرها بمهلة 3 ثوانٍ فقط ثم يمضي؛ لو تأخّرت تكمل هنا بالخلفية،
-  // وعند نجاحها يُطلق SIGNED_IN فيتزايد sessionEpoch وتُعيد الصفحات الجلب وحدها.
-  //
-  // بلا جلسة حقيقية يبقى العميل على مفتاح anon، وRLS يحجب كل شيء فتظهر الأرقام
-  // أصفاراً بلا أي تفسير. لذلك لا نكتفي بمحاولة واحدة: نعيد المحاولة عدة مرات
-  // بتباعد متزايد (يغطي انقطاعاً عابراً أو 429 مؤقتاً)، ونُسجّل السبب صراحةً
-  // بالكونسول عند الفشل النهائي بدل الصمت التام.
-  async function mintPinSession(userId, pin, attempt = 0) {
-    const DELAYS_MS = [0, 1500, 4000, 10000]
-    try {
-      if (DELAYS_MS[attempt]) await new Promise(r => setTimeout(r, DELAYS_MS[attempt]))
-
-      const res = await fetch('/api/pin-session', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId, pin }),
-      })
-
-      if (!res.ok) {
-        let reason = String(res.status)
-        try { reason += ' ' + (await res.text()).slice(0, 120) } catch {}
-        // 403 = عدم تطابق PIN: إعادة المحاولة بلا فائدة وتستهلك حدّ المحاولات
-        if (res.status !== 403 && attempt + 1 < DELAYS_MS.length) {
-          return mintPinSession(userId, pin, attempt + 1)
-        }
-        console.warn('[mintPinSession] تعذّر منح الجلسة —', reason,
-          '— ستبقى البيانات محجوبة بـRLS حتى ينجح المنح')
-        return
-      }
-
-      const { tokenHash } = await res.json()
-      if (!tokenHash) return
-      await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'magiclink' })
-    } catch (e) {
-      if (attempt + 1 < DELAYS_MS.length) return mintPinSession(userId, pin, attempt + 1)
-      console.warn('[mintPinSession] فشل نهائي:', e?.message)
-    }
-  }
-
-  // ── دخول PIN — عبر دالة login_with_pin (SECURITY DEFINER) بدل الاستعلام
-  // المباشر على app_users/projects. الدالة تُرجع صفاً واحداً كحد أقصى، ولا
-  // تكشف عمود pin إطلاقاً — ضرورية الآن بما أن RLS مفعَّل على الجدولين ولا
-  // توجد جلسة مصادَقة أصلاً وقت محاولة الدخول نفسها.
+  // ── دخول الرمز — عبر /api/pin-login: الخادم يتحقق بحد محاولات مشترك في القاعدة (يُحتسب قبل فحص الرمز)، ويعيد
+  // المستخدم وجلسة Supabase حقيقية معًا. login_with_pin لم تعد متاحة للمتصفح. بلا جلسة لا دخول (لا هوية بلا auth.uid()).
   async function login(pin) {
     const subdomain = getSubdomain()
     const isDev     = subdomain === '__dev__'
 
-    const { data, error } = await supabase.rpc('login_with_pin', {
-      p_subdomain: subdomain || '',
-      p_pin: pin,
-    })
-    if (error) throw new Error(error.message)
-
-    const row = data?.[0]
-    if (!row?.id) {
-      // نفس رسالة الخطأ الحالية بالضبط — فقط حين subdomain غير قابل للحل بالإنتاج
-      if (!isDev && row?.subdomain_resolved === false) {
-        throw new Error('يرجى الدخول من رابط مشروعك الخاص')
-      }
+    const r = await pinLogin(fetch, { subdomain, pin })
+    if (r.kind === 'throttled') throw new Error(throttleMessage(r.retryAfter))
+    if (r.kind === 'error') throw new Error('تعذّر الاتصال بالخادم. حاول مرة أخرى.')
+    if (r.kind === 'invalid') {
+      if (!isDev && r.tenantResolved === false) throw new Error('يرجى الدخول من رابط مشروعك الخاص')
       return null
     }
+    const { error: otpError } = await supabase.auth.verifyOtp({ token_hash: r.tokenHash, type: 'magiclink' })
+    if (otpError) throw new Error('تعذّر فتح الجلسة. حاول مرة أخرى.')
 
+    const row = r.user
     const user = { id: row.id, role: row.role, name: row.name, project_id: row.project_id, branch: row.branch }
     const pName = row.project_name
 
@@ -236,17 +191,6 @@ export function AuthProvider({ children }) {
     setActingRole(null)
     sessionStorage.removeItem('mz_acting_role')
 
-    // ننتظر منح الجلسة الحقيقية بمهلة 3 ثوانٍ قبل إعادة النتيجة — بمجرد تفعيل
-    // RLS على جداول تُستعلَم فور الدخول (الدفعة 3)، أول صفحة قد تصل بجلسة
-    // anon القديمة (لا auth.uid()) لو انتقلنا قبل اكتمال المنح، فتظهر فارغة
-    // لثوانٍ. mintPinSession نفسها لا ترمي أبداً (try/catch داخلي) — المهلة
-    // هنا فقط سقف أعلى يمنع التجمّد لو تعطّل الخادم؛ لا تُلغي خاصية
-    // "الفشل لا يمنع الدخول أبداً".
-    await Promise.race([
-      mintPinSession(user.id, pin),
-      new Promise(resolve => setTimeout(resolve, 3000)),
-    ])
-
     return user.role
   }
 
@@ -256,6 +200,42 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('mz_pid',   id   || '')
     sessionStorage.setItem('mz_pname', name || '')
   }
+
+  // ── عرض منشأة لمدير المنصة (قراءة فقط، 20261009150000) ──
+  // المنشأة تصل إلى الخادم مع كل طلب (setViewProject)، والخادم يتحقق أن صاحب الجلسة مدير منصة نشط ويُثبت وصولها إلى سياسات القراءة
+  // (admin_view_project). قبل نجاح ذلك لا تُعرض صفحات المنشأة، فلا يظهر رفض الصلاحية أو تعذّر التحميل أصفارًا.
+  //   none: لا منشأة | checking: يتحقق | ok: يُعرض | error: تعذّر (viewError: رمز الخادم أو network)
+  const [viewState, setViewState] = useState(() => (sessionStorage.getItem('mz_role') === 'superadmin' && sessionStorage.getItem('mz_pid') ? 'checking' : 'none'))
+  const [viewError, setViewError] = useState('')
+  const viewRequest = React.useRef(0)
+  async function verifyView(id) {
+    const request = ++viewRequest.current
+    setViewProject(id); setViewState('checking'); setViewError('')
+    let res
+    try { const { data, error } = await supabase.rpc('admin_view_project', { p_project_id: id }); res = error ? { ok: false, code: 'network' } : (data || { ok: false, code: 'network' }) }
+    catch { res = { ok: false, code: 'network' } }
+    if (request !== viewRequest.current) return { ok: false, code: 'superseded' }   // اختيار أحدث سبقه: تُتجاهل نتيجته
+    if (res.ok) setViewState('ok')
+    else { setViewState('error'); setViewError(res.code || 'network') }
+    return res
+  }
+  async function enterProjectView(id, name) {
+    switchProject(id, name)   // الصفحات لا تُعرض قبل ok (Layout)، فتظهر حالة التحقق ثم البيانات أو رسالة الرفض
+    const res = await verifyView(id)
+    if (res.ok && res.name) setProjectName(res.name)
+    return res
+  }
+  function leaveProjectView() {
+    viewRequest.current++
+    setViewProject(null); setViewState('none'); setViewError('')
+    switchProject(null, null)
+  }
+  // بعد إعادة التحميل أو وصول الجلسة: مدير المنصة الذي كان يعرض منشأة يُتحقق له من جديد قبل العرض
+  useEffect(() => {
+    if (role === 'superadmin' && projectId && viewState !== 'ok') verifyView(projectId)
+    if (role !== 'superadmin') setViewProject(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, sessionEpoch])
 
   // الدور الفعّال الذي يراه التطبيق كله. التلبّس مسموح للمالك وحده، ويُتحقَّق
   // من ذلك هنا عند كل قراءة — لا عند البدء فقط — حتى لا يكفي تزوير المفتاح
@@ -278,6 +258,7 @@ export function AuthProvider({ children }) {
 
   function logout() {
     stopImpersonation()
+    viewRequest.current++; setViewProject(null); setViewState('none'); setViewError('')
     setRole(null)
     setUserName(null)
     setProjectId(null)
@@ -296,6 +277,37 @@ export function AuthProvider({ children }) {
     supabase.auth.signOut().catch(() => {})
   }
 
+  // ── حساب عطّله مالك المنشأة: الخادم يرفض كل طلباته أصلًا (الهوية لا تعيد منشأة)؛ هنا نُخرجه من الواجهة برسالة
+  // واضحة بدل صفحات فارغة. صفه نفسه تسمح به RLS حتى وهو معطّل. يُفحص عند البدء، وكل 20 ثانية، وعند العودة للنافذة.
+  // قبل هجرة 20260930000000 لا عمود للحالة: يفشل الاستعلام بصمت ولا يحدث شيء.
+  useEffect(() => {
+    if (!role) return
+    let stopped = false
+    async function check() {
+      try {
+        const { data: sess } = await supabase.auth.getSession()
+        const uid = sess?.session?.user?.id
+        if (!uid || stopped) return
+        const { data } = await supabase.from('app_users').select('is_active').eq('auth_id', uid).maybeSingle()
+        if (!stopped && data && data.is_active === false) {
+          sessionStorage.setItem('mz_logout_reason', 'inactive')
+          logout()
+        }
+      } catch { /* شبكة: الدورة التالية */ }
+    }
+    check()
+    const timer = setInterval(check, 20000)
+    const onFocus = () => { if (document.visibilityState !== 'hidden') check() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [role])
+
   return (
     <AuthContext.Provider value={{
       // role = الدور الفعّال (المتلبَّس إن وُجد). كل التطبيق يشتقّ سلوكه منه،
@@ -304,8 +316,10 @@ export function AuthProvider({ children }) {
       userName, projectId, projectName, branch, modules, authMethod, sessionEpoch,
       roleLabel:    ROLE_LABELS[effectiveRole] || effectiveRole,
       login, loginWithEmail, logout, switchProject,
+      enterProjectView, leaveProjectView, retryProjectView: () => projectId && verifyView(projectId), viewState, viewError,
       isImpersonating, canImpersonate, startImpersonation, stopImpersonation,
-      canEdit:      effectiveRole === 'accountant' || effectiveRole === 'superadmin',
+      // مدير المنصة يعرض المنشآت للقراءة فقط: لا أزرار تعديل (صلاحيات الكتابة في الخادم كما هي)
+      canEdit:      effectiveRole === 'accountant',
       isOwner:      effectiveRole === 'owner'      || effectiveRole === 'superadmin',
       isPurchasing: effectiveRole === 'purchasing',
       isCashier:    effectiveRole === 'cashier',

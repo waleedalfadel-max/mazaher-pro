@@ -1,5 +1,7 @@
 {
-  "alias": ["tahseeb-pro.vercel.app"],
+  "alias": [
+    "tahseeb-pro.vercel.app"
+  ],
   "functions": {
     "api/analyze.js": {
       "maxDuration": 30
@@ -8,15 +10,138 @@
       "maxDuration": 30
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "mazaher.tahseeb.app"
+        }
+      ],
+      "destination": "/h/mazaher.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "demo.tahseeb.app"
+        }
+      ],
+      "destination": "/h/demo.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.tahseeb.app"
+        }
+      ],
+      "destination": "/h/www.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "tahseeb-pro.vercel.app"
+        }
+      ],
+      "destination": "/h/tahseeb-pro.vercel.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "mazaher-pro.vercel.app"
+        }
+      ],
+      "destination": "/h/mazaher-pro.vercel.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "koon.tahseeb.app"
+        }
+      ],
+      "destination": "/h/koon.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "basal.tahseeb.app"
+        }
+      ],
+      "destination": "/h/basal.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "trial.tahseeb.app"
+        }
+      ],
+      "destination": "/h/trial.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "tashormik.tahseeb.app"
+        }
+      ],
+      "destination": "/h/tashormik.tahseeb.app.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/app.html"
+    }
+  ],
   "headers": [
     {
       "source": "/manifest.json",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
     },
     {
       "source": "/sw.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    },
+    {
+      "source": "/version.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    },
+    {
+      "source": "/branding/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     }
   ]
 }

@@ -5,6 +5,10 @@ import { uploadToStorage, getSignedUrl } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { analyzeDocument } from '../lib/claude'
 import { savedDocumentWarning } from '../lib/analysisFeedback'
+import { Ban, Camera, CircleAlert, CircleCheck, FileText, LoaderCircle, Plus, RotateCcw, Upload, X } from 'lucide-react'
+import { Button, IconButton, Note, Panel, Status } from '../ui/components.jsx'
+import { DropZone, MyUploads, fileIcon } from '../components/UploadKit.jsx'
+import { activeCategories } from '../lib/categorySettings'
 
 const MAX_SIZE_MB = 10
 const ROLE_AR = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك' }
@@ -28,13 +32,14 @@ const STATUS_LABEL = {
 }
 
 export default function InvoiceUpload() {
-  const { role, userName, projectId, projectName } = useAuth()
+  const { role, userName, projectId, projectName, branch } = useAuth()
   const [files, setFiles]         = useState([])  // [{ file, status, error }]
   const [uploading, setUploading] = useState(false)
   const [allDone, setAllDone]     = useState(false)
   const [dragOver, setDragOver]   = useState(false)
   const [myDocs, setMyDocs]             = useState([])
   const [myDocsLoading, setMyDocsLoading] = useState(true)
+  const [deleteError, setDeleteError]   = useState('')
   const inputRef = useRef()
 
   const loadMyDocs = useCallback(async () => {
@@ -53,10 +58,11 @@ export default function InvoiceUpload() {
   useEffect(() => { loadMyDocs() }, [loadMyDocs])
 
   async function deleteMyDoc(doc) {
+    // التأكيد في حوار MyUploads قبل الوصول إلى هنا
     if (doc.status === 'approved') return
-    if (!window.confirm(`حذف "${doc.file_name}"؟ لا يمكن التراجع.`)) return
+    setDeleteError('')
     const { error } = await supabase.from('documents').delete().eq('id', doc.id)
-    if (error) { alert('فشل الحذف: ' + error.message); return }
+    if (error) { setDeleteError(error.message); return }
     setMyDocs(ds => ds.filter(d => d.id !== doc.id))
   }
 
@@ -90,9 +96,11 @@ export default function InvoiceUpload() {
     if (!files.some(f => f.status === 'pending')) return
     setUploading(true)
 
-    const { data: cats } = await supabase.from('categories')
-      .select('id,name,parent_id,type,sort_order')
+    // القراءة الآلية تقترح من التصنيفات المتاحة للاستعمال الجديد فقط (المعطّل يبقى للقيود السابقة)
+    const { data: allCats } = await supabase.from('categories')
+      .select('id,name,parent_id,type,sort_order,is_active')
       .eq('project_id', projectId).order('sort_order')
+    const cats = activeCategories(allCats)
 
     for (let i = 0; i < files.length; i++) {
       if (files[i].status !== 'pending') continue
@@ -111,6 +119,8 @@ export default function InvoiceUpload() {
           status:      'uploaded',
           uploaded_by: role,
           uploaded_by_name: userName,
+          // فرع الكاشير يُحفظ مع المستند كما كانت تفعل لوحة الكاشير الملغاة (يستعمله الاعتماد لتقرير المبيعات وقيوده)
+          branch: role === 'cashier' ? (branch || null) : null,
         }).select('id').single()
         if (err) throw new Error(err.message)
 
@@ -166,205 +176,102 @@ export default function InvoiceUpload() {
   const errorCount   = files.filter(f => f.status === 'error').length
   const savedCount   = doneCount + reviewCount
 
+  const subtitle = role === 'purchasing' ? 'ارفع الفواتير — سيراجعها المحاسب ويعتمدها'
+    : role === 'owner' ? 'ارفع إيصالات السداد أو الفواتير'
+    : 'ارفع مستنداً وسيظهر في قائمة المراجعة'
+  const FILE_STATUS = {
+    pending:   { tone: 'neutral' },
+    uploading: { tone: 'info', busy: true },
+    analyzing: { tone: 'info', busy: true },
+    done:      { tone: 'success' },
+    review:    { tone: 'warning' },
+    error:     { tone: 'danger' },
+  }
+  const summaryTone = errorCount && !savedCount ? 'error' : errorCount || reviewCount ? 'warning' : 'success'
+
   return (
-    <div className="max-w-xl mx-auto space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800">رفع مستندات</h1>
-        <p className="text-slate-500 text-sm mt-1">
-          {role === 'purchasing' ? 'ارفع الفواتير — سيراجعها المحاسب ويعتمدها'
-            : role === 'owner'   ? 'ارفع إيصالات السداد أو الفواتير'
-            : 'ارفع مستنداً وسيظهر في قائمة المراجعة'}
-        </p>
+    <div className="rp-upload">
+      <div className="ts-heading">
+        <div>
+          <h1>رفع مستندات</h1>
+          <p>{subtitle}</p>
+        </div>
       </div>
 
-      {/* بطاقة التعليمات */}
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-        <div className="flex items-center gap-2 font-bold text-amber-800 text-base">
-          <span>📌</span>
-          <span>تعليمات الرفع</span>
-        </div>
-        <ul className="space-y-1.5 text-sm text-amber-900">
-          <li className="flex items-start gap-2">
-            <span className="shrink-0">✅</span>
-            <span>صوّر كل فاتورة في صورة منفصلة</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="shrink-0">✅</span>
-            <span>يمكنك رفع أكثر من صورة في نفس الوقت</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="shrink-0">❌</span>
-            <span className="font-semibold">لا تضع أكثر من فاتورة في صورة واحدة</span>
-          </li>
+      <Note tone="info" icon={Camera} title="قبل التصوير">
+        <ul className="rp-tips">
+          <li>صوّر كل فاتورة في صورة منفصلة.</li>
+          <li>يمكنك رفع أكثر من صورة في الوقت نفسه.</li>
+          <li><strong>لا تضع أكثر من فاتورة في صورة واحدة.</strong></li>
         </ul>
-      </div>
+      </Note>
 
-      {/* Drop Zone */}
       {!uploading && (
-        <div
-          onDragOver={e=>{e.preventDefault();setDragOver(true)}}
-          onDragLeave={()=>setDragOver(false)}
-          onDrop={onDrop}
-          onClick={()=>inputRef.current.click()}
-          className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-200
-            ${dragOver ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
-        >
-          <div className="text-5xl mb-3">📤</div>
-          <p className="font-semibold text-slate-700 text-lg mb-1">
-            {files.length ? 'اسحب صور إضافية أو اضغط للإضافة' : 'اسحب الصور هنا أو اضغط للاختيار'}
-          </p>
-          <p className="text-sm text-slate-500">فاتورة واحدة لكل صورة — يمكن رفع عدة صور معاً</p>
-          <p className="text-xs text-slate-400 mt-1">JPG · PNG · WEBP · HEIC · PDF (حتى {MAX_SIZE_MB}MB)</p>
-          <input ref={inputRef} type="file" accept="image/*,.pdf" multiple className="hidden"
-            onChange={e => handleFiles(e.target.files)} />
-        </div>
+        <DropZone inputRef={inputRef} dragOver={dragOver} setDragOver={setDragOver} onFiles={handleFiles}
+          title={files.length ? 'أضف صورًا أخرى: اسحبها هنا أو اضغط للاختيار' : 'اسحب الصور هنا أو اضغط للاختيار'}
+          hint="فاتورة واحدة لكل صورة — يمكن رفع عدة صور معًا"
+          formats={`JPG · PNG · WEBP · HEIC · PDF — الحد ${MAX_SIZE_MB} ميجابايت`}
+          inputProps={{ accept: 'image/*,.pdf', multiple: true }} />
       )}
 
-      {/* قائمة الملفات */}
-      {files.length > 0 && (
-        <div className="space-y-2">
-          {files.map((entry, i) => entry.multiInvoice ? (
-            <div key={i} className="rounded-2xl border-2 border-red-300 bg-red-50 p-5 space-y-3">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">❌</span>
-                <div>
-                  <div className="font-bold text-red-800 text-base">تم رفض الصورة</div>
-                  <div className="text-xs text-slate-500 truncate max-w-xs">{entry.file.name}</div>
-                </div>
-              </div>
-              <p className="text-sm text-slate-700">
-                اكتشف النظام <span className="font-bold text-red-700">{entry.invoiceCount} فواتير</span> في هذه الصورة
-              </p>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1.5 text-sm text-amber-900">
-                <div className="font-bold mb-1">📌 التعليمات:</div>
-                <div className="flex items-start gap-2"><span className="shrink-0">•</span><span>صوّر كل فاتورة في صورة منفصلة</span></div>
-                <div className="flex items-start gap-2"><span className="shrink-0">•</span><span>يمكنك رفع عدة صور في نفس الوقت</span></div>
-              </div>
-              <button onClick={reset}
-                className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors text-sm">
-                حاول مرة ثانية 🔄
-              </button>
-            </div>
-          ) : (
-            <div key={i} className={`flex items-center gap-3 rounded-xl border p-3 transition-colors ${
-              entry.status === 'done'      ? 'border-green-200 bg-green-50' :
-              entry.status === 'review'    ? 'border-amber-200 bg-amber-50' :
-              entry.status === 'error'     ? 'border-red-200 bg-red-50' :
-              entry.status === 'analyzing' || entry.status === 'uploading'
-                                           ? 'border-blue-200 bg-blue-50' :
-              'border-slate-200 bg-white'
-            }`}>
-              <span className="text-2xl shrink-0">
-                {entry.file.type.startsWith('image/') ? '🖼️' : '📄'}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-slate-800 truncate text-sm">{entry.file.name}</div>
-                <div className="text-xs text-slate-400">{(entry.file.size / 1024).toFixed(0)} KB</div>
-                {entry.error && <div className={`text-xs mt-0.5 ${entry.status === 'review' ? 'text-amber-800' : 'text-red-600'}`}>{entry.error}</div>}
-                {entry.multiInvoiceWarning && (
-                  <div className="text-xs text-amber-600 mt-0.5 font-semibold">
-                    ⚠️ اكتُشف {entry.invoiceCount} فواتير — راجع التحليل
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {(entry.status === 'uploading' || entry.status === 'analyzing') && (
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"/>
-                )}
-                <span className={`text-xs font-semibold ${
-                  entry.status === 'done'      ? 'text-green-700' :
-                  entry.status === 'review'    ? 'text-amber-800' :
-                  entry.status === 'error'     ? 'text-red-600'   :
-                  entry.status === 'analyzing' || entry.status === 'uploading'
-                                               ? 'text-blue-600'  : 'text-slate-500'
-                }`}>{STATUS_LABEL[entry.status]}</span>
-                {entry.status === 'pending' && !uploading && (
-                  <button onClick={() => setFiles(prev => prev.filter((_, idx) => idx !== i))}
-                    className="text-slate-300 hover:text-red-500 text-base leading-none ml-1">✕</button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+      {files.some(f => !f.multiInvoice) && (
+        <Panel title="الملفات المختارة" icon={FileText} clip>
+          <ul className="rp-uploads">
+            {files.map((entry, i) => {
+              if (entry.multiInvoice) return null
+              const Icon = fileIcon(entry.file.type)
+              const st = FILE_STATUS[entry.status] || FILE_STATUS.pending
+              return (
+                <li key={i}>
+                  <span className="rp-upload-open">
+                    <span className="rp-doc-icon"><Icon className="ts-icon" aria-hidden="true" /></span>
+                    <span className="rp-upload-name">
+                      <strong>{entry.file.name}</strong>
+                      <small className="ts-num">{(entry.file.size / 1024).toFixed(0)} KB</small>
+                      {entry.error && <small className={entry.status === 'review' ? 'rp-upload-warn' : 'ts-field-error'}>{entry.error}</small>}
+                      {entry.multiInvoiceWarning && <small className="rp-upload-warn">اكتُشف {entry.invoiceCount} فواتير — راجع القراءة</small>}
+                    </span>
+                  </span>
+                  <Status tone={st.tone} busy={st.busy}>{STATUS_LABEL[entry.status]}</Status>
+                  {entry.status === 'pending' && !uploading && (
+                    <IconButton bare label={`إزالة ${entry.file.name}`} icon={X} onClick={() => setFiles(prev => prev.filter((_, idx) => idx !== i))} />
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </Panel>
       )}
 
-      {/* ملخص الحفظ والتحليل */}
+      {files.map((entry, i) => entry.multiInvoice && (
+        <Note key={`m${i}`} tone="error" icon={Ban} title={`رُفضت الصورة: فيها ${entry.invoiceCount} فواتير`}
+          action={<Button variant="primary" icon={RotateCcw} onClick={reset}>حاول مرة ثانية</Button>}>
+          <span className="rp-upload-file">{entry.file.name}</span>
+          <ul className="rp-tips"><li>صوّر كل فاتورة في صورة منفصلة.</li><li>يمكنك رفع عدة صور في الوقت نفسه.</li></ul>
+        </Note>
+      ))}
+
       {allDone && !uploading && !files.every(f => f.multiInvoice) && (
-        <div className={`rounded-2xl p-6 text-center space-y-2 ${errorCount && !savedCount ? 'bg-red-50 border border-red-200' : errorCount || reviewCount ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
-          <div className="text-4xl">{errorCount && !savedCount ? '❌' : errorCount || reviewCount ? '⚠️' : '✅'}</div>
-          <div className="font-bold text-lg text-slate-800">
-            {savedCount > 0 ? `حُفظ ${savedCount} مستند للمراجعة` : 'تعذّر حفظ المستندات'}
-          </div>
-          {reviewCount > 0 && (
-            <p className="text-sm text-amber-800">تعذّر إكمال تحليل {reviewCount} مستند تلقائيًا. المستندات محفوظة ولا تحتاج إلى إعادة الرفع.</p>
-          )}
-          {errorCount > 0 && savedCount > 0 && (
-            <p className="text-sm text-amber-700">لم يُحفظ {errorCount} مستند — تحقق من الأخطاء أعلاه</p>
-          )}
-          <button onClick={reset}
-            className="mt-1 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors">
-            رفع مزيد من الفواتير
-          </button>
-        </div>
+        <Note tone={summaryTone} icon={summaryTone === 'success' ? CircleCheck : CircleAlert}
+          title={savedCount > 0 ? `حُفظ ${savedCount} مستند للمراجعة` : 'تعذّر حفظ المستندات'}
+          action={<Button icon={Plus} onClick={reset}>رفع مزيد من الفواتير</Button>}>
+          {reviewCount > 0 && <p>تعذّر إكمال تحليل {reviewCount} مستند تلقائيًا. المستندات محفوظة ولا تحتاج إلى إعادة الرفع.</p>}
+          {errorCount > 0 && savedCount > 0 && <p>لم يُحفظ {errorCount} مستند — تحقق من الأخطاء أعلاه.</p>}
+        </Note>
       )}
 
-      {/* أزرار الإجراء */}
       {!uploading && pendingCount > 0 && (
-        <button onClick={upload}
-          className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-          ⬆️ رفع {pendingCount} {pendingCount === 1 ? 'مستند' : 'مستندات'}
-        </button>
+        <Button variant="primary" full icon={Upload} className="rp-upload-go" onClick={upload}>
+          رفع {pendingCount} {pendingCount === 1 ? 'مستند' : 'مستندات'}
+        </Button>
       )}
 
       {uploading && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center text-blue-700 text-sm font-semibold flex items-center justify-center gap-2">
-          <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"/>
-          جارٍ معالجة الملفات...
-        </div>
+        <Note tone="info" icon={LoaderCircle} title="جارٍ معالجة الملفات...">لا تغلق الصفحة حتى ينتهي الرفع والقراءة.</Note>
       )}
 
-      {/* آخر المستندات المرفوعة */}
-      <div className="pt-2">
-        <h2 className="text-sm font-bold text-slate-600 mb-2 flex items-center gap-1.5">
-          <span>📋</span> آخر المستندات المرفوعة
-        </h2>
-        {myDocsLoading ? (
-          <div className="text-xs text-slate-400 py-3 text-center">جارٍ التحميل...</div>
-        ) : myDocs.length === 0 ? (
-          <div className="text-xs text-slate-400 py-3 text-center">ما رفعت أي مستند بعد</div>
-        ) : (
-          <div className="space-y-1.5">
-            {myDocs.map(doc => {
-              const approved = doc.status === 'approved'
-              return (
-                <div key={doc.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white p-3">
-                  <button onClick={() => openDoc(doc.file_url)}
-                    className="flex items-center gap-3 flex-1 min-w-0 text-right">
-                    <span className="text-xl shrink-0">{doc.file_type?.startsWith('image/') ? '🖼️' : '📄'}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-blue-700 truncate hover:underline">{doc.file_name}</div>
-                      <div className="text-xs text-slate-400">
-                        {new Date(doc.uploaded_at).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' })}
-                      </div>
-                    </div>
-                  </button>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 ${
-                    approved ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                  }`}>
-                    {approved ? '✅ معتمد' : '⏳ معلّق'}
-                  </span>
-                  {!approved && (
-                    <button onClick={() => deleteMyDoc(doc)}
-                      className="text-slate-300 hover:text-red-500 text-base leading-none shrink-0" title="حذف">
-                      🗑️
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+      {deleteError && <Note tone="error" icon={CircleAlert} title="فشل الحذف">{deleteError}</Note>}
+      <MyUploads docs={myDocs} loading={myDocsLoading} onOpen={openDoc} onDelete={deleteMyDoc} />
     </div>
   )
 }
