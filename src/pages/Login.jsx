@@ -80,7 +80,8 @@ export default function Login() {
     try {
       const r = sessionStorage.getItem('mz_logout_reason')
       sessionStorage.removeItem('mz_logout_reason')
-      return r === 'inactive' ? 'أوقف مالك المنشأة حسابك. تواصل معه لإعادة تفعيله.' : ''
+      return r === 'inactive' ? 'أوقف مالك المنشأة حسابك. تواصل معه لإعادة تفعيله.'
+        : r === 'revoked' ? 'انتهت جلستك لأن رمز الدخول أو حالة الحساب تغيّرت. سجّل الدخول من جديد.' : ''
     } catch { return '' }
   })
   const [loading,     setLoading]     = useState(false)
