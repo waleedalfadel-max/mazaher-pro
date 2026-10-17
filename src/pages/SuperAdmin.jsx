@@ -26,6 +26,13 @@ const ADMIN_USERS_ERRORS = {
   network: 'انقطع الاتصال أو لم يصل الرد.',
 }
 
+const SAVE_USER_ERRORS = {
+  ...ADMIN_USERS_ERRORS,
+  not_found: 'المستخدم غير موجود أو لا يُعدَّل من هنا. حدّث القائمة.',
+  invalid_name: 'الاسم مطلوب (200 حرف على الأكثر).',
+  save_failed: 'تعذّر الحفظ. لم يتغير شيء.',
+}
+
 const ROLE_COLORS = {
   owner:      { bg: '#eff6ff', color: '#1d4ed8' },
   accountant: { bg: '#f0fdf4', color: '#15803d' },
@@ -274,14 +281,16 @@ function ProjectCard({ p, countsLoading, onRename, onToggleActive, onEnter }) {
     setActiveTab(tab)
   }
 
-  // التعديل كتابة مباشرة كما كان (بلا رمز)؛ النتيجة تُقرأ من الخادم بعده، فلا يُعرض حفظٌ لم يحدث
+  // التعديل عبر الخادم (admin_staff_update): مدير المنصة وحده، الاسم والدور والفرع فقط (الرمز لا يُمس)؛
+  // الكتابة المباشرة في app_users مسحوبة من المتصفح. النتيجة تُقرأ من الخادم بعده، فلا يُعرض حفظٌ لم يحدث
   async function saveUser(id, form) {
     setUsersNotice('')
-    const { data, error } = await supabase.from('app_users')
-      .update({ name: form.name.trim(), role: form.role, branch: form.branch?.trim() || null })
-      .eq('id', id)
-      .select('id')
-    const failed = error ? error.message : !data?.length ? 'لا صلاحية لتعديل موظفي هذه المنشأة من هذه الشاشة.' : ''
+    let res
+    try {
+      const { data, error } = await supabase.rpc('admin_staff_update', { p_user_id: id, p_name: form.name.trim(), p_role: form.role, p_branch: form.branch?.trim() || null })
+      res = error ? { ok: false, code: 'network' } : data
+    } catch { res = { ok: false, code: 'network' } }
+    const failed = res?.ok === true && res.id === id ? '' : (SAVE_USER_ERRORS[res?.code] || SAVE_USER_ERRORS.save_failed)
     await loadUsers()
     if (failed) setUsersNotice(`لم يُحفظ التعديل: ${failed}`)
     return failed ? { error: failed } : {}
