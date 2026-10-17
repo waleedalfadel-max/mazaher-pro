@@ -93,7 +93,7 @@ language sql stable security definer set search_path = '' as $$
     when not public.auth_session_valid() then 'revoked'
     else 'active' end
 $$;
-revoke all on function public.auth_account_status() from public;
+revoke all on function public.auth_account_status() from public, anon;   -- الصلاحية الافتراضية للدوال الجديدة تمنح anon مباشرة
 grant execute on function public.auth_account_status() to authenticated;
 
 -- قراءة الحساب لصفه نفسه تشترط الجلسة الصالحة أيضًا
