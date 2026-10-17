@@ -1,12 +1,12 @@
-// إعدادات المالك — قسم «الموظفون»: تعطيل الموظف وإعادة تفعيله، وسجلهما.
+// إعدادات المالك — قسم «الموظفون»: إضافة موظف بدوره وفرعه ورمزه، وتغيير دوره وفرعه ورمزه (20261014130000)، وتعطيله وإعادة تفعيله، وسجل ذلك.
 // كل تغيير عبر دوال الخادم (supabase/migrations/20260930000000_employee_deactivation.sql): المالك الفعلي النشط وحده، في
 // منشأته، مع الحمايات والسجل هناك. المنع نفسه في الخادم عند كل طلب، فالتعطيل يسري على الجلسة المفتوحة أيضًا.
 import React, { useCallback, useEffect, useState } from 'react'
-import { CircleAlert, CircleCheck, History, Power, PowerOff, TriangleAlert, Users } from 'lucide-react'
+import { CircleAlert, CircleCheck, History, KeyRound, Pencil, Power, PowerOff, TriangleAlert, UserPlus, Users } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { Button, Check, Dialog, EmptyState, Field, Input, Note, Panel, Status } from '../ui/components.jsx'
+import { Button, Check, Dialog, EmptyState, Field, Input, Note, Panel, Select, Status } from '../ui/components.jsx'
 import { formatAgo } from '../ui/format.js'
-import { isLastActiveAccountant, memberAction, roleLabel, teamActionLabel, teamMessage } from '../lib/teamSettings'
+import { ALL_BRANCHES, STAFF_ROLES, branchLabel, isLastActiveAccountant, isManagedStaff, memberAction, pinProblem, roleLabel, teamActionLabel, teamMessage } from '../lib/teamSettings'
 
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
@@ -50,10 +50,21 @@ export default function TeamSettings() {
   if (!state) return <p className="ts-muted">جارٍ التحميل…</p>
 
   const members = state.members || []
+  const branches = state.branches || []
   const inactive = members.filter(m => m.is_active === false).length
+  // إضافة/تغيير الدور والفرع/الرمز: عبر الخادم ثم إعادة القراءة، فما يظهر هو المحفوظ
+  async function staffCall(fn, args, okText) {
+    if (busy) return { ok: false, code: 'busy' }
+    setBusy(true); setNotice(null)
+    const res = await call(fn, args)
+    if (res.ok) { await load(); setNotice({ tone: 'success', text: okText }) }
+    setBusy(false)
+    return res
+  }
   return (
     <>
       <Panel title="الموظفون" icon={Users}
+        action={<Button size="sm" variant="primary" icon={UserPlus} disabled={busy} data-k="team.add" onClick={() => setDialog({ kind: 'create' })}>إضافة موظف</Button>}
         subtitle={`${members.length - inactive} نشط${inactive ? ` · ${inactive} معطّل` : ''}. التعطيل يوقف وصول الموظف عند طلبه التالي، حتى لو كان داخل التطبيق الآن، ويبقي سجلاته كما هي.`}>
         {notice && <div className="ts-panel-body"><Note tone={notice.tone === 'success' ? 'success' : 'error'} icon={notice.tone === 'success' ? CircleCheck : CircleAlert}>{notice.text}</Note></div>}
         {members.length === 0
@@ -71,11 +82,17 @@ export default function TeamSettings() {
                         <div className="cs-meta">
                           <span className="cs-class tm-role">{roleLabel(m.role)}</span>
                           {off ? <Status tone="neutral">معطّل</Status> : <Status>نشط</Status>}
-                          {m.branch && <small>{m.branch}</small>}
+                          {isManagedStaff(m) || m.branch ? <small data-k="team.branch">{branchLabel(m.branch)}</small> : null}
                           {off && m.deactivated_at && <small>عُطّل {formatAgo(m.deactivated_at, todayIso())}{m.deactivated_by ? ` · بواسطة ${m.deactivated_by}` : ''}</small>}
                         </div>
                       </div>
                       <div className="cs-actions">
+                        {isManagedStaff(m) && !off && <>
+                          <Button size="sm" variant="quiet" icon={Pencil} disabled={busy} aria-label={`الدور والفرع «${m.name}»`} data-k="team.access"
+                            onClick={() => setDialog({ kind: 'access', m })}>الدور والفرع</Button>
+                          <Button size="sm" variant="quiet" icon={KeyRound} disabled={busy} aria-label={`رمز جديد «${m.name}»`} data-k="team.pin"
+                            onClick={() => setDialog({ kind: 'pin', m })}>رمز جديد</Button>
+                        </>}
                         {act.kind === 'none'
                           ? <small className="ts-field-hint">{act.hint}</small>
                           : <Button size="sm" variant={off ? 'secondary' : 'quiet'} icon={off ? Power : PowerOff} disabled={busy}
@@ -90,7 +107,7 @@ export default function TeamSettings() {
       </Panel>
 
       {state.changes?.length > 0 && (
-        <Panel title="سجل التعطيل" icon={History} subtitle="كل تعطيل وإعادة تفعيل يُسجَّل بمنفّذه ووقته.">
+        <Panel title="سجل الموظفين" icon={History} subtitle="كل إضافة وتغيير دور أو فرع أو رمز، وكل تعطيل وإعادة تفعيل، يُسجَّل بمنفّذه ووقته.">
           <ul className="rp-rows rp-rows--tight cs-log">
             {state.changes.slice(0, 10).map((c, i) => (
               <li key={i}>
@@ -107,6 +124,21 @@ export default function TeamSettings() {
       {dialog?.kind === 'deactivate' && (
         <DeactivateDialog m={dialog.m} lastAccountant={isLastActiveAccountant(members, dialog.m)} busy={busy}
           onClose={() => setDialog(null)} onConfirm={extra => setActive(dialog.m, false, extra)} />
+      )}
+      {dialog?.kind === 'create' && (
+        <StaffDialog branches={branches} busy={busy} onClose={() => setDialog(null)}
+          onSave={f => staffCall('team_staff_create', { p_name: f.name.trim(), p_role: f.role, p_branch: f.branch || null, p_pin: f.pin },
+            `أُضيف «${f.name.trim()}» ${roleLabel(f.role)} — ${branchLabel(f.branch)}. سلّمه رمزه بنفسك؛ لا يُعرض الرمز بعد الحفظ.`)} />
+      )}
+      {dialog?.kind === 'access' && (
+        <StaffDialog m={dialog.m} branches={branches} busy={busy} onClose={() => setDialog(null)}
+          onSave={f => staffCall('team_staff_set_access', { p_user_id: dialog.m.id, p_role: f.role, p_branch: f.branch || null },
+            `صار «${dialog.m.name}» ${roleLabel(f.role)} — ${branchLabel(f.branch)}. يسري من طلبه التالي.`)} />
+      )}
+      {dialog?.kind === 'pin' && (
+        <PinDialog m={dialog.m} busy={busy} onClose={() => setDialog(null)}
+          onSave={pin => staffCall('team_staff_set_pin', { p_user_id: dialog.m.id, p_pin: pin },
+            `عُيّن رمز جديد لـ«${dialog.m.name}». الرمز القديم لم يعد يعمل؛ سلّمه الجديد بنفسك.`)} />
       )}
       {dialog?.kind === 'reactivate' && (
         <ReactivateDialog m={dialog.m} busy={busy} onClose={() => setDialog(null)} onConfirm={() => setActive(dialog.m, true)} />
@@ -149,6 +181,75 @@ function DeactivateDialog({ m, lastAccountant, busy, onClose, onConfirm }) {
       )}
       <Field label="السبب (اختياري)" hint="يظهر في سجل التعطيل.">
         <Input value={reason} maxLength={200} onChange={e => setReason(e.target.value)} aria-label="سبب التعطيل" />
+      </Field>
+      {error && <Note tone="error" icon={CircleAlert}>{error}</Note>}
+    </Dialog>
+  )
+}
+
+// إضافة موظف (بلا m) أو تغيير دوره وفرعه (m): الفرع من فروع المنشأة المحفوظة أو «كل الفروع»
+function StaffDialog({ m, branches, busy, onClose, onSave }) {
+  const creating = !m
+  const [f, setF] = useState({ name: '', role: m?.role || 'cashier', branch: m?.branch || '', pin: '', confirm: '' })
+  const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const problem = creating ? (!f.name.trim() ? 'أدخل الاسم.' : pinProblem(f.pin, f.confirm)) : ''
+  async function save() {
+    setError('')
+    if (problem) { setError(problem); return }
+    const res = await onSave(f)
+    if (res?.ok) onClose(); else if (res && res.code !== 'busy') setError(teamMessage(res))
+  }
+  return (
+    <Dialog open title={creating ? 'إضافة موظف' : `الدور والفرع «${m.name}»`}
+      description={creating ? 'يدخل الموظف برمزه من رابط منشأتك. الرمز لا يُعرض بعد الحفظ.' : 'التغيير يسري من طلبه التالي.'}
+      onClose={() => !busy && onClose()}
+      footer={<>
+        <Button variant="quiet" disabled={busy} onClick={onClose}>إلغاء</Button>
+        <Button variant="primary" icon={creating ? UserPlus : Pencil} disabled={busy} data-k="team.save" onClick={save}>{busy ? 'جارٍ الحفظ…' : creating ? 'إضافة' : 'حفظ'}</Button>
+      </>}>
+      {creating && <Field label="الاسم"><Input value={f.name} maxLength={200} data-k="team.name" onChange={e => set('name', e.target.value)} /></Field>}
+      <Field label="الدور">
+        <Select value={f.role} data-k="team.role" onChange={e => set('role', e.target.value)} options={STAFF_ROLES.map(r => ({ value: r, label: roleLabel(r) }))} />
+      </Field>
+      <Field label="الفرع" hint={branches.length ? '«كل الفروع» يعني أنه يعمل في فروع المنشأة كلها.' : 'لا فروع محفوظة لمنشأتك؛ يعمل في المنشأة كلها.'}>
+        <Select value={f.branch} data-k="team.branchSel" onChange={e => set('branch', e.target.value)}
+          options={[{ value: '', label: ALL_BRANCHES }, ...branches.map(b => ({ value: b, label: b }))]} />
+      </Field>
+      {creating && <>
+        <Field label="رمز الدخول (5 أرقام)" hint="لا تستعمل رقم الجوال أو أرقامًا متتالية.">
+          <Input type="password" inputMode="numeric" autoComplete="new-password" maxLength={5} value={f.pin} data-k="team.pin1" onChange={e => set('pin', e.target.value.replace(/\D/g, ''))} />
+        </Field>
+        <Field label="تأكيد الرمز">
+          <Input type="password" inputMode="numeric" autoComplete="new-password" maxLength={5} value={f.confirm} data-k="team.pin2" onChange={e => set('confirm', e.target.value.replace(/\D/g, ''))} />
+        </Field>
+      </>}
+      {error && <Note tone="error" icon={CircleAlert}>{error}</Note>}
+    </Dialog>
+  )
+}
+
+function PinDialog({ m, busy, onClose, onSave }) {
+  const [pin, setPin] = useState(''), [confirm, setConfirm] = useState('')
+  const [error, setError] = useState('')
+  async function save() {
+    setError('')
+    const p = pinProblem(pin, confirm)
+    if (p) { setError(p); return }
+    const res = await onSave(pin)
+    if (res?.ok) onClose(); else if (res && res.code !== 'busy') setError(teamMessage(res))
+  }
+  return (
+    <Dialog open title={`رمز جديد «${m.name}»`} description="الرمز القديم يتوقف فور الحفظ. الرمز لا يُعرض بعد الحفظ." onClose={() => !busy && onClose()}
+      footer={<>
+        <Button variant="quiet" disabled={busy} onClick={onClose}>إلغاء</Button>
+        <Button variant="primary" icon={KeyRound} disabled={busy} data-k="team.save" onClick={save}>{busy ? 'جارٍ الحفظ…' : 'حفظ الرمز'}</Button>
+      </>}>
+      <Field label="الرمز الجديد (5 أرقام)" hint="لا تستعمل رقم الجوال أو أرقامًا متتالية.">
+        <Input type="password" inputMode="numeric" autoComplete="new-password" maxLength={5} value={pin} data-k="team.pin1" onChange={e => setPin(e.target.value.replace(/\D/g, ''))} />
+      </Field>
+      <Field label="تأكيد الرمز">
+        <Input type="password" inputMode="numeric" autoComplete="new-password" maxLength={5} value={confirm} data-k="team.pin2" onChange={e => setConfirm(e.target.value.replace(/\D/g, ''))} />
       </Field>
       {error && <Note tone="error" icon={CircleAlert}>{error}</Note>}
     </Dialog>

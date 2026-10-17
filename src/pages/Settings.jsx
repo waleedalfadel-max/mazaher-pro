@@ -1,4 +1,4 @@
-// إعدادات المالك — قسمان: «التصنيفات» و«الموظفون» (TeamSettings.jsx). لا تُعرض أقسام غير جاهزة.
+// إعدادات المالك — «التصنيفات» و«الموظفون» (TeamSettings.jsx) و«قاموس الأصناف» (ItemDictionary.jsx). لا تُعرض أقسام غير جاهزة.
 // كل تغيير يمر بدوال الخادم (supabase/migrations/20260928000800_category_settings.sql): المالك الفعلي وحده، في منشأته،
 // مع التحقق والسجل هناك. الشاشة تعيد القراءة من الخادم بعد كل حفظ، فما يظهر هو المحفوظ.
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
@@ -8,6 +8,7 @@ import { Button, ChoiceList, Dialog, EmptyState, Field, IconButton, Input, Note,
 import { formatAgo, plural } from '../ui/format.js'
 import { CLASSES, actionLabel, categoryMessage, categoryTree, classOf, cleanName, nameError } from '../lib/categorySettings'
 import TeamSettings from './TeamSettings.jsx'
+import ItemDictionary from './ItemDictionary.jsx'
 
 const entriesText = n => plural(n, 'قيد واحد', 'قيدان', 'قيود', 'قيدًا')
 const itemsText = n => plural(n, 'بند واحد', 'بندان', 'بنود', 'بندًا')
@@ -28,11 +29,17 @@ async function call(fn, args) {
   } catch { return { ok: false, code: 'network' } }
 }
 
-const TABS = [{ value: 'categories', label: 'التصنيفات' }, { value: 'team', label: 'الموظفون' }]
-const initialTab = () => { try { return new URLSearchParams(window.location.search).get('tab') === 'team' ? 'team' : 'categories' } catch { return 'categories' } }
+const TABS = [{ value: 'categories', label: 'التصنيفات' }, { value: 'team', label: 'الموظفون' }, { value: 'items', label: 'قاموس الأصناف' }]
+const initialTab = () => { try { const t = new URLSearchParams(window.location.search).get('tab'); return TABS.some(x => x.value === t) ? t : 'categories' } catch { return 'categories' } }
 
 export default function Settings() {
   const [tab, setTab] = useState(initialTab)
+  // «قاموس الأصناف» يظهر للمنشأة التي لها قاموس فقط (20261014140000)؛ غيرها يرى القسمين كما كانا
+  const [hasDictionary, setHasDictionary] = useState(false)
+  useEffect(() => {
+    supabase.from('item_category_rules').select('id', { count: 'exact', head: true })
+      .then(({ count, error }) => setHasDictionary(!error && count > 0))
+  }, [])
   const [state, setState] = useState(null)          // ناتج category_settings
   const [loadError, setLoadError] = useState('')
   const [showInactive, setShowInactive] = useState(false)
@@ -76,8 +83,9 @@ export default function Settings() {
     return `أُعيد تفعيل «${c.name}».${extra.length ? ` ${extra.join('، ')}.` : ''}`
   })
 
-  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS} value={tab} onChange={setTab} />
+  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => t.value !== 'items' || hasDictionary || tab === 'items')} value={tab} onChange={setTab} />
   if (tab === 'team') return <div className="cs-page"><Heading />{tabs}<TeamSettings /></div>
+  if (tab === 'items') return <div className="cs-page"><Heading />{tabs}<ItemDictionary /></div>
   if (loadError && !state) {
     return (
       <div className="cs-page">

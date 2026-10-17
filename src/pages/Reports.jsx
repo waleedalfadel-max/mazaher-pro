@@ -14,6 +14,7 @@ import { SCOPE, TITLES, exportFileName, modelToXlsx, reportModel } from '../lib/
 import { downloadBlob } from '../lib/reportPdf.js'
 import { Button, DateInput, EmptyState, Field, Metric, Money, Panel, Segment, Select, Tabs } from '../ui/components.jsx'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
+import { bankAccountRows } from '../lib/branchSetup'
 
 // صفحة التقارير بالهوية الجديدة. الحسابات منقولة كما هي من الصفحة السابقة (الدوال salesFigures وexpenseFigures
 // وload)، والتغيير في العرض: الفترة والفرع ظاهران، والاختيار في العنوان (يبقى مع التحديث والرجوع)، والجداول تتمرر على الجوال.
@@ -135,6 +136,7 @@ export default function Reports() {
   const [data,     setData]     = useState(null)
   const [entries,  setEntries]  = useState([])
   const [balances, setBalances] = useState(null)
+  const [bankAccounts, setBankAccounts] = useState([])   // الحسابات البنكية (20261014140000): رصيد البنك مفصّلًا لكل حساب
   const [loading,  setLoading]  = useState(false)
   const [loadError, setLoadError] = useState(null)   // ما تعذّر تحميله؛ لا أرقام تُعرض ولا تُصدَّر حتى تنجح إعادة المحاولة
   const [exporting,  setExporting]  = useState(null)   // 'pdf' | 'xlsx' أثناء إنشاء الملف
@@ -170,6 +172,8 @@ export default function Reports() {
 
   useEffect(() => {
     if (projectId) {
+      supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
+        .then(({ data }) => setBankAccounts(data || []))
       getProjectSettings(projectId).then(async s => {
         const raw = s?.settings?.branches || []
         const anyCorrupted = raw.length > 0 && raw.some(b => isCorrupted(b))
@@ -261,7 +265,7 @@ export default function Reports() {
     ] = await Promise.all([
       fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,status,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,total_amount,vat_amount,journal_number,category_main,category_sub,category_id,financial_class')
         .eq('project_id', projectId).or('status.is.null,status.neq.cancelled').gte('date', fromDate).lte('date', toDate).order('date').order('id'))),
-      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id')
+      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id,bank_account_id')
         .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled').order('id'))),
       fetchAllRows(() => supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
         .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
@@ -329,6 +333,12 @@ export default function Reports() {
       cash:    at.reduce((s,r) => s+(r.cash_in||0)-(r.cash_out||0), 0),
       bank:    at.reduce((s,r) => s+(r.bank_in||0)-(r.bank_out||0), 0),
       custody: at.reduce((s,r) => s+(r.custody_in||0)-(r.custody_out||0), 0),
+      // بالهللة لكل حساب؛ قيود البنك بلا حساب (قبل إعداد الحسابات) في سطر مستقل
+      bankByAccount: at.reduce((m, r) => {
+        const v = Math.round((Number(r.bank_in) || 0) * 100) - Math.round((Number(r.bank_out) || 0) * 100)
+        if (v) { const k = r.bank_account_id || ''; m[k] = (m[k] || 0) + v }
+        return m
+      }, {}),
     })
     const prevSalesTotal = (prevEntriesData || [])
       .filter(e => isCounted(e) && isSales(e.type))
@@ -342,7 +352,7 @@ export default function Reports() {
   // تصدير القسم المختار بالفترة والفرع نفسيهما، من أرقام الشاشة نفسها (src/lib/reportExport.js)
   function currentModel() {
     const ctx = { tab: activeTab, org: projectName, from, to, branch: selectedBranch, branches, generatedAt: new Date(), engineSummary,
-      prevEntriesCount: prevEntries.length, data, balances }
+      prevEntriesCount: prevEntries.length, data, balances, bankAccounts }
     if (activeTab === 'sales') ctx.s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
     if (activeTab === 'purchases') ctx.x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
     return reportModel(ctx)
@@ -854,6 +864,14 @@ export default function Reports() {
                   </Metric>
                 ))}
               </div>
+
+              {bankAccounts.length > 0 && (
+                <Panel title="رصيد البنك حسب الحساب" icon={Landmark} subtitle={`حتى ${day(to)}${selectedBranch !== 'all' ? ` · ${selectedBranch}` : ''}`}>
+                  <div className="ts-panel-body">
+                    <CalcRows k="balance.byAccount" rows={bankAccountRows(bankAccounts, balances.bankByAccount, balances.bank)} />
+                  </div>
+                </Panel>
+              )}
 
               <Panel title="ملخص الفترة" icon={Landmark} subtitle={`${rangeText}`}>
                 <div className="ts-panel-body">

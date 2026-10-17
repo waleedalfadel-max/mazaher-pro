@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { analyzeAppStatement } from '../lib/claude'
 import { APPS, computeSystemTotal, hasSalesMismatch } from '../lib/appReconciliation'
 import { normCat } from '../lib/bankReconciliation'
-import { getTransactionTypes } from '../lib/projectSettings'
+import { getProjectSettings, getTransactionTypes } from '../lib/projectSettings'
+import { appsForProject } from '../lib/branchSetup'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { uploadToStorage } from '../lib/storage'
 import { activeCategories } from '../lib/categorySettings'
@@ -49,9 +50,16 @@ export default function AppReconciliation() {
   const [recording, setRecording] = useState(false)
   const [recorded, setRecorded]   = useState(false)
   const inputRef = useRef()
+  // تطبيقات التوصيل حسب الفروع (20261014140000): منشأة بإعداد فروع ترى تطبيقاتها المفعّلة فقط؛ بلا إعداد: الكل كما كان
+  const [apps, setApps] = useState(APPS)
 
   useEffect(() => {
     if (!projectId) return
+    getProjectSettings(projectId).then(s => {
+      const list = appsForProject(APPS, s?.settings)
+      setApps(list)
+      setSelectedApp(k => (list.some(a => a.key === k) ? k : list[0]?.key || ''))
+    })
     getTransactionTypes(projectId).then(setTransTypes)
     supabase.from('categories')
       .select('id,name,parent_id,type,sort_order,is_active')
@@ -69,7 +77,7 @@ export default function AppReconciliation() {
     )
   }
 
-  const app = APPS.find(a => a.key === selectedApp)
+  const app = apps.find(a => a.key === selectedApp) || null
 
   function handleFile(f) {
     if (!f) return
@@ -79,7 +87,7 @@ export default function AppReconciliation() {
   }
 
   async function runReconciliation() {
-    if (!file || !from || !to) { setError('اختر التطبيق والفترة والملف أولاً'); return }
+    if (!app || !file || !from || !to) { setError('اختر التطبيق والفترة والملف أولاً'); return }
     setBusy(true); setError(''); setResult(null); setRecorded(false)
     try {
       const fileBase64 = await toBase64(file)
@@ -173,7 +181,7 @@ export default function AppReconciliation() {
           <label className="text-xs text-slate-400 block mb-1">التطبيق</label>
           <select value={selectedApp} onChange={e => { setSelectedApp(e.target.value); setResult(null); setRecorded(false) }}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-            {APPS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
+            {apps.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
           </select>
         </div>
 
@@ -207,7 +215,7 @@ export default function AppReconciliation() {
 
         {error && <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-red-700 text-sm">❌ {error}</div>}
 
-        <button onClick={runReconciliation} disabled={!file || !from || !to || busy}
+        <button onClick={runReconciliation} disabled={!app || !file || !from || !to || busy}
           className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           {busy
             ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/><span>جارٍ التحليل...</span></>

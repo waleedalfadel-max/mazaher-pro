@@ -141,6 +141,20 @@ export function computeNetworkAggregate(bankLines, ledgerEntries, { marginPct = 
 }
 
 // يبني صف ledger_entries جاهز للإدراج من حركة كشف بنك مُعتمدة من المحاسب
+/**
+ * قيد مطابق مسجّل مسبقًا (قبل إدراج حركة من الكشف): المنشأة والتاريخ والنوع والوصف والمبلغ — وفي منشأة بحسابات بنكية، الحساب أيضًا (R1-02)،
+ * فعمولة الحساب A لا تمنع عمولة الحساب B. القاعدة تفرض الشيء نفسه بالفهرس الفريد ledger_unique_legacy_path_by_account (والطلبان المتزامنان).
+ * منشأة بلا حسابات: الاستعلام السابق نفسه.
+ */
+export async function findLegacyDuplicate(client, { projectId, date, type, description, amount, accountId = null, hasAccounts = false }) {
+  let q = client.from('ledger_entries').select('id')
+    .eq('project_id', projectId).eq('date', date)
+    .eq('type', type).eq('description', description)
+    .eq('total_amount', amount).neq('status', 'cancelled')
+  if (hasAccounts) q = accountId ? q.eq('bank_account_id', accountId) : q.is('bank_account_id', null)
+  return q.maybeSingle()
+}
+
 export function buildLedgerInsertRow(line, { transType, categorySub, projectId, journalNumber, fileUrl, branch = null }) {
   const amount = Number(line.amount) || 0
   const isIn   = line.direction === 'in'
