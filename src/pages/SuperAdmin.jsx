@@ -351,9 +351,8 @@ function ProjectCard({ p, countsLoading, onRename, onToggleActive, onEnter }) {
     return {}
   }
   const saveUser = (id, form) => act(() => adminUpdateStaff(supabase, { userId: id, name: form.name, role: form.role, branch: form.branch }))
-  const setPin = (id, pin) => act(() => adminSetStaffPin(supabase, id, pin), d => d?.sessions === 'sessions_deleted'
-    ? 'عُيّن الرمز الجديد وحُذفت جلسات الحساب (الجلسة المفتوحة الآن تنتهي خلال ساعة على الأكثر).' : 'عُيّن الرمز الجديد، والرمز القديم يُرفض، وأُلغيت جلسات الحساب.')
-  const setActive = (id, active) => act(() => adminSetStaffActive(supabase, id, active), () => active ? 'أُعيد تفعيل الحساب.' : 'عُطّل الحساب، ولا يستطيع الدخول أو مواصلة الاستخدام.')
+  const setPin = (id, pin) => act(() => adminSetStaffPin(supabase, id, pin), () => 'عُيّن الرمز الجديد: الرمز القديم يُرفض، وجلسات الحساب السابقة أُلغيت فورًا (يلزمه دخول جديد).')
+  const setActive = (id, active) => act(() => adminSetStaffActive(supabase, id, active), () => active ? 'أُعيد تفعيل الحساب، ويلزمه دخول جديد.' : 'عُطّل الحساب: لا يستطيع الدخول، وجلساته الحالية أُلغيت فورًا.')
   const removeUser = id => act(() => adminRemoveStaff(supabase, id), d => d?.result === 'deleted'
     ? 'حُذف الحساب (لم تكن له عمليات).' : 'لم يُحذف لأن له عمليات أو ارتباطات مسجلة: أُرشف ومُنع دخوله، ويبقى اسمه وتاريخه في السجلات.')
 

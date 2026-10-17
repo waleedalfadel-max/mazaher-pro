@@ -288,9 +288,17 @@ export function AuthProvider({ children }) {
         const { data: sess } = await supabase.auth.getSession()
         const uid = sess?.session?.user?.id
         if (!uid || stopped) return
-        const { data } = await supabase.from('app_users').select('is_active').eq('auth_id', uid).maybeSingle()
-        if (!stopped && data && data.is_active === false) {
-          sessionStorage.setItem('mz_logout_reason', 'inactive')
+        const { data, error } = await supabase.from('app_users').select('is_active').eq('auth_id', uid).maybeSingle()
+        if (stopped || error) return
+        // الصف لا يُقرأ إلا بجلسة صالحة (20261017120000): لا صف = أُلغيت الجلسة (رمز جديد أو تعطيل ثم تفعيل أو حذف) ⇒ دخول جديد
+        if (!data || data.is_active === false) {
+          let reason = data ? 'inactive' : 'revoked'
+          if (!data) {   // التعطيل يلغي الجلسة أيضًا؛ الحالة من الخادم لحساب الرمز نفسه تميّز «معطّل» عن «جلسة ملغاة»
+            const st = await supabase.rpc('auth_account_status').then(r => r.data, () => null)
+            if (st === 'inactive') reason = 'inactive'
+          }
+          if (stopped) return
+          sessionStorage.setItem('mz_logout_reason', reason)
           logout()
         }
       } catch { /* شبكة: الدورة التالية */ }
