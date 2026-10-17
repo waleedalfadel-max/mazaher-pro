@@ -10,6 +10,18 @@ export function isLastActiveAccountant(members, member) {
   return !(members || []).some(m => m.id !== member.id && m.role === 'accountant' && m.is_active !== false)
 }
 
+// أدوار يضيفها المالك ويديرها (20261014130000). المالك ومدير المنصة لا يُداران من هنا.
+export const STAFF_ROLES = ['accountant', 'purchasing', 'cashier']
+export const isManagedStaff = m => !!m && STAFF_ROLES.includes(m.role)
+export const ALL_BRANCHES = 'كل الفروع'
+export const branchLabel = b => b || ALL_BRANCHES
+/** فحص الرمز قبل الإرسال (الخادم هو الحكم): 5 أرقام بالضبط، والتأكيد مطابق. */
+export function pinProblem(pin, confirm) {
+  if (!/^[0-9]{5}$/.test(pin || '')) return 'الرمز 5 أرقام بالضبط.'
+  if (pin !== confirm) return 'التأكيد لا يطابق الرمز.'
+  return ''
+}
+
 /** زر الإجراء لكل صف: لا شيء لحساب المالك نفسه، وإلا تعطيل أو إعادة تفعيل. */
 export function memberAction(member) {
   if (!member) return null
@@ -17,7 +29,7 @@ export function memberAction(member) {
   return member.is_active === false ? { kind: 'reactivate', label: 'إعادة تفعيل' } : { kind: 'deactivate', label: 'تعطيل' }
 }
 
-const ACTIONS = { deactivate: 'عُطّل', reactivate: 'أُعيد تفعيله' }
+const ACTIONS = { deactivate: 'عُطّل', reactivate: 'أُعيد تفعيله', create: 'أُضيف', set_access: 'تغيّر دوره أو فرعه', set_pin: 'عُيّن له رمز جديد' }
 export const teamActionLabel = a => ACTIONS[a] || a
 
 /** رسالة عربية لرموز خادم الفريق. */
@@ -29,8 +41,15 @@ export function teamMessage(res) {
     not_found: 'الموظف غير موجود في منشأتك. حدّث الصفحة.',
     self: 'لا يمكنك تعطيل حسابك.',
     last_owner: 'لا يُعطَّل آخر مالك نشط في المنشأة.',
-    last_accountant: 'هذا المحاسب النشط الوحيد. أكّد أنك تفهم أثر تعطيله ثم أعد المحاولة.',
+    last_accountant: 'هذا المحاسب النشط الوحيد. أضف محاسبًا آخر أولًا، أو أكّد أثر تعطيله إن كان التعطيل هو المطلوب.',
     reason_too_long: 'السبب أطول من 200 حرف.',
+    invalid_role: 'اختر دورًا: محاسب أو مشتريات أو كاشير.',
+    invalid_branch: 'اختر فرعًا من فروع منشأتك أو «كل الفروع».',
+    invalid_pin: 'الرمز 5 أرقام بالضبط.',
+    invalid_name: 'أدخل اسمًا من 1 إلى 200 حرف.',
+    pin_in_use: 'هذا الرمز مستخدم. اختر رمزًا آخر.',
+    try_later: 'بلغت المنشأة حد إضافة الموظفين وتغيير الرموز مؤقتًا. أعد المحاولة لاحقًا.',
+    save_failed: 'تعذّر الحفظ. حدّث القائمة وتحقق قبل إعادة المحاولة.',
     invalid: 'طلب غير صالح. حدّث الصفحة.',
     network: 'انقطع الاتصال قبل وصول الرد. حدّث الصفحة وتحقق قبل إعادة المحاولة.',
   }

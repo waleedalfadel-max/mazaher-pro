@@ -123,7 +123,8 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
     const main = itemMainCategory(categories, it, transType)
     const cat = byName(main)
     const sub = cat && it.category_sub ? byName(it.category_sub, cat.id) : null
-    return { ...it, category_main: main, category_id: cat?.id || it.category_id || null, subcategory_id: sub?.id || it.subcategory_id || null,
+    const { _dictionary, _dictionaryNote, ...line } = it   // علامات عرض القاموس لا تُرسل
+    return { ...line, category_main: main, category_id: cat?.id || it.category_id || null, subcategory_id: sub?.id || it.subcategory_id || null,
       ledger_type: cat?.ledger_type || ledgerTypeFor(main, transTypes, transType) }
   })
   const invCat = (categories || []).find(c => !c.parent_id && c.ledger_type && c.ledger_type === transType) || byName(inv.category_main || transType)
@@ -207,6 +208,13 @@ export function approvalMessage(res) {
     request_id_required: 'تعذّر إنشاء معرّف الطلب.',
     network: 'انقطع الاتصال قبل وصول الرد. أعد المحاولة: لن يُسجَّل المستند مرتين.',
     app_version_stale: STALE_MESSAGE,
+    channel_not_enabled: `قناة «${d.label || CHANNEL_LABEL[d.channel] || d.channel || ''}» غير مفعّلة لفرع «${d.branch || ''}». صحّح الفرع أو انقل المبلغ إلى القناة الصحيحة؛ لم يُسجَّل شيء.`,
+    bank_account_required: `اختر الحساب البنكي${d.branch ? ` لفرع «${d.branch}»` : ''}: أكثر من حساب متاح لهذه الحركة. لم يُسجَّل شيء.`,
+    // R1-01: التصحيح يسجّل فرق كل قناة بنكية على حساب مبلغها الأصلي
+    bank_account_mismatch: `مبلغ «${d.label || CHANNEL_LABEL[d.channel] || ''}» في التقرير الأصلي على حساب «${d.account || ''}»، والتصحيح يُسجَّل على الحساب نفسه. اختر «${d.account || ''}» في حقل الحساب البنكي؛ لم يُسجَّل شيء.`,
+    report_entries_unproven: `قيود «${d.label || CHANNEL_LABEL[d.channel] || ''}» في التقرير الموجود ${d.split ? 'موزعة على أكثر من حساب' : `لا تطابق رقمه (${money(d.report)} مقابل ${money(d.entries)})`}، فلا يُعرف حسابها. راجع قيود التقرير في «سجل الدفتر» قبل التصحيح؛ لم يُسجَّل شيء.`,
+    bank_account_unassigned: `مبلغ «${d.label || CHANNEL_LABEL[d.channel] || ''}» في التقرير الأصلي غير مربوط بحساب بنكي. اربطه بحسابه من «سجل الدفتر» (ربط بحساب)، ثم صحّح؛ لم يُسجَّل شيء.`,
+    bank_account_invalid: `الحساب البنكي المختار غير متاح${d.branch ? ` لفرع «${d.branch}»` : ''} أو معطّل. اختر حسابًا من القائمة؛ لم يُسجَّل شيء.`,
   }
   return M[d.code] || `تعذّر الإجراء (${d.code || 'غير معروف'}).`
 }

@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { fetchEveryRow } from '../lib/fetchAll.js'
 import { Button, DateInput, Dialog, EmptyState, Field, Input, Panel, Select, Status } from '../ui/components.jsx'
 import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
+import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup'
 
 // تحديث 20261010130000: الدفعة بدالة خادم واحدة (supplier_payment_record) تخفض الالتزام ولا تُحتسب تكلفة ثانية، وقسم لموردي «آجل — باسم المورد».
 // الموردون بالهوية الجديدة. الحسابات والعمليات كما كانت حرفيًا: الموردون النشطون بالاسم، ورصيد كل مورد = الرصيد الافتتاحي + فواتيره
@@ -21,13 +22,14 @@ function todayStr() {
 const fmt = v => formatNumber(Number(v || 0), 2)
 const reason = error => (/failed to fetch|network|load failed/i.test(error?.message || '') ? 'تعذّر الاتصال بالخادم؛ تحقق من الاتصال ثم أعد المحاولة.' : (error?.message || 'خطأ غير معروف'))
 const PAY_SOURCES = [{ value: 'bank', label: 'البنك / تحويل' }, { value: 'cash', label: 'الصندوق' }]
-const blankPay = () => ({ amount: '', date: todayStr(), notes: '', paySource: 'bank' })
+const blankPay = () => ({ amount: '', date: todayStr(), notes: '', paySource: 'bank', bankAccountId: '' })
 const blankNew = () => ({ name: '', phone: '', opening_balance: '', notes: '' })
 const PAY_MESSAGES = {
   no_session: 'انتهت الجلسة. سجّل الدخول من جديد.', forbidden: 'تسجيل الدفعات للمحاسب فقط.', project_inactive: 'المنشأة موقوفة.',
   amount_invalid: 'مبلغ غير صالح؛ اكتب رقمًا أكبر من صفر بمنزلتين على الأكثر.', date_required: 'أدخل تاريخًا صحيحًا.', source_invalid: 'اختر مصدر الدفع.',
   not_found: 'المورد غير موجود في منشأتك. حدّث الصفحة.', exceeds_balance: 'المبلغ أكبر من المستحق لهذا المورد.', bad_request: 'طلب غير صالح. حدّث الصفحة.',
   // R4-01: الطلب نفسه بعد حذف دفعته (من «سجل الدفتر») لا يعيد تسجيلها؛ التسجيل من جديد قرار جديد بحوار جديد
+  bank_account_required: 'اختر الحساب البنكي الذي خرجت منه الدفعة.', bank_account_invalid: 'الحساب البنكي المختار غير متاح أو معطّل. اختر من القائمة.',
   payment_deleted: 'هذه الدفعة سُجّلت ثم حُذفت من «سجل الدفتر»، فلم تُسجَّل مرة أخرى. إن أردت تسجيلها فأغلق هذا الحوار وافتح «تسجيل دفعة» من جديد.',
 }
 
@@ -52,8 +54,15 @@ export default function Suppliers() {
   const savingRef = useRef(false)
   const payRequest = useRef(null)
   const [payables, setPayables] = useState([])   // موردو «آجل — باسم المورد»: الرصيد من قيود الدفتر (الالتزام − السداد)
+  // الحسابات البنكية (20261014140000): منشأة بحسابات تختار حساب السداد من البنك؛ بلا حسابات كما كانت (لا يُرسل حقل الحساب)
+  const [bankAccounts, setBankAccounts] = useState([])
 
-  useEffect(() => { if (projectId) loadSuppliers() }, [projectId])
+  useEffect(() => {
+    if (!projectId) return
+    loadSuppliers()
+    supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
+      .then(({ data }) => setBankAccounts(data || []))
+  }, [projectId])
 
   // الموردون النشطون ثم كل حركاتهم كاملتين؛ الرصيد من الحركات كلها. أي فشل ← رسالة بلا موردين ولا أرصدة.
   async function loadSuppliers() {
@@ -109,18 +118,22 @@ export default function Suppliers() {
 
   const payAmount = parseAmount(payForm.amount)
   const payAmountBad = payForm.amount !== '' && !(payAmount > 0)
+  const payAccounts = eligibleBankAccounts(bankAccounts, null)
+  const payAccount = payForm.paySource === 'bank' && payAccounts.length ? chosenBankAccount(bankAccounts, null, payForm.bankAccountId) : ''
+  const payAccountMissing = payForm.paySource === 'bank' && bankAccounts.length > 0 && !payAccount
 
   // الدفعة في معاملة خادم واحدة (supplier_payment_record، 20261010130000): رقم القيد وحركة «دفعة» للمورد وقيد «سداد مورد» يخفض الالتزام
   // معًا أو لا شيء. معرّف الطلب ثابت للحوار المفتوح، فإعادة المحاولة بعد انقطاع لا تكرر الدفعة (يعيد الخادم نتيجتها الأولى).
-  // الدفعة ليست تكلفة جديدة: الشراء احتُسب بفاتورته؛ وحده ما يغطي رصيدًا لم يدخل الدفتر قط (افتتاحي أو فواتير سابقة) يبقى تكلفة عند السداد.
+  // الدفعة ليست تكلفة جديدة: الشراء احتُسب بفاتورته؛ وحده ما يغطي فواتير سابقة لم تدخل الدفتر قط يبقى تكلفة؛ الرصيد الافتتاحي تسوية لا تكلفة (20261014120000) عند السداد.
   async function recordPayment() {
-    if (savingRef.current || !payModal || !(payAmount > 0) || !payForm.date || !payDateValid) return
+    if (savingRef.current || !payModal || !(payAmount > 0) || !payForm.date || !payDateValid || payAccountMissing) return
     savingRef.current = true
     setSaving(true); setFormError('')
     try {
       const { data, error } = await supabase.rpc('supplier_payment_record', {
         p_kind: payModal.kind || 'list', p_supplier: payModal.id, p_amount: payAmount, p_date: payForm.date,
         p_source: payForm.paySource, p_notes: payForm.notes || null, p_request: payRequest.current,
+        ...(payAccount ? { p_bank_account: payAccount } : {}),
       })
       if (error) {
         if (/failed to fetch|network|load failed/i.test(error.message || '')) {
@@ -288,7 +301,7 @@ export default function Suppliers() {
       <Dialog open={!!payModal} onClose={() => !saving && setPayModal(null)} title={payModal ? `تسجيل دفعة — ${payModal.name}` : ''}
         description={payModal ? `المستحق: ${fmt(payModal.balance)}` : ''}
         footer={<>
-          <Button variant="primary" disabled={saving || !(payAmount > 0) || !payForm.date || !payDateValid} onClick={recordPayment}>{saving ? 'جارٍ الحفظ…' : paymentIncomplete ? 'إعادة المحاولة' : 'تسجيل الدفعة'}</Button>
+          <Button variant="primary" disabled={saving || !(payAmount > 0) || !payForm.date || !payDateValid || payAccountMissing} onClick={recordPayment}>{saving ? 'جارٍ الحفظ…' : paymentIncomplete ? 'إعادة المحاولة' : 'تسجيل الدفعة'}</Button>
           <Button onClick={() => setPayModal(null)} disabled={saving}>{paymentIncomplete ? 'إغلاق' : 'إلغاء'}</Button>
         </>}>
         {payModal && (
@@ -298,6 +311,12 @@ export default function Suppliers() {
             </Field>
             <Field label="التاريخ" error={!payDateValid ? 'أدخل تاريخًا صحيحًا.' : undefined}><DateInput disabled={saving || paymentIncomplete} value={payForm.date} onValidityChange={setPayDateValid} onChange={iso => setPayForm(f => ({ ...f, date: iso }))} /></Field>
             <Field label="مصدر الدفع"><Select disabled={saving || paymentIncomplete} value={payForm.paySource} options={PAY_SOURCES} onChange={e => setPayForm(f => ({ ...f, paySource: e.target.value }))} /></Field>
+            {payForm.paySource === 'bank' && bankAccounts.length > 0 && (
+              <Field label="الحساب البنكي" error={!payAccounts.length ? 'لا حساب بنكي نشط.' : undefined}>
+                <Select disabled={saving || paymentIncomplete} value={payAccount} placeholder="— اختر الحساب —" data-k="payBankAccount"
+                  options={payAccounts.map(a => ({ value: a.id, label: bankAccountLabel(a) }))} onChange={e => setPayForm(f => ({ ...f, bankAccountId: e.target.value }))} />
+              </Field>
+            )}
             <Field label="ملاحظات"><Input disabled={saving || paymentIncomplete} value={payForm.notes} placeholder="اختياري" onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} /></Field>
           </div>
         )}

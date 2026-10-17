@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
-import { BookOpen, CalendarDays, Info, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { BookOpen, CalendarDays, Info, Landmark, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
@@ -8,6 +8,7 @@ import { fetchEveryRow } from '../lib/fetchAll'
 import { deleteSupplierPayment, isSupplierPaymentType, SUPPLIER_PAYMENT_EDIT_MSG, SUPPLIER_PAYMENT_ONLY_MSG } from '../lib/supplierPayments'
 import { Button, DateInput, Dialog, EmptyState, Field, IconButton, Input, Panel, Segment, Select, Status } from '../ui/components.jsx'
 import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
+import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup'
 
 // سجل الدفتر بالهوية الجديدة. الأرصدة الجارية والفلترة والحذف النهائي كما كانت حرفيًا؛ جدول بأعمدة مجمّعة على الكمبيوتر وبطاقات
 // على الجوال، وحوارات الهوية، ورسالة عند فشل الحفظ أو الحذف. مقارنة الصفوف والأرقام قبل وبعد: local-test/ledger-figures.mjs.
@@ -103,7 +104,11 @@ const isManualShape = r => !r.document_id && !r.document_invoice_id && !r.file_u
   && !Number(r.payable_in) && !Number(r.payable_out) && !Number(r.vat_amount)
 
 // نموذج الحركة (الإضافة والتعديل): الحقول نفسها كما كانت، والمبالغ مجمّعة حسب الحساب
-function EntryForm({ row, setRow, types, placeholderDesc, errors = {} }) {
+// الحساب البنكي (20261014140000): لمنشأة بحسابات، عند وجود مبلغ بنك. حساب وحيد متاح يُختار تلقائيًا (والخادم يفعل الشيء نفسه)
+const hasBankAmount = row => !!(parseAmount(row?.bank_in) || parseAmount(row?.bank_out))
+function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts = [] }) {
+  const bankList = eligibleBankAccounts(accounts, row.branch || null)
+  const showBank = accounts.length > 0 && hasBankAmount(row)
   return (
     <div className="ldg-form">
       <div className="ts-form-grid">
@@ -135,6 +140,14 @@ function EntryForm({ row, setRow, types, placeholderDesc, errors = {} }) {
           </fieldset>
         ))}
       </div>
+      {showBank && (
+        <div className="ts-form-grid">
+          <Field label="الحساب البنكي" error={errors.bank_account_id} hint={row.branch ? `الحسابات المربوطة بفرع «${row.branch}».` : undefined}>
+            <Select value={chosenBankAccount(accounts, row.branch || null, row.bank_account_id)} placeholder="— اختر الحساب —" data-k="ldg-bank-account"
+              options={bankList.map(a => ({ value: a.id, label: bankAccountLabel(a) }))} onChange={e => setRow(r => ({ ...r, bank_account_id: e.target.value }))} />
+          </Field>
+        </div>
+      )}
     </div>
   )
 }
@@ -154,11 +167,29 @@ export default function Ledger() {
   const [loadError, setLoadError]     = useState('')     // فشل تحميل أي جزء: لا صفوف ولا أرصدة تُعرض حتى تنجح إعادة المحاولة
   const [tried, setTried]             = useState(false)  // بعد أول محاولة حفظ تظهر أخطاء الحقول وتتحدث مع الكتابة
   const loadSeq = useRef(0)
+  const [bankAccounts, setBankAccounts] = useState([])
+  // R1-04: ربط حساب لقيد بنك بلا حساب (ومنه سداد المورد) بدالة الخادم ledger_link_bank_account: الحساب وحده، والمبلغ كما هو
+  const [linking, setLinking] = useState(null)       // { row, account }
+  const needsLink = r => bankAccounts.length > 0 && !r.bank_account_id && r.status !== 'cancelled' && (Number(r.bank_in) || Number(r.bank_out))
+  const LINK_MSG = { forbidden: 'الربط للمحاسب فقط.', not_found: 'الحركة غير موجودة في منشأتك. حدّث الصفحة.', already_linked: 'الحركة مربوطة بحساب مسبقًا. حدّث الصفحة.',
+    no_bank_amount: 'لا مبلغ بنك في هذه الحركة.', bank_account_required: 'اختر الحساب.', bank_account_invalid: 'الحساب غير متاح لفرع الحركة أو معطّل.', bad_status: 'حالة الحركة لا تسمح بالربط.' }
+  async function saveLink() {
+    if (!linking?.account) { setActionError('اختر الحساب.'); return }
+    setSaving(true); setActionError('')
+    const { data, error } = await supabase.rpc('ledger_link_bank_account', { p_entry: linking.row.id, p_account: linking.account })
+    setSaving(false)
+    if (error || !data?.ok) { setActionError('لم يُربط: ' + (error ? reason(error) : LINK_MSG[data?.code] || data?.code || 'خطأ غير معروف')); return }
+    setLinking(null)
+    load(projectId)
+  }
+  const accountName = useMemo(() => Object.fromEntries(bankAccounts.map(a => [a.id, bankAccountLabel(a)])), [bankAccounts])
 
   useEffect(() => {
     if (!projectId) return
     getTransactionTypes(projectId).then(setTypes)
     load(projectId)
+    supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
+      .then(({ data }) => setBankAccounts(data || []))
   }, [projectId])
 
   // كل القيود بلا حد للعدد، بترتيب ثابت (التاريخ ثم وقت الإنشاء ثم المعرّف) فلا يتكرر صف ولا يسقط بين الصفحات. فشل أي صفحة خطأ
@@ -224,6 +255,11 @@ export default function Ledger() {
       receivable_in:  a.receivable_in,
     }
     if (isManualShape(editRow)) patch.total_amount = Math.max(...AMOUNT_KEYS.map(k => a[k]))
+    if (bankAccounts.length) {
+      const orig = allRows.find(r => r.id === editRow.id)
+      const chosen = hasBankAmount(editRow) ? chosenBankAccount(bankAccounts, editRow.branch || null, editRow.bank_account_id) : ''
+      if (chosen && chosen !== (orig?.bank_account_id || '')) patch.bank_account_id = chosen
+    }
     const { error } = await supabase.from('ledger_entries').update(patch).eq('id', editRow.id)
     setSaving(false)
     if (error) { setActionError('تعذّر حفظ التعديل: ' + reason(error)); return }
@@ -254,6 +290,8 @@ export default function Ledger() {
     if (!v.ok) return
     // «سداد مورد» من «الموردين» وحدها (الخادم يرفضه هنا): لا يُحجز رقم قيد ولا يُرسل طلب
     if (isSupplierPaymentType(newRow.type)) { setActionError(SUPPLIER_PAYMENT_ONLY_MSG); return }
+    const bankAccount = bankAccounts.length && hasBankAmount(newRow) ? chosenBankAccount(bankAccounts, null, newRow.bank_account_id) : ''
+    if (bankAccounts.length && hasBankAmount(newRow) && !bankAccount) { setActionError('اختر الحساب البنكي لهذه الحركة.'); return }
     setSaving(true)
     let jn
     try { jn = await getOrCreateJournalNumber(projectId, newRow.date) } catch (e) { setSaving(false); setActionError(e.message); return }
@@ -276,6 +314,7 @@ export default function Ledger() {
       status:         'approved',
       file_url:       '',
       journal_number: jn,
+      ...(bankAccount ? { bank_account_id: bankAccount } : {}),
     })
     setSaving(false)
     if (!error) { setNewRow(null); load(projectId) }
@@ -297,8 +336,12 @@ export default function Ledger() {
   const newCheck = newRow && tried ? validateEntry(newRow) : null
   const editCheck = editRow && tried ? validateEntry(editRow) : null
 
+  const linkButton = (r, Comp) => canEdit && needsLink(r) && (Comp === 'icon'
+    ? <IconButton bare label="ربط بحساب" icon={Landmark} data-k="ldg-link" onClick={() => { setActionError(''); setLinking({ row: r, account: chosenBankAccount(bankAccounts, r.branch || null, '') }) }} />
+    : <Button size="sm" variant="quiet" icon={Landmark} data-k="ldg-link" onClick={() => { setActionError(''); setLinking({ row: r, account: chosenBankAccount(bankAccounts, r.branch || null, '') }) }}>ربط بحساب</Button>)
   const actions = r => canEdit && r.status !== 'cancelled' && (
     <div className="ldg-actions">
+      {linkButton(r)}
       {!isSupplierPaymentType(r.type) && <Button size="sm" variant="quiet" icon={Pencil} onClick={() => openEdit(r)}>تعديل</Button>}
       <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); setDeleting(r) }}>حذف</Button>
     </div>
@@ -306,6 +349,7 @@ export default function Ledger() {
 
   const iconActions = r => canEdit && r.status !== 'cancelled' && (
     <div className="ldg-actions">
+      {linkButton(r, 'icon')}
       {!isSupplierPaymentType(r.type) && <IconButton bare label="تعديل" icon={Pencil} onClick={() => openEdit(r)} />}
       <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); setDeleting(r) }} />
     </div>
@@ -377,7 +421,7 @@ export default function Ledger() {
                     <tr key={r.id} data-id={r.id} className={r.status === 'cancelled' ? 'is-cancelled' : ''}>
                       <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
                       <td data-k="type" className="ldg-type">{cleanLabel(r.type) || '—'}</td>
-                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}</td>
+                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}{r.bank_account_id && accountName[r.bank_account_id] ? <small className="ldg-bank-acc" data-k="bank-acc">{accountName[r.bank_account_id]}</small> : null}</td>
                       {ACCOUNTS.map(a => <MoveCell key={a.key} r={r} acc={a.key} />)}
                       {ACCOUNTS.map(a => <BalCell key={a.key} v={r[a.bal]} k={a.bal} />)}
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
@@ -402,6 +446,7 @@ export default function Ledger() {
                   </div>
                   <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
                   {r.description && <div className="ldg-card-desc">{r.description}</div>}
+                  {r.bank_account_id && accountName[r.bank_account_id] && <div className="ldg-card-desc ldg-bank-acc">{accountName[r.bank_account_id]}</div>}
                   <dl className="ldg-card-moves">
                     {moves.length === 0 && <div><dt>الحركة</dt><dd>—</dd></div>}
                     {moves.map(k => <div key={k} className={k.endsWith('_out') ? 'is-out' : 'is-in'}><dt>{AMOUNT_LABEL[k]}</dt><dd className="ts-num">{fmt(r[k])}</dd></div>)}
@@ -428,7 +473,7 @@ export default function Ledger() {
           <Button variant="primary" disabled={saving || !newRow?.date || !newRow?.type} onClick={saveNew}>{saving ? 'جارٍ الحفظ…' : 'حفظ القيد'}</Button>
           <Button onClick={() => setNewRow(null)} disabled={saving}>رجوع</Button>
         </>}>
-        {newRow && <EntryForm row={newRow} setRow={setNewRow} types={types} placeholderDesc="اختياري" errors={newCheck?.errors} />}
+        {newRow && <EntryForm row={newRow} setRow={setNewRow} types={types} placeholderDesc="اختياري" errors={newCheck?.errors} accounts={bankAccounts} />}
         {newCheck && !newCheck.ok && <p className="ts-field-error" role="alert" data-k="ledger.formError">{newCheck.summary}</p>}
         {newRow && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
       </Dialog>
@@ -445,12 +490,29 @@ export default function Ledger() {
             <div className="ts-note-body">هذا القيد ناتج عن مستند (فيه ملف أو ضريبة أو ذمم دائنة أو مورد)، فيبقى إجماليه المسجَّل <span className="ts-num">{formatNumber(editRow.total_amount)}</span> كما هو، ولا يُعاد احتسابه من المبالغ عند التعديل.</div>
           </div>
         )}
-        {editRow && <EntryForm row={editRow} setRow={setEditRow} types={types} errors={editCheck?.errors} />}
+        {editRow && <EntryForm row={editRow} setRow={setEditRow} types={types} errors={editCheck?.errors} accounts={bankAccounts} />}
         {editCheck && !editCheck.ok && <p className="ts-field-error" role="alert" data-k="ledger.formError">{editCheck.summary}</p>}
         {editRow && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
       </Dialog>
 
       {/* تأكيد الحذف (الحذف نفسه كما كان: نهائي) */}
+      <Dialog open={!!linking} onClose={() => !saving && setLinking(null)} title="ربط الحركة بحسابها البنكي"
+        description="يُسجَّل الحساب وحده؛ المبلغ والتاريخ والنوع كما هي، ولا يتغير مستحق أي مورد. لا يُغيَّر الحساب بعد الربط."
+        footer={<>
+          <Button variant="primary" data-k="ldg-link-save" disabled={saving || !linking?.account} onClick={saveLink}>{saving ? 'جارٍ الحفظ…' : 'ربط'}</Button>
+          <Button onClick={() => setLinking(null)} disabled={saving}>رجوع</Button>
+        </>}>
+        {linking && <div className="ts-form-grid">
+          <Field label="الحركة" span><Input value={`${linking.row.journal_number || ''} — ${linking.row.description || linking.row.type}`} readOnly /></Field>
+          <Field label="الحساب البنكي" hint={linking.row.branch ? `الحسابات المربوطة بفرع «${linking.row.branch}».` : undefined}>
+            <Select value={linking.account} placeholder="— اختر الحساب —" data-k="ldg-link-account"
+              options={eligibleBankAccounts(bankAccounts, linking.row.branch || null).map(a => ({ value: a.id, label: bankAccountLabel(a) }))}
+              onChange={e => setLinking(l => ({ ...l, account: e.target.value }))} />
+          </Field>
+        </div>}
+        {linking && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
+      </Dialog>
+
       <Dialog open={!!deleting} onClose={() => !saving && setDeleting(null)} title="حذف الحركة نهائيًا؟"
         description="يُحذف الصف من الدفتر ولا يمكن التراجع، وتتغير الأرصدة بعده."
         footer={<>

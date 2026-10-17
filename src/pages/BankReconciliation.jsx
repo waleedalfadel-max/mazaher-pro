@@ -3,12 +3,13 @@ import { PDFDocument } from 'pdf-lib'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { analyzeBankStatementPage } from '../lib/claude'
-import { matchLinesToLedger, computeNetworkAggregate, buildLedgerInsertRow, normCat } from '../lib/bankReconciliation'
+import { matchLinesToLedger, computeNetworkAggregate, buildLedgerInsertRow, normCat, findLegacyDuplicate } from '../lib/bankReconciliation'
 import { getTransactionTypes } from '../lib/projectSettings'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { uploadToStorage } from '../lib/storage'
 import { activeCategories } from '../lib/categorySettings'
 import { isSupplierPaymentType, SUPPLIER_PAYMENT_ONLY_MSG } from '../lib/supplierPayments'
+import { bankAccountLabel, eligibleBankAccounts } from '../lib/branchSetup'
 
 const BANK_CAT_LABEL = {
   pos_credit:       'نقاط بيع / دائنة التاجر',
@@ -59,6 +60,9 @@ function uint8ToBase64(bytes) {
   return btoa(binary)
 }
 
+// الحسابات البنكية (20261014140000): منشأة بحسابات تطابق كشف حساب واحد مع قيود ذلك الحساب وحدها، والقيد الجديد من الكشف يُسجَّل عليه.
+// منشأة بلا حسابات: كما كانت (كل قيود البنك).
+
 export default function BankReconciliation() {
   const { projectId } = useAuth()
   const today = fmtDate(new Date())
@@ -75,7 +79,14 @@ export default function BankReconciliation() {
   const [categories, setCategories] = useState([])
   const [statementFileUrl, setStatementFileUrl] = useState(null)
   const [commissionExpanded, setCommissionExpanded] = useState(false)
+  const [bankAccounts, setBankAccounts] = useState([])
+  // R1-03: حالة تحميل الحسابات مستقلة. القائمة الفارغة تعني «منشأة بلا حسابات» فقط بعد نجاح الطلب؛ أثناء التحميل أو عند فشله
+  // لا مطابقة ولا اعتماد (وإلا طوبق كشف حساب واحد مع قيود كل الحسابات)
+  const [accountsState, setAccountsState] = useState('loading')   // loading | error | ready
+  const [account, setAccount] = useState('')
   const inputRef = useRef()
+  const activeAccounts = eligibleBankAccounts(bankAccounts, null)
+  const accountMissing = accountsState !== 'ready' || (bankAccounts.length > 0 && !activeAccounts.some(a => a.id === account))
 
   useEffect(() => {
     if (!projectId) return
@@ -85,7 +96,22 @@ export default function BankReconciliation() {
       .eq('project_id', projectId)
       .order('sort_order')
       .then(({ data }) => setCategories(activeCategories(data)))   // الاختيار للجديد من الفعّال فقط
+    loadAccounts()
   }, [projectId])
+
+  function loadAccounts() {
+    setAccountsState('loading')
+    supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
+      .then(({ data, error }) => {
+        if (error || !Array.isArray(data)) { setBankAccounts([]); setAccount(''); setAccountsState('error'); return }
+        setBankAccounts(data)
+        const active = eligibleBankAccounts(data, null)
+        setAccount(active.length === 1 ? active[0].id : '')
+        setAccountsState('ready')
+      }, () => { setBankAccounts([]); setAccount(''); setAccountsState('error') })
+  }
+  const accountsBlockedMsg = accountsState === 'loading' ? 'جارٍ تحميل الحسابات البنكية…'
+    : accountsState === 'error' ? 'تعذّر تحميل الحسابات البنكية؛ أعد المحاولة قبل المطابقة.' : 'اختر الحساب البنكي الذي يخصه الكشف.'
 
   function handleFile(f) {
     if (!f) return
@@ -95,6 +121,7 @@ export default function BankReconciliation() {
 
   async function runReconciliation() {
     if (!file) return
+    if (accountMissing) { setError(accountsBlockedMsg); return }
     setBusy(true); setError(''); setResult(null); setProgress(null)
     try {
       const bytes   = await file.arrayBuffer()
@@ -120,12 +147,14 @@ export default function BankReconciliation() {
       // جلب قيود الدفتر بهامش يومين من كل طرف — يغطي مطابقة مبيعات الشبكة (±2) ومطابقة السطور (±1)
       const qFrom = addDays(from, -2)
       const qTo   = addDays(to, 2)
-      const { data: ledgerEntries, error: ledgerErr } = await supabase
+      let ledgerQuery = supabase
         .from('ledger_entries')
-        .select('id,date,type,description,bank_in,bank_out,status')
+        .select('id,date,type,description,bank_in,bank_out,status,bank_account_id')
         .eq('project_id', projectId)
         .gte('date', qFrom).lte('date', qTo)
         .neq('status', 'cancelled')
+      if (bankAccounts.length) ledgerQuery = ledgerQuery.eq('bank_account_id', account)
+      const { data: ledgerEntries, error: ledgerErr } = await ledgerQuery
       if (ledgerErr) throw new Error(ledgerErr.message)
 
       const network = computeNetworkAggregate(allLines, ledgerEntries || [])
@@ -156,6 +185,7 @@ export default function BankReconciliation() {
   }
 
   async function approveReview(item) {
+    if (accountMissing) { setError(accountsBlockedMsg); return }
     if (!item._transType) { setError('يرجى اختيار نوع الحركة قبل الاعتماد'); return }
     // قيد «سداد مورد» عام بلا تخفيض المستحق يرفضه الخادم (20261013120000): الدفعة تُسجَّل من «الموردين» ثم تُطابَق هنا
     if (isSupplierPaymentType(item._transType)) { setError(SUPPLIER_PAYMENT_ONLY_MSG); return }
@@ -169,10 +199,8 @@ export default function BankReconciliation() {
       }
 
       const amount = Number(item.amount) || 0
-      const { data: dup } = await supabase.from('ledger_entries').select('id')
-        .eq('project_id', projectId).eq('date', item.date)
-        .eq('type', item._transType).eq('description', item.description)
-        .eq('total_amount', amount).neq('status', 'cancelled').maybeSingle()
+      const { data: dup } = await findLegacyDuplicate(supabase, { projectId, date: item.date, type: item._transType, description: item.description,
+        amount, accountId: account, hasAccounts: bankAccounts.length > 0 })
       if (dup) {
         setError('هذا القيد مسجل مسبقاً في الدفتر — لم يتم إدراجه مرة أخرى')
         updateReview(item._key, { _busy: false })
@@ -187,7 +215,7 @@ export default function BankReconciliation() {
         journalNumber: jn,
         fileUrl,
       })
-      const { error: insErr } = await supabase.from('ledger_entries').insert(row)
+      const { error: insErr } = await supabase.from('ledger_entries').insert(bankAccounts.length ? { ...row, bank_account_id: account } : row)
       if (insErr) throw new Error(insErr.message)
 
       setResult(r => ({
@@ -208,6 +236,7 @@ export default function BankReconciliation() {
 
   async function approveAllCommissions(lines) {
     if (!lines.length) return
+    if (accountMissing) { setError(accountsBlockedMsg); return }
     setError('')
     setResult(r => ({ ...r, reviewList: r.reviewList.map(item => isCommissionLine(item) ? { ...item, _busy: true } : item) }))
 
@@ -233,15 +262,13 @@ export default function BankReconciliation() {
     for (const item of lines) {
       try {
         const amount = Number(item.amount) || 0
-        const { data: dup } = await supabase.from('ledger_entries').select('id')
-          .eq('project_id', projectId).eq('date', item.date)
-          .eq('type', transType).eq('description', item.description)
-          .eq('total_amount', amount).neq('status', 'cancelled').maybeSingle()
+        const { data: dup } = await findLegacyDuplicate(supabase, { projectId, date: item.date, type: transType, description: item.description,
+          amount, accountId: account, hasAccounts: bankAccounts.length > 0 })
         if (dup) { skippedDup++; doneKeys.push(item._key); continue }
 
         const jn = await getOrCreateJournalNumber(projectId, item.date)
         const row = buildLedgerInsertRow(item, { transType, categorySub, projectId, journalNumber: jn, fileUrl })
-        const { error: insErr } = await supabase.from('ledger_entries').insert(row)
+        const { error: insErr } = await supabase.from('ledger_entries').insert(bankAccounts.length ? { ...row, bank_account_id: account } : row)
         if (insErr) throw new Error(insErr.message)
         doneKeys.push(item._key)
       } catch (e) {
@@ -293,6 +320,24 @@ export default function BankReconciliation() {
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
           </div>
         </div>
+        {accountsState !== 'ready' && (
+          <div data-k="rec-accounts-state" className={`rounded-lg p-3 text-sm ${accountsState === 'error' ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-500'}`}>
+            {accountsBlockedMsg}
+            {accountsState === 'error' && <button type="button" data-k="rec-accounts-retry" className="mr-2 underline font-semibold" onClick={loadAccounts}>إعادة المحاولة</button>}
+          </div>
+        )}
+        {bankAccounts.length > 0 && (
+          <div>
+            <label className="text-xs text-slate-400 block mb-1" htmlFor="rec-account">الحساب البنكي للكشف</label>
+            <select id="rec-account" data-k="rec-account" value={account} disabled={busy}
+              onChange={e => { setAccount(e.target.value); setResult(null) }}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="">— اختر الحساب —</option>
+              {activeAccounts.map(a => <option key={a.id} value={a.id}>{bankAccountLabel(a)}</option>)}
+            </select>
+            <p className="text-xs text-slate-400 mt-1">المطابقة مع قيود هذا الحساب وحده، والقيد المعتمد من الكشف يُسجَّل عليه.</p>
+          </div>
+        )}
 
         <div
           onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -311,7 +356,7 @@ export default function BankReconciliation() {
 
         {error && <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-red-700 text-sm">❌ {error}</div>}
 
-        <button onClick={runReconciliation} disabled={!file || busy}
+        <button onClick={runReconciliation} disabled={!file || busy || accountMissing}
           className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           {busy
             ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>

@@ -3,6 +3,7 @@
 // (salesFigures وexpenseFigures في reportFigures.js، وvatFigures في vatTreatment.js، والأرصدة)، فيُبنى منه ملف PDF (reportPdf.js)
 // وملف Excel (modelToXlsx هنا) دون أي حساب آخر. قالب PDF القديم (صافي الربح والاسم القديم) لا يُستعمل.
 import { uncountedText } from './financeRules.js'
+import { bankAccountRows } from './branchSetup.js'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
 
 export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقرير المصروفات', vat: 'تقرير ضريبة القيمة المضافة', balance: 'تقرير الأرصدة' }
@@ -189,6 +190,9 @@ export function reportModel(ctx) {
       { key: 'balance.bank', label: 'رصيد البنك', type: 'money', value: b.bank, foot: b.bank < 0 ? 'رصيد سالب' : `حتى ${toText}` },
       { key: 'balance.custody', label: 'رصيد العهدة', type: 'money', value: b.custody, foot: b.custody < 0 ? 'رصيد سالب' : `حتى ${toText}` },
     ] })
+    // رصيد كل حساب بنكي (منشأة بحسابات فقط) بالصفوف نفسها التي تعرضها الشاشة (bankAccountRows)
+    const byAccount = bankAccountRows(ctx.bankAccounts, b.bankByAccount, b.bank)
+    if (byAccount.length) blocks.push({ kind: 'calc', id: 'balance.byAccount', title: 'رصيد البنك حسب الحساب', rows: byAccount.map(({ label, value, strong }) => ({ label, value, strong })) })
     blocks.push({ kind: 'calc', id: 'balance.calc', title: 'ملخص الفترة', rows: [
       { label: 'إجمالي المدين (الدخل)', value: d.totalIn, strong: true },
       { label: 'إجمالي الدائن (الخروج)', value: d.totalOut, strong: true },

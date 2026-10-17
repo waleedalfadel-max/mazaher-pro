@@ -15,6 +15,8 @@ import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
+import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
+import { applyRulesToDocument, indexRules } from '../lib/itemRules'
 import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
 
 function fmtDate(d) {
@@ -123,6 +125,10 @@ export default function PendingDocuments() {
   const [branches,   setBranches]     = useState([])
   const [suppliers,  setSuppliers]    = useState([])
   const [payableSuppliers, setPayableSuppliers] = useState([])
+  // إعداد المنشأة حسب الفرع (20261014140000): القنوات المفعلة، والحسابات البنكية، وقاموس الأصناف. منشأة بلا إعداد: كما كانت
+  const [projectSettings, setProjectSettings] = useState(null)
+  const [bankAccounts, setBankAccounts] = useState([])
+  const [ruleIndex, setRuleIndex] = useState(() => new Map())
   const [projects,   setProjects]     = useState([])
   const [projMap,    setProjMap]      = useState({})
   const [filterProjId, setFilterProjId] = useState('')
@@ -155,7 +161,11 @@ export default function PendingDocuments() {
     } else if (projectId) {
       getTransactionTypes(projectId).then(setTransTypes)
       supabase.rpc('approval_mode', { p_project_id: projectId }).then(({ data }) => setModes(m => ({ ...m, [projectId]: data || 'legacy' })))
-      getProjectSettings(projectId).then(s => setBranches(s?.settings?.branches || []))
+      getProjectSettings(projectId).then(s => { setBranches(s?.settings?.branches || []); setProjectSettings(s?.settings || null) })
+      supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
+        .then(({ data }) => setBankAccounts(data || []))
+      supabase.from('item_category_rules').select('description_norm,category_id,subcategory_id,status,note').eq('project_id', projectId)
+        .then(({ data }) => setRuleIndex(indexRules(data || [])))
       loadDocs(projectId).then(() => setLoading(false))
       supabase.from('categories')
         .select('id,name,parent_id,type,sort_order,financial_class,ledger_type,is_active')
@@ -252,7 +262,7 @@ export default function PendingDocuments() {
 
   function updateDoc(id, patch) {
     // تعديل من المستخدم (لا نتيجة قراءة جديدة ولا حالة بعد اعتماد جزئي): «تعديلات لم تُحفظ» حتى «حفظ مسودة» أو الاعتماد
-    if (patch._edit && patch._state === undefined) patch = { ...patch, _dirty: true, _v2Error: null }
+    if (patch._edit && patch._state === undefined) patch = { _v2Error: null, ...patch, _dirty: true }
     setDocs(ds => ds.map(d => d.id === id ? { ...d, ...patch } : d))
   }
   // يعيد true إذا حُفظت المسودة فعلًا، وfalse إن فشل التخزين (ممتلئ أو معطّل) فيبقى المستند «معدّلًا غير محفوظ»
@@ -268,7 +278,7 @@ export default function PendingDocuments() {
     const store = draftStore()
     if (store) dropDraft(store, scopeOf(doc), doc.id)
     updateDoc(doc.id, {
-      _state: doc._state, _edit: doc.analysis_result || null, _dirty: false, _draftSavedAt: null, _validationError: null,
+      _state: doc._state, _edit: doc.analysis_result || null, _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
       branch: doc._origBranch, _supplierId: undefined, _supplierName: undefined, _supplierResolution: undefined, _matchedSupplierId: undefined,
     })
   }
@@ -862,6 +872,10 @@ export default function PendingDocuments() {
     const document = { branch: doc.branch || null }
     // التصحيح مبني على نسخة التقرير التي عُرضت في التنبيه؛ تُحفظ لإعادة المحاولة بعد انقطاع
     const linked = doc._v2Error?.linked || doc._salesLinked || {}
+    if (payload.bankAccounts && linked.accounts) {
+      const kept = Object.fromEntries(Object.entries(payload.bankAccounts).filter(([k]) => !(Number(linked.accounts[k]?.old || 0) || Number(linked.accounts[k]?.total || 0))))
+      payload.bankAccounts = kept
+    }
     const revision = linked.revision ?? null
     const fp = JSON.stringify(['correct', payload, reason, document, revision])
     const requestId = doc._req?.fp === fp ? doc._req.id : newRequestId()
@@ -921,6 +935,16 @@ export default function PendingDocuments() {
   const opened = docs.find(d => d.id === openId)
   useEffect(() => { if (opened && !opened._showImage && !opened._loadingImg && (opened.file_url || opened.file_type)) loadImage(opened) }, [openId, !!opened])
   useEffect(() => { if (opened && modeOf(opened) !== 'legacy' && opened.status === 'analyzed' && !opened._v2) prepareV2(opened) }, [openId, !!opened, opened?.status, modes])
+  // قاموس الأصناف: مرة لكل قراءة، للبنود التي بلا تصنيف فقط (الاعتماد الجديد). صنف «للمراجعة» لا يُصنَّف، يُعلَّم فقط
+  useEffect(() => {
+    if (!opened || isSuperAdmin || modeOf(opened) === 'legacy' || !ruleIndex.size || !categories.length) return
+    if (opened.status !== 'analyzed' && opened._state !== 'analyzed') return
+    if (!opened._v2) return   // بعد تجهيز الخادم (معرّفات الفواتير): يُطبَّق مرة واحدة على النسخة النهائية فيبقى العدد صحيحًا
+    if (opened._rulesFor && opened._rulesFor === opened.analysis_result) return
+    const r = applyRulesToDocument(opened._edit || opened.analysis_result, ruleIndex, categories)
+    updateDoc(opened.id, { _state: opened._state, _rulesFor: opened.analysis_result,
+      ...(r.applied || r.review ? { _edit: r.edit, _dictionaryApplied: { applied: r.applied, review: r.review } } : {}) })
+  }, [openId, opened?.status, opened?._state, opened?.analysis_result, opened?._rulesFor, !!opened?._v2, ruleIndex, categories, modes])
   // اعتماد المستند المفتوح يخرجه من القائمة: نعود إليها ونمسح مسودته
   useEffect(() => { if (openId && !loading && !opened) closeDoc() }, [openId, loading, !!opened])
 
@@ -1054,6 +1078,12 @@ export default function PendingDocuments() {
             approveV2({ ...doc, _dupDecisions: decisions })
           }}
           onCorrectSales={reason => correctSalesV2(doc, reason)}
+          onEditCorrection={(f, v) => {
+            // لوحة حسابات التصحيح (R2): التعديل يبقي تنبيه «يوجد تقرير» ومربع السبب
+            const cur = doc._edit || doc.analysis_result || {}
+            const _edit = cur.invoices?.length === 1 ? { ...cur, invoices: [{ ...cur.invoices[0], [f]: v }] } : { ...cur, [f]: v }
+            updateDoc(doc.id, { _edit, _v2Error: doc._v2Error })
+          }}
           onSaveDraft={() => saveDraftFor(doc)}
           canSaveDraft={!!uidRef.current}
           projName={isSuperAdmin ? (projMap[doc.project_id] || '') : ''}
@@ -1130,6 +1160,7 @@ export default function PendingDocuments() {
           transTypes={isSuperAdmin ? (transTypesMap[doc.project_id] || FALLBACK_TRANS_TYPES) : transTypes}
           categories={isSuperAdmin ? (categoriesMap[doc.project_id] || []) : categories}
           branches={branches}
+          setup={isSuperAdmin ? null : { settings: projectSettings, bankAccounts }}
           suppliers={suppliers}
           payableSuppliers={isSuperAdmin ? (payableSuppliersMap[doc.project_id] || []) : payableSuppliers}
           onBranchChange={b => updateDoc(doc.id, { branch: b, _dirty: true })}
@@ -1301,6 +1332,76 @@ function catOptions(list, current) {
   return current && !list.includes(current) ? [{ value: current, label: current }, ...opts] : opts
 }
 
+// ── الحساب البنكي (20261014140000): يظهر فقط لمنشأة بحسابات وحركة بنك؛ حساب وحيد متاح للفرع يُختار تلقائيًا (والخادم يفعل الشيء نفسه)
+const BANK_CHANNELS = [{ k: 'network', field: 'networkSales', label: 'الشبكة' }, { k: 'transfer', field: 'transferSales', label: 'التحويل' }]
+function BankAccountField({ invoice, branch, setup, onEdit }) {
+  const accounts = setup?.bankAccounts || []
+  if (!accounts.length || !needsBankAccount(invoice)) return null
+  const list = eligibleBankAccounts(accounts, branch)
+  const opts = list.map(a => ({ value: a.id, label: bankAccountLabel(a) }))
+  const staleMsg = 'الحساب المختار سابقًا غير متاح لهذا الفرع؛ اختر من القائمة.'
+  // تقرير المبيعات: حساب كل قناة بنكية يُقرأ ويُكتب في مكان واحد (bankAccounts.<القناة>، والعام احتياطي) — في الحقلين أو الحقل الواحد،
+  // فما يظهر للمحاسب هو ما يُرسل ويُسجَّل، ولو صُفّرت قناة أو أُعيدت (R3-01)
+  if (invoice?.type === 'sales') {
+    const shown = BANK_CHANNELS.filter(c => Number(invoice?.[c.field] || 0) > 0)
+    if (shown.length === 2 && list.length > 1) return shown.map(c => {
+      const stored = salesChannelAccount(invoice, c.k), value = chosenBankAccount(accounts, branch, stored)
+      return (
+        <Field key={c.k} label={`حساب ${c.label}`} error={stored && stored !== value ? staleMsg : undefined} hint={`الحساب البنكي الذي دخلته مبيعات ${c.label}.`}>
+          <Select value={value} placeholder="— اختر الحساب —" data-k={`bank-account-${c.k}`}
+            onChange={e => onEdit('bankAccounts', withSalesChannelAccount(invoice, [c.k], e.target.value))} options={opts} />
+        </Field>
+      )
+    })
+    const keys = shown.map(c => c.k)
+    const stored = keys.map(k => salesChannelAccount(invoice, k))
+    const value = chosenBankAccount(accounts, branch, stored[0])
+    const stale = stored.some(x => x && x !== value) || new Set(stored.filter(Boolean)).size > 1
+    return (
+      <Field label="الحساب البنكي" error={!list.length ? `لا حساب بنكي مربوط بفرع «${branch || ''}».` : stale ? staleMsg : undefined}
+        hint={list.length === 1 ? 'الحساب الوحيد المتاح لهذا الفرع.' : branch ? `الحسابات المربوطة بفرع «${branch}».` : 'اختر الفرع أولًا لتظهر حساباته.'}>
+        <Select value={value} placeholder="— اختر الحساب —" data-k="bank-account" onChange={e => onEdit('bankAccounts', withSalesChannelAccount(invoice, keys, e.target.value))} options={opts} />
+      </Field>
+    )
+  }
+  const value = chosenBankAccount(accounts, branch, invoice?.bankAccountId)
+  const stale = invoice?.bankAccountId && invoice.bankAccountId !== value
+  return (
+    <Field label="الحساب البنكي" error={!list.length ? `لا حساب بنكي مربوط بفرع «${branch || ''}».` : stale ? staleMsg : undefined}
+      hint={list.length === 1 ? 'الحساب الوحيد المتاح لهذا الفرع.' : branch ? `الحسابات المربوطة بفرع «${branch}».` : 'اختر الفرع أولًا لتظهر حساباته.'}>
+      <Select value={value} placeholder="— اختر الحساب —" data-k="bank-account" onChange={e => onEdit('bankAccountId', e.target.value)} options={opts} />
+    </Field>
+  )
+}
+
+// ── حساب فرق كل قناة بنكية في تصحيح تقرير المبيعات (R2): القناة القائمة على حسابها الأصلي (من قيود التقرير، يرسلها الخادم في
+// التنبيه)، والجديدة على حسابها المختار هنا. لا يُنقل فرق قناة قائمة إلى حساب آخر.
+function CorrectionAccounts({ linked, invoice, branch, setup, onEdit }) {
+  const accounts = setup?.bankAccounts || []
+  if (!accounts.length || !linked?.accounts || !invoice) return null
+  const list = eligibleBankAccounts(accounts, branch)
+  const rows = BANK_CHANNELS.map(c => {
+    const oldV = Number(linked.current?.[c.k] || 0), newV = Number(invoice[c.field] || 0), a = linked.accounts[c.k] || {}
+    if (oldV === newV) return null
+    const delta = `${newV > oldV ? '+' : '−'}${money(Math.abs(newV - oldV))}`
+    if (Number(a.old || 0) !== 0 || Number(a.total || 0) !== 0) {
+      if (!a.account) return <li key={c.k} data-k={`corr-${c.k}`} className="rp-corr-warn">{c.label}: قيود هذه القناة في التقرير الموجود لا تثبت رقمه أو موزعة على أكثر من حساب؛ يتوقف التصحيح لمراجعتها.</li>
+      return <li key={c.k} data-k={`corr-${c.k}`}>{c.label} {delta}: على «{a.account_name}» — حساب المبلغ الأصلي</li>
+    }
+    return (
+      <li key={c.k} data-k={`corr-${c.k}`}>
+        <Field label={`حساب ${c.label} (قناة جديدة في التقرير، ${delta})`}>
+          <Select value={chosenBankAccount(accounts, branch, salesChannelAccount(invoice, c.k))} placeholder="— اختر الحساب —" data-k={`corr-account-${c.k}`}
+            onChange={e => onEdit('bankAccounts', withSalesChannelAccount(invoice, [c.k], e.target.value))}
+            options={list.map(x => ({ value: x.id, label: bankAccountLabel(x) }))} />
+        </Field>
+      </li>
+    )
+  }).filter(Boolean)
+  if (!rows.length) return null
+  return <Panel title="الحساب البنكي لفروق التصحيح" icon={Info}><ul className="rp-corr-accounts">{rows}</ul></Panel>
+}
+
 // ── بند ──────────────────────────────────────────────────────────────────────
 // فاتورة ببند واحد (categoryMainFromType مُمرَّر): الأب ثابت من تصنيف الفاتورة العام.
 // فاتورة متعددة البنود (categoryMainFromType === undefined): كل بند يختار تصنيفه الأساسي بنفسه.
@@ -1325,7 +1426,9 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
       <div className="rp-line-top"><span>البند <span className="ts-num">{n}</span></span>{remove('rp-line-remove--top')}</div>
       <label className="rp-cell rp-cell--name"><span className="rp-cell-label">الوصف</span>
         <Input value={item.description || ''} placeholder="وصف البند" aria-label={`وصف البند ${n}`}
-          onChange={e => onEdit({ description: e.target.value })} /></label>
+          onChange={e => onEdit({ description: e.target.value })} />
+        {item._dictionary === 'active' && item.category_main ? <small className="rp-dict-tag">من قاموس الأصناف</small>
+          : item._dictionary === 'review' && !item.category_main ? <small className="rp-dict-tag rp-dict-tag--review" title={item._dictionaryNote || undefined}>للمراجعة في القاموس: اختر التصنيف</small> : null}</label>
       {independentMode && (
         <label className="rp-cell"><span className="rp-cell-label">التصنيف الأساسي</span>
           <Select value={mainValue} placeholder="— اختر —" aria-label={`التصنيف الأساسي للبند ${n}`}
@@ -1460,7 +1563,7 @@ function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
   )
 }
 
-function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, suppliers, payableSuppliers }) {
+function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
@@ -1562,6 +1665,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, on
       {doc._error && <Note tone="error" icon={CircleAlert} title="تعذّر الإجراء">{doc._error}</Note>}
       {doc._notice && <Note tone="success" icon={Check} title={doc._notice} />}
       <V2Error err={doc._v2Error} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />
+      {doc._v2Error?.code === 'sales_report_exists' && <CorrectionAccounts linked={doc._v2Error.linked} invoice={res} branch={doc.branch} setup={setup} onEdit={onEditCorrection || onEdit} />}
       {doc._validationError && (
         <Note tone="error" icon={CircleAlert} title="حقول مطلوبة قبل الاعتماد">
           {vErr.missingTransferPay
@@ -1593,12 +1697,19 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, on
         </Panel>
       )}
 
+      {analyzed && doc._dictionaryApplied && (
+        <Note tone="info" icon={ListChecks} title="قاموس الأصناف">
+          {doc._dictionaryApplied.applied > 0 && <>صُنّف <span className="ts-num">{doc._dictionaryApplied.applied}</span> بند من القاموس؛ راجعه وغيّره إن لزم. </>}
+          {doc._dictionaryApplied.review > 0 && <><span className="ts-num">{doc._dictionaryApplied.review}</span> بند صنفه «للمراجعة» في القاموس فلم يُصنَّف تلقائيًا: اختر تصنيفه.</>}
+        </Note>
+      )}
       {/* فواتير متعددة في صورة واحدة */}
       {analyzed && isMultiInvoice && (
         <Panel title={`${plural(rawRes.invoices.length, 'فاتورة واحدة', 'فاتورتان', 'فواتير', 'فاتورة')} في هذه الصورة`} icon={Layers} subtitle="افتح كل فاتورة لتعديلها. تُعتمد كلها معًا، أو كل فاتورة وحدها.">
           <div className="rp-subinvs">
             {rawRes.invoices.map((inv, idx) => (
               <InvoiceSubPanel key={inv._id || idx} invoice={inv} index={idx} transTypes={transTypes} categories={categories}
+                setup={setup} branch={doc.branch}
                 v2={isV2} decision={isV2 ? invStatus(inv._id) : null}
                 onEdit={(f, v) => onEditInvoice(idx, f, v)}
                 onApprove={readOnly ? null : () => onApproveInvoice(idx)}
@@ -1653,6 +1764,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, on
                   <Input value={supplierName} placeholder="اسم المورد" onChange={e => onSupplierNameChange(e.target.value)} />
                 </Field>
               )}
+              {!isSales && <BankAccountField invoice={res} branch={doc.branch} setup={setup} onEdit={onEdit} />}
               {/* الاعتماد الجديد: التصنيف على البند نفسه (من قائمة التصنيفات)، ولو كان بندًا واحدًا؛ نوع القيد ومعالجته منه */}
               {!isSales && !(isExpenseItems && (itemCount > 1 || isV2)) && (
                 <Field label={<>التصنيف الأساسي{doc._aiSuggestedType && res.transType ? <span className="rp-ai-tag">اقتراح القراءة</span> : null}</>}
@@ -1711,9 +1823,11 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, on
             <div className="rp-section">
               <h3>المبيعات حسب طريقة الدفع</h3>
               <div className="ts-form-grid rp-channels">
-                {SALES_CHANNELS.map(({ key, label }) => (
-                  <Field key={key} label={label}><Num value={res[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
+                {visibleSalesChannels(SALES_CHANNELS, setup?.settings, doc.branch, res).map(({ key, label, enabled }) => (
+                  <Field key={key} label={label} error={enabled ? undefined : `غير مفعّلة لفرع «${doc.branch}». انقل المبلغ إلى قناته الصحيحة أو صحّح الفرع.`}>
+                    <Num value={res[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
                 ))}
+                {isV2 && <BankAccountField invoice={res} branch={doc.branch} setup={setup} onEdit={onEdit} />}
               </div>
               <div className="rp-totals">
                 <div className="rp-total-row rp-total-row--strong"><span>الإجمالي المحسوب</span><Money value={salesTotal} /></div>
@@ -1737,7 +1851,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, doc, projName, on
 }
 
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApprove, onReject, approving, blocked, v2, decision }) {
+function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onApprove, onReject, approving, blocked, v2, decision }) {
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -1797,9 +1911,10 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, onEdit, onApp
                 options={catOptions(filteredTransTypes, isTransferDoc ? invoice.transType : '')} />
             </Field>
           )}
-          {isSales && SALES_CHANNELS.filter(c => !['transferSales', 'mrsool'].includes(c.key)).map(({ key, label }) => (
-            <Field key={key} label={label}><Num value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
+          {isSales && visibleSalesChannels(SALES_CHANNELS.filter(c => !['transferSales', 'mrsool'].includes(c.key)), setup?.settings, branch, invoice).map(({ key, label, enabled }) => (
+            <Field key={key} label={label} error={enabled ? undefined : `غير مفعّلة لفرع «${branch}».`}><Num value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
           ))}
+          {(v2 || !isSales) && <BankAccountField invoice={invoice} branch={branch} setup={setup} onEdit={onEdit} />}
         </div>
         {!isSales && (
           <div className="rp-subinv-items">
