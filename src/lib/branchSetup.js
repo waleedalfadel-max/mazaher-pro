@@ -24,6 +24,13 @@ export function visibleSalesChannels(channels, settings, branch, values = {}) {
  *  وحسابها البنكي من حسابات المنشأة كلها. الخادم يطبّق الشيء نفسه (approval_private.plan_invoice). بلا الإعداد: كما كان. */
 export const expensesAtProjectLevel = settings => settings?.expenses_scope === 'project'
 
+/** لا نخفي فرع مستند مختلط أو غير مصنّف؛ الاستثناء للمصروفات فقط. */
+export function documentExpensesAtProjectLevel(settings, result) {
+  if (!expensesAtProjectLevel(settings)) return false
+  const invoices = Array.isArray(result?.invoices) ? result.invoices : [result]
+  return invoices.length > 0 && invoices.every(invoice => invoice?.type === 'expense')
+}
+
 /** الحسابات المتاحة لفرع: النشطة، المربوطة بالفرع أو بكل الفروع؛ بلا فرع ⇒ كل النشطة. */
 export function eligibleBankAccounts(accounts, branch) {
   return (accounts || []).filter(a => a.is_active !== false

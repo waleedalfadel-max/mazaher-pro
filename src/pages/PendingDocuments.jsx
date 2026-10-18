@@ -15,7 +15,7 @@ import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
-import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
+import { bankAccountLabel, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
 import { applyRulesToDocument, indexRules } from '../lib/itemRules'
 import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
 
@@ -1714,6 +1714,14 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
       {/* فواتير متعددة في صورة واحدة */}
       {analyzed && isMultiInvoice && (
         <Panel title={`${plural(rawRes.invoices.length, 'فاتورة واحدة', 'فاتورتان', 'فواتير', 'فاتورة')} في هذه الصورة`} icon={Layers} subtitle="افتح كل فاتورة لتعديلها. تُعتمد كلها معًا، أو كل فاتورة وحدها.">
+          {expensesAtProjectLevel(setup?.settings) && doc._branchEditable && branches.length > 0 && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
+            <div className="rp-section ts-form-grid">
+              <Field label="الفرع" hint="للمبيعات والتحويلات في الصورة؛ المصروفات تُسجَّل على مستوى المنشأة.">
+                <Select value={doc.branch || ''} placeholder="— اختر الفرع —" onChange={e => onBranchChange(e.target.value)}
+                  options={branches.map(b => ({ value: b, label: b }))} />
+              </Field>
+            </div>
+          )}
           <div className="rp-subinvs">
             {rawRes.invoices.map((inv, idx) => (
               <InvoiceSubPanel key={inv._id || idx} invoice={inv} index={idx} transTypes={transTypes} categories={categories}
@@ -1748,7 +1756,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
                   <Input value={res.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} />
                 </Field>
               )}
-              {doc._branchEditable && branches.length > 0 && !(expensesAtProjectLevel(setup?.settings) && !(isMultiInvoice ? rawRes.invoices.some(x => x.type === 'sales') : isSales)) && (
+              {doc._branchEditable && branches.length > 0 && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
                 <Field label="الفرع">
                   <Select value={doc.branch || ''} placeholder="— اختر الفرع —" onChange={e => onBranchChange(e.target.value)}
                     options={branches.map(b => ({ value: b, label: b }))} />

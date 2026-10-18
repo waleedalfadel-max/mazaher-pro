@@ -2,11 +2,27 @@
 // (local-test/branch-banks-items.test.sql)؛ هنا ما تعرضه الشاشة وما ترسله.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appsForProject, bankAccountLabel, channelEnabled, chosenBankAccount, eligibleBankAccounts, needsBankAccount, visibleSalesChannels } from '../src/lib/branchSetup.js'
+import { appsForProject, bankAccountLabel, channelEnabled, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, needsBankAccount, visibleSalesChannels } from '../src/lib/branchSetup.js'
 import { applyItemRules, applyRulesToDocument, indexRules, normItem } from '../src/lib/itemRules.js'
 
 const settings = { branch_channels: { 'فرع الشمال': ['cash', 'network', 'transfer', 'hunger', 'jahez', 'mrsool'], 'فرع الجنوب': ['cash', 'network', 'transfer'] } }
 const CH = [{ key: 'cashSales' }, { key: 'networkSales' }, { key: 'jahez' }, { key: 'keeta' }, { key: 'mrsool' }]
+
+test('إخفاء الفرع للمصروفات فقط؛ التحويل والمبيعات والمستند المختلط تحتفظ باختيار الفرع', () => {
+  const wide = { expenses_scope: 'project' }
+  const expense = { type: 'expense' }, transfer = { type: 'transfer' }, sales = { type: 'sales' }
+  for (const result of [expense, { invoices: [expense] }, { invoices: [expense, expense] }]) {
+    assert.equal(documentExpensesAtProjectLevel(wide, result), true)
+    for (const unchanged of [undefined, {}, { expenses_scope: 'branch' }]) {
+      assert.equal(documentExpensesAtProjectLevel(unchanged, result), false)
+    }
+  }
+  for (const result of [transfer, sales, { invoices: [transfer] }, { invoices: [transfer, transfer] },
+    { invoices: [expense, transfer] }, { invoices: [expense, sales] },
+    null, {}, { invoices: [] }, { invoices: [expense, {}] }, { invoices: [expense, null] }]) {
+    assert.equal(documentExpensesAtProjectLevel(wide, result), false, JSON.stringify(result))
+  }
+})
 
 test('القنوات: منشأة بلا إعداد أو فرع غير مذكور أو بلا فرع ⇒ كل القنوات', () => {
   assert.equal(channelEnabled(null, 'فرع الجنوب', 'jahez'), true)
