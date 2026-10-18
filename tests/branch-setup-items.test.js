@@ -2,11 +2,27 @@
 // (local-test/branch-banks-items.test.sql)؛ هنا ما تعرضه الشاشة وما ترسله.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appsForProject, bankAccountLabel, channelEnabled, chosenBankAccount, eligibleBankAccounts, needsBankAccount, visibleSalesChannels } from '../src/lib/branchSetup.js'
+import { appsForProject, bankAccountLabel, channelEnabled, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, needsBankAccount, visibleSalesChannels } from '../src/lib/branchSetup.js'
 import { applyItemRules, applyRulesToDocument, indexRules, normItem } from '../src/lib/itemRules.js'
 
 const settings = { branch_channels: { 'فرع الشمال': ['cash', 'network', 'transfer', 'hunger', 'jahez', 'mrsool'], 'فرع الجنوب': ['cash', 'network', 'transfer'] } }
 const CH = [{ key: 'cashSales' }, { key: 'networkSales' }, { key: 'jahez' }, { key: 'keeta' }, { key: 'mrsool' }]
+
+test('إخفاء الفرع للمصروفات فقط؛ التحويل والمبيعات والمستند المختلط تحتفظ باختيار الفرع', () => {
+  const wide = { expenses_scope: 'project' }
+  const expense = { type: 'expense' }, transfer = { type: 'transfer' }, sales = { type: 'sales' }
+  for (const result of [expense, { invoices: [expense] }, { invoices: [expense, expense] }]) {
+    assert.equal(documentExpensesAtProjectLevel(wide, result), true)
+    for (const unchanged of [undefined, {}, { expenses_scope: 'branch' }]) {
+      assert.equal(documentExpensesAtProjectLevel(unchanged, result), false)
+    }
+  }
+  for (const result of [transfer, sales, { invoices: [transfer] }, { invoices: [transfer, transfer] },
+    { invoices: [expense, transfer] }, { invoices: [expense, sales] },
+    null, {}, { invoices: [] }, { invoices: [expense, {}] }, { invoices: [expense, null] }]) {
+    assert.equal(documentExpensesAtProjectLevel(wide, result), false, JSON.stringify(result))
+  }
+})
 
 test('القنوات: منشأة بلا إعداد أو فرع غير مذكور أو بلا فرع ⇒ كل القنوات', () => {
   assert.equal(channelEnabled(null, 'فرع الجنوب', 'jahez'), true)
@@ -209,4 +225,14 @@ test('R3-01 مستند قديم بالاختيار العام وحده: الظا
   const p = send(inv)
   for (const k of ['network', 'transfer']) assert.equal(serverAccount(p, k), 'X')
   assert.equal(salesChannelAccount(inv, 'network'), 'X')
+})
+
+test('مصروفات على مستوى المنشأة: الإعداد expenses_scope = project وحده يفعّلها، وبلا فرع تظهر حسابات المنشأة كلها', async () => {
+  const { expensesAtProjectLevel, eligibleBankAccounts, chosenBankAccount } = await import('../src/lib/branchSetup.js')
+  assert.equal(expensesAtProjectLevel({ expenses_scope: 'project' }), true)
+  for (const s of [null, undefined, {}, { expenses_scope: 'branch' }, { branches: ['أ'] }]) assert.equal(expensesAtProjectLevel(s), false)
+  const accs = [{ id: 'a', branches: ['فرع أ'] }, { id: 'b', branches: ['فرع ب'] }, { id: 'c', branches: [], is_active: false }]
+  assert.deepEqual(eligibleBankAccounts(accs, null).map(a => a.id), ['a', 'b'])     // بلا فرع: النشطة كلها
+  assert.deepEqual(eligibleBankAccounts(accs, 'فرع أ').map(a => a.id), ['a'])       // بفرع: كما كان
+  assert.equal(chosenBankAccount(accs, null, 'b'), 'b')                               // حساب فرع آخر مقبول للمصروف على مستوى المنشأة
 })
