@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
 import { normalizeSalesReading } from './salesReport.js'
+import { normRotation, uprightImage } from './readingImage.js'
 
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
 
@@ -297,11 +298,15 @@ ${categorySection}
 - category_main: انسخ الاسم حرفياً من القائمة أعلاه بما فيه الإيموجي — ممنوع اختراع أسماء جديدة أو تعديل الأسماء
 - category_sub: انسخ الاسم حرفياً من الفرعيات تحت category_main المختار — إذا لا يوجد فرعي مناسب اتركه فارغاً ""${supplierNameRule}
 - إذا الصورة تحتوي على أكثر من فاتورة أو إيصال منفصل (مثلاً فاتورتان في صفحة أو صور مجمّعة): استخرج كل فاتورة بشكل مستقل
-- في جميع الحالات أعد النتيجة بهذا الشكل الموحّد: {"invoices":[{...الفاتورة الأولى بنفس الحقول المعتادة...},{...الفاتورة الثانية...}]}
-- إذا كانت فاتورة واحدة فقط: {"invoices":[{...الفاتورة...}]}
+- في جميع الحالات أعد النتيجة بهذا الشكل الموحّد: {"rotation":0,"invoices":[{...الفاتورة الأولى بنفس الحقول المعتادة...},{...الفاتورة الثانية...}]}
+- إذا كانت فاتورة واحدة فقط: {"rotation":0,"invoices":[{...الفاتورة...}]}
+- rotation: كم درجة تُدار الصورة باتجاه عقارب الساعة ليصبح نص المستند مستقيمًا للقراءة (0 أو 90 أو 180 أو 270). مستقيم ⇒ 0.
+  مثال: نص يُقرأ من أعلى إلى أسفل (الصورة مدارة ربع دورة مع عقارب الساعة) ⇒ 270؛ ومن أسفل إلى أعلى ⇒ 90؛ ومقلوب ⇒ 180.
 - المفتاح الخارجي دائماً هو "invoices" وهو مصفوفة حتى لو عنصر واحد — لا تُعد JSON مجرد object بدون invoices
 - JSON فقط بدون أي نص قبله أو بعده`
 
+  // قراءة واحدة لصورة/ملف؛ تُكرَّر مرة واحدة فقط للصورة المدوّرة بعد تدويرها مستقيمة (src/lib/readingImage.js)
+  async function readOnce(block) {
   const res = await analyzeFetch({
     method: 'POST',
     headers: {
@@ -313,7 +318,7 @@ ${categorySection}
       system: `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
       messages: [{
         role: 'user',
-        content: [contentBlock, { type: 'text', text: prompt }],
+        content: [block, { type: 'text', text: prompt }],
       }],
     }),
   })
@@ -342,9 +347,25 @@ ${categorySection}
   const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
   const result = extractJSON(clean)
   if (!result) throw new Error('لا يوجد JSON صالح في الرد')
+  return result
+  }
+
+  let result = await readOnce(contentBlock)
+  // صورة غير مستقيمة (تدوير غير صفري من القراءة الأولى): تُدار كاملة وتُقرأ PNG بلا فقد مرة ثانية واحدة.
+  // نتيجة القراءة الأولى لا تُستعمل للأرقام (قراءة النص المائل غير موثوقة: تقرير 2026-10-18).
+  let reading = { calls: 1, rotated: 0 }
+  const rot = isImage ? normRotation(result?.rotation) : 0
+  if (rot) {
+    const up = await uprightImage(fileBase64, mime, rot)
+    result = await readOnce({ type: 'image', source: { type: 'base64', media_type: up.mime, data: up.base64 } })
+    reading = { calls: 2, rotated: rot, size: [up.width, up.height], stillRotated: normRotation(result?.rotation) || undefined }
+  }
 
   // Normalize to always { invoices: [...] }
   const normalized = result.invoices ? result : { invoices: [result] }
+  delete normalized.rotation
+  // أثر تجهيز الصورة للمراجعة: عدد القراءات والتدوير (لا أثر له على المبالغ)
+  if (reading.calls > 1) normalized._reading = reading
   // تقرير المبيعات: القنوات من أسطر وسائل الدفع المنسوخة (المرادفات والتحويل والمرتجعات وغير المعروف) — src/lib/salesReport.js.
   // مرة واحدة عند القراءة: تعديلات المحاسب بعدها لا يُعاد حسابها.
   normalized.invoices = normalized.invoices.map(normalizeSalesReading)

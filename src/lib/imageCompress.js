@@ -1,3 +1,19 @@
+/**
+ * صورة للقراءة الآلية بلا ضغط ثانٍ (2026-10-19): المخزّنة ضُغطت عند الرفع، فتُرسل كما هي ما دامت ضمن الحدود
+ * (العرض ≤ maxWidth والحجم ≤ maxSizeMB)؛ وإلا تُضغط كما كانت. يعيد النوع الفعلي المرسل.
+ * @returns {Promise<{ base64: string, mime: string, recompressed: boolean }>}
+ */
+export async function fitImageBase64(base64, mime, maxSizeMB = 3, maxWidth = 1400) {
+  if (!mime || !mime.startsWith('image/')) return { base64, mime, recompressed: false }
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+  let width = Infinity
+  try { width = (await createImageBitmap(new Blob([bytes], { type: mime }))).width } catch { /* نوع لا يُفك ⇒ يُضغط كما كان */ }
+  if (width <= maxWidth && bytes.length <= maxSizeMB * 1024 * 1024 && ['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
+    return { base64, mime, recompressed: false }
+  }
+  return { base64: await compressImageBase64(base64, mime, maxSizeMB, maxWidth), mime: 'image/jpeg', recompressed: true }
+}
+
 // للاستخدام عندما عندنا base64 string بدل File object (مثل PendingDocuments)
 export async function compressImageBase64(base64, mime, maxSizeMB = 3, maxWidth = 1400) {
   if (!mime || !mime.startsWith('image/')) return base64

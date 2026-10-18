@@ -8,7 +8,7 @@ import { analyzeDocument } from '../lib/claude'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
-import { compressImageBase64 } from '../lib/imageCompress'
+import { fitImageBase64 } from '../lib/imageCompress'
 import { matchSupplier } from '../lib/supplierMatching'
 import { compareItemsToTotal } from '../lib/documentTotals'
 import { acceptAmount } from '../lib/amountInput'
@@ -343,8 +343,8 @@ export default function PendingDocuments() {
         fileMime   = doc.file_type
       }
       if (fileMime?.startsWith('image/')) {
-        fileBase64 = await compressImageBase64(fileBase64, fileMime)
-        fileMime   = 'image/jpeg'
+        // بلا ضغط ثانٍ للمخزّنة ضمن الحدود (src/lib/imageCompress.js)؛ والتدوير عند الحاجة داخل analyzeDocument
+        ({ base64: fileBase64, mime: fileMime } = await fitImageBase64(fileBase64, fileMime))
       }
       const result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes)
 
