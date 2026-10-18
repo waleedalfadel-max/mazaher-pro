@@ -15,6 +15,7 @@ import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
+import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck } from '../lib/salesReport.js'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
 import { applyRulesToDocument, indexRules } from '../lib/itemRules'
 import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
@@ -420,6 +421,9 @@ export default function PendingDocuments() {
     const docTransTypes = isSuperAdmin ? (transTypesMap[pid] || FALLBACK_TRANS_TYPES) : transTypes
 
     if (res.type === 'sales') {
+      // وسيلة دفع غير معروفة أو فرق مع الإجمالي المطبوع: لا كتابة (src/lib/salesReport.js)
+      const check = salesReportCheck(res)
+      if (!check.ok) throw new Error(check.reasons[0])
       // ثبّت الفرع المختار في المستند قبل أي كتابة مالية؛ الربط القديم يتطلب تطابقه مع القيود والمبيعات.
       const { error: branchError } = await supabase.from('documents')
         .update({ branch: doc.branch || null }).eq('id', doc.id).eq('project_id', pid).select('id').single()
@@ -795,6 +799,10 @@ export default function PendingDocuments() {
         const t = exactTotals(inv)
         if (t.status !== 'match') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: t.status === 'invalid' ? 'invalid_amount' : 'amounts_mismatch', difference: t.diff / 100, invoice_id: inv._id } }); return }
       }
+      if (inv.type === 'sales') {
+        const c = salesReportCheck(inv)
+        if (!c.ok) { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'sales_unexplained', reason: c.reasons[0], invoice_id: inv._id } }); return }
+      }
     }
     const originals = Object.fromEntries((doc.analysis_result?.invoices || []).map(x => [x._id, x]))
     const decisions = { suppliers: {}, duplicates: { ...(doc._dupDecisions || {}) } }
@@ -1113,6 +1121,13 @@ export default function PendingDocuments() {
             const invoices = (cur.invoices || []).map((inv, i) => i === invIdx ? { ...inv, [f]: v } : inv)
             updateDoc(doc.id, { _edit: { ...cur, invoices } })
           }}
+          // استبدال فاتورة كاملة بتعديل واحد (عدة حقول معًا، مثل نسبة وسيلة دفع غير معروفة إلى قناة): invIdx null = الفاتورة الوحيدة
+          onReplaceInvoice={(invIdx, next) => {
+            const cur = doc._edit || doc.analysis_result || {}
+            if (invIdx != null) updateDoc(doc.id, { _edit: { ...cur, invoices: (cur.invoices || []).map((inv, i) => i === invIdx ? next : inv) } })
+            else if (cur.invoices?.length === 1) updateDoc(doc.id, { _edit: { ...cur, invoices: [next] } })
+            else updateDoc(doc.id, { _edit: next })
+          }}
           onEditItem={(idx, patch) => {
             const cur = doc._edit || doc.analysis_result || {}
             if (cur.invoices?.length === 1) {
@@ -1405,6 +1420,73 @@ function CorrectionAccounts({ linked, invoice, branch, setup, onEdit }) {
   return <Panel title="الحساب البنكي لفروق التصحيح" icon={Info}><ul className="rp-corr-accounts">{rows}</ul></Panel>
 }
 
+// ── تقرير المبيعات كما قُرئ (src/lib/salesReport.js) ────────────────────────────
+// أسطر وسائل الدفع بقنواتها، والمرتجعات، والإجمالي المطبوع والفرق، ووسائل الدفع غير المعروفة: تُنسب لقناة أو تُستبعد بسبب، ولا تُهمل.
+function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
+  const [choice, setChoice] = useState({})
+  const check = salesReportCheck(invoice)
+  const b = invoice?.salesBreakdown
+  const unknown = invoice?.unknownPayments || []
+  const rows = b ? CHANNELS.filter(c => b.gross[c] || b.returns[c]) : []
+  return (
+    <div className="rp-sales-reading" data-k="sales-reading">
+      {b && (
+        <table className="rp-table rp-sales-channels" data-k="sales-channels">
+          <thead><tr><th>القناة</th><th className="ts-end">قبل المرتجعات</th><th className="ts-end">المرتجعات</th><th className="ts-end">الصافي حسب القراءة</th></tr></thead>
+          <tbody>{rows.map(c => (
+            <tr key={c} data-channel={c}><td>{CHANNEL_NAME[c]}</td><td className="ts-end"><Money value={b.gross[c]} /></td>
+              <td className="ts-end">{b.returns[c] ? <Money value={-b.returns[c]} /> : '—'}</td><td className="ts-end"><Money value={b.gross[c] - b.returns[c]} /></td></tr>
+          ))}</tbody>
+          <tfoot><tr data-k="sales-channels-total"><td>المجموع</td><td className="ts-end"><Money value={b.grossTotal} /></td>
+            <td className="ts-end">{b.returnsTotal ? <Money value={-b.returnsTotal} /> : '—'}</td><td className="ts-end"><Money value={b.grossTotal - b.returnsTotal} /></td></tr></tfoot>
+        </table>
+      )}
+      {b && (b.lines.length > 0 || b.returnLines.length > 0) && (
+        <details className="rp-sales-lines" data-k="sales-lines">
+          <summary>أسطر وسائل الدفع كما قُرئت من التقرير (<span className="ts-num">{b.lines.length + b.returnLines.length}</span>)</summary>
+          <ul>
+            {b.lines.map((l, i) => <li key={'p' + i}>«{l.label}» <span className="ts-num">{money(l.amount)}</span> ← {l.channel ? CHANNEL_NAME[l.channel] : 'غير معروفة'}</li>)}
+            {b.returnLines.map((l, i) => <li key={'r' + i}>مرتجع «{l.label}» <span className="ts-num">−{money(l.amount)}</span> ← {l.channel ? CHANNEL_NAME[l.channel] : 'غير معروفة'}</li>)}
+          </ul>
+        </details>
+      )}
+      {unknown.map((u, i) => {
+        const c = choice[i] || {}
+        const apply = () => { onReplace?.(resolveUnknownPayment(invoice, i, c.channel === 'exclude' ? null : c.channel, c.reason)); setChoice({}) }
+        return (
+          <Note key={i} tone="warning" icon={CircleAlert} title={`${u.kind === 'return' ? 'مرتجع بوسيلة' : 'وسيلة دفع'} غير معروفة: «${u.label || '—'}» ${money(u.amount)}`}>
+            <div className="ts-form-grid" data-k="unknown-payment" data-index={i}>
+              <Field label="انسبها إلى">
+                <Select value={c.channel || ''} placeholder="— اختر —" disabled={readOnly} data-k={`unknown-channel-${i}`}
+                  onChange={e => setChoice({ ...choice, [i]: { ...c, channel: e.target.value } })}
+                  options={[...CHANNELS.map(k => ({ value: k, label: CHANNEL_NAME[k] })), { value: 'exclude', label: 'ليست وسيلة دفع (استبعاد)' }]} />
+              </Field>
+              {c.channel === 'exclude' && (
+                <Field label="سبب الاستبعاد"><Input value={c.reason || ''} data-k={`unknown-reason-${i}`} onChange={e => setChoice({ ...choice, [i]: { ...c, reason: e.target.value } })} /></Field>
+              )}
+              <Button size="sm" disabled={readOnly || !c.channel || (c.channel === 'exclude' && !String(c.reason || '').trim())} data-k={`unknown-apply-${i}`} onClick={apply}>تطبيق</Button>
+            </div>
+          </Note>
+        )
+      })}
+      {(invoice?.resolvedPayments || []).length > 0 && (
+        <ul className="rp-sales-resolved" data-k="sales-resolved">
+          {invoice.resolvedPayments.map((r, i) => <li key={i}>«{r.label}» {money(r.amount)} ← {r.channel ? CHANNEL_NAME[r.channel] : `مستبعدة: ${r.reason}`}</li>)}
+        </ul>
+      )}
+      <div className="rp-totals">
+        <Field label="إجمالي التقرير المطبوع (بعد المرتجعات)" hint={check.total == null ? 'لم يُقرأ إجمالي مطبوع: اكتبه من التقرير ليُطابق قبل الاعتماد.' : undefined}>
+          <Num value={invoice?.totalSales ?? ''} data-k="sales-printed-total" disabled={readOnly} onChange={e => onEdit('totalSales', e.target.value)} />
+        </Field>
+        {check.diff != null && (
+          <div className={`rp-total-row${check.diff ? ' rp-total-row--warn' : ''}`} data-k="sales-diff"><span>الفرق بين وسائل الدفع والإجمالي</span><Money value={check.diff} /></div>
+        )}
+      </div>
+      {!check.ok && <Note tone="error" icon={CircleAlert} title="لا يُعتمد التقرير قبل تفسير هذا">{check.reasons.map((r, i) => <div key={i} data-k="sales-reason">{r}</div>)}</Note>}
+    </div>
+  )
+}
+
 // ── بند ──────────────────────────────────────────────────────────────────────
 // فاتورة ببند واحد (categoryMainFromType مُمرَّر): الأب ثابت من تصنيف الفاتورة العام.
 // فاتورة متعددة البنود (categoryMainFromType === undefined): كل بند يختار تصنيفه الأساسي بنفسه.
@@ -1566,7 +1648,7 @@ function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
   )
 }
 
-function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
+function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
@@ -1616,6 +1698,10 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
   const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid')
     : isV2 && isMultiInvoice && rawRes.invoices.some(x => (invStatus(x._id)?.status ?? 'pending') === 'pending'
       && x.type === 'expense' && x.items?.length && ['mismatch', 'invalid'].includes(exactTotals(x).status))
+  // تقرير المبيعات (src/lib/salesReport.js): وسيلة دفع غير معروفة أو فرق مع الإجمالي المطبوع أو مرتجع أكبر من قناته يمنع الاعتماد
+  const salesCheck = isSales ? salesReportCheck(res) : null
+  const salesBlocked = (salesCheck && !salesCheck.ok) || (isMultiInvoice && rawRes.invoices.some(x => x.type === 'sales'
+    && (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && !salesReportCheck(x).ok))
   const pendingCount = isMultiInvoice ? rawRes.invoices.filter(x => !isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending').length : 0
   // قرار معلّق في التنبيه (تكرار، أو اشتباه بلا سبب، أو تقرير مبيعات موجود): الاعتماد يمر من التنبيه وحده
   const DECISIONS = { duplicate_invoice: 'فاتورة معتمدة مسبقًا: لا اعتماد لها. ارفض المستند.',
@@ -1643,12 +1729,13 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
       {paused ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />الاعتماد متوقف مؤقتًا لهذه المنشأة.</div>
         : decisionPending ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />{decisionPending}</div>
         : amountsBlocked ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />البنود لا تطابق الإجمالي بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.</div>
+        : salesBlocked ? <div className="rp-action-why" data-k="sales-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{salesCheck?.reasons?.[0] || 'تقرير مبيعات في الصورة فيه وسيلة دفع غير معروفة أو فرق مع إجماليه. راجعه في فاتورته.'}</div>
         : needsSupplierConfirm
         ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />أكّد هوية المورد أولًا (أعلاه).</div>
         : <div className="rp-action-hint">{(exact ? amountsBlocked : totalsCheck.status === 'mismatch') ? <strong>البنود لا تطابق الإجمالي — راجعها قبل الاعتماد. </strong> : null}{approveHint}</div>}
       <div className="rp-action-buttons">
         <Button variant="primary" icon={doc._state === 'approving' ? LoaderCircle : Check} className="rp-approve"
-          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || preparing || !!decisionPending} onClick={onApprove}>
+          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || preparing || !!decisionPending} onClick={onApprove}>
           {doc._state === 'approving' ? 'جارٍ الاعتماد…' : approveCount ? approveLabel(approveCount) : 'اعتماد'}
         </Button>
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
@@ -1714,12 +1801,14 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
               <InvoiceSubPanel key={inv._id || idx} invoice={inv} index={idx} transTypes={transTypes} categories={categories}
                 setup={setup} branch={doc.branch}
                 v2={isV2} decision={isV2 ? invStatus(inv._id) : null}
-                onEdit={(f, v) => onEditInvoice(idx, f, v)}
+                onEdit={(f, v) => onEditInvoice(idx, f, v)} onReplace={next => onReplaceInvoice(idx, next)} readOnly={readOnly}
                 onApprove={readOnly ? null : () => onApproveInvoice(idx)}
                 onReject={readOnly ? null : () => onRejectInvoice(idx)}
                 approving={busy}
                 blocked={isV2 ? (decisionPending && (!doc._v2Error?.invoice_id || doc._v2Error.invoice_id === inv._id) ? decisionPending
-                  : inv.type === 'expense' && inv.items?.length && ['mismatch', 'invalid'].includes(exactTotals(inv).status) ? 'البنود لا تطابق إجمالي هذه الفاتورة بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.' : null) : null} />
+                  : inv.type === 'expense' && inv.items?.length && ['mismatch', 'invalid'].includes(exactTotals(inv).status) ? 'البنود لا تطابق إجمالي هذه الفاتورة بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.'
+                  : inv.type === 'sales' && !salesReportCheck(inv).ok ? salesReportCheck(inv).reasons[0] : null)
+                  : inv.type === 'sales' && !salesReportCheck(inv).ok ? salesReportCheck(inv).reasons[0] : null} />
             ))}
           </div>
           {pendingCount > 0 && actionBar(pendingCount)}
@@ -1832,6 +1921,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
                 ))}
                 {isV2 && <BankAccountField invoice={res} branch={doc.branch} setup={setup} onEdit={onEdit} />}
               </div>
+              <SalesReading invoice={res} onEdit={onEdit} onReplace={next => onReplaceInvoice(null, next)} readOnly={readOnly} />
               <div className="rp-totals">
                 <div className="rp-total-row rp-total-row--strong"><span>الإجمالي المحسوب</span><Money value={salesTotal} /></div>
                 <div className="rp-total-row"><span>ضريبة المخرجات المحسوبة (15% كما في التطبيق)</span>
@@ -1854,7 +1944,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
 }
 
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onApprove, onReject, approving, blocked, v2, decision }) {
+function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onReject, approving, blocked, v2, decision }) {
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -1874,7 +1964,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   const isTransferDoc      = invoice.type === 'transfer'
   const filteredTransTypes = isTransferDoc ? transTypes.filter(TRANSFER_KINDS) : transTypes
   const totalDisp = isSales
-    ? (Number(invoice.cashSales)||0) + (Number(invoice.networkSales)||0) + (Number(invoice.hungerSales)||0) + (Number(invoice.jahez)||0) + (Number(invoice.keeta)||0)
+    ? SALES_CHANNELS.reduce((t, c) => t + (Number(invoice[c.key]) || 0), 0)
     : Number(invoice.totalAmount || invoice.amount) || 0
   const items = invoice.items || []
 
@@ -1914,11 +2004,12 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
                 options={catOptions(filteredTransTypes, isTransferDoc ? invoice.transType : '')} />
             </Field>
           )}
-          {isSales && visibleSalesChannels(SALES_CHANNELS.filter(c => !['transferSales', 'mrsool'].includes(c.key)), setup?.settings, branch, invoice).map(({ key, label, enabled }) => (
+          {isSales && visibleSalesChannels(SALES_CHANNELS, setup?.settings, branch, invoice).map(({ key, label, enabled }) => (
             <Field key={key} label={label} error={enabled ? undefined : `غير مفعّلة لفرع «${branch}».`}><Num value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
           ))}
           {(v2 || !isSales) && <BankAccountField invoice={invoice} branch={branch} setup={setup} onEdit={onEdit} />}
         </div>
+        {isSales && <SalesReading invoice={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} />}
         {!isSales && (
           <div className="rp-subinv-items">
             <h4>البنود <span className="ts-num">{items.length}</span></h4>

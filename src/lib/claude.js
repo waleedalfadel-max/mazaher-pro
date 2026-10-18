@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
+import { normalizeSalesReading } from './salesReport.js'
 
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
 
@@ -220,11 +221,20 @@ ${transTypesSection}
 مصادر الدفع: cash=صندوق نقدي | bank=بنك أو مدى أو تحويل | custody=عهدة موظف
 ${categorySection}
 ١. تقرير مبيعات (POS أو ملخص مبيعات يومي):
-{"type":"sales","date":"YYYY-MM-DD","cashSales":0.00,"networkSales":0.00,"transferSales":0.00,"hungerSales":0.00,"jahez":0.00,"keeta":0.00,"mrsool":0.00,"totalSales":0.00}
+{"type":"sales","date":"YYYY-MM-DD","paymentLines":[{"label":"اسم وسيلة الدفع كما طُبع حرفيًا","amount":0.00}],"returnLines":[{"label":"اسم وسيلة المرتجع كما طُبع","amount":0.00}],"reportGrossTotal":0.00,"reportNetTotal":null,"cashSales":0.00,"networkSales":0.00,"transferSales":0.00,"hungerSales":0.00,"jahez":0.00,"keeta":0.00,"mrsool":0.00,"totalSales":0.00}
+
+أسطر وسائل الدفع (الأهم — منها تُحسب القنوات في التطبيق):
+  paymentLines ← انسخ كل سطر وسيلة دفع في جدول/قسم وسائل الدفع بمبلغه كما طُبع، سطرًا سطرًا، ولو تكرر اسم القناة بصيغ مختلفة
+     (مثل «كاش» و«كاش توصيل» و«توصيل كاش»، أو «مدى» و«مدى توصيل» و«توصيل مدى»). لا تجمع أسطرًا ولا تحذف سطرًا، ولا تُسقط سطرًا لصغر مبلغه
+     (مثل «تحويل» بمبلغ صغير). انسخ الاسم حرفيًا ولو لم تعرفه — التطبيق يصنّفه أو يعرضه للمراجعة. لا تضع فيها المرتجعات ولا الإجماليات.
+  returnLines  ← أسطر المرتجعات/الاسترجاع حسب وسيلة الدفع (مثل «مرتجع كاش» أو «مرتجعات مدى»)، والمبلغ موجبًا. لا مرتجعات ⇒ [].
+  reportGrossTotal ← إجمالي المبيعات المطبوع قبل المرتجعات (مجموع وسائل الدفع كما طُبع). غير مطبوع ⇒ null.
+  reportNetTotal   ← الإجمالي المطبوع بعد المرتجعات (صافي المبيعات) إن طُبع، وإلا null. لا تحسبه أنت.
+  «توصيل» صفة لطريقة التسليم وليست قناة: «كاش توصيل» نقدي، و«مدى توصيل» شبكة. لا تعتبر كلمة «توصيل» وحدها تطبيق توصيل.
 
 طريقة القراءة الصحيحة — ابحث عن كل قناة باسمها بالضبط ثم خذ الرقم المقابل لها مباشرة:
-  cashSales     ← السطر الذي يحتوي: Cash أو كاش أو نقدي
-  networkSales  ← السطر الذي يحتوي: Mada أو مدى أو بطاقة أو شبكة أو Card
+  cashSales     ← السطر الذي يحتوي: Cash أو كاش أو نقدي (ويشمل «كاش توصيل» و«توصيل كاش»)
+  networkSales  ← السطر الذي يحتوي: Mada أو مدى أو بطاقة أو شبكة أو Card (ويشمل «مدى توصيل» و«توصيل مدى»)
   transferSales ← السطر الذي يحتوي: Transfer أو تحويل (قناة مستقلة — غير هنقر/جاهز/مرسول)
   hungerSales   ← السطر الذي يحتوي: Hunger أو هنقر أو HungerStation
   jahez         ← السطر الذي يحتوي: Jahez أو جاهز
@@ -261,7 +271,7 @@ ${categorySection}
 - jahez: مبيعات جاهز / Jahez فقط — إذا لم يُذكر ضعه 0
 - keeta: مبيعات كيتا / Keeta فقط — إذا لم يُذكر ضعه 0
 - mrsool: مبيعات مرسول / Mrsool فقط — إذا لم يُذكر ضعه 0
-- totalSales: مجموع cashSales + networkSales + transferSales + hungerSales + jahez + keeta + mrsool
+- totalSales: مجموع cashSales + networkSales + transferSales + hungerSales + jahez + keeta + mrsool (التطبيق يعيد حسابه من paymentLines والإجمالي المطبوع)
 - إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك الباقي 0
 - transType: يجب اختياره دائماً من القائمة أعلاه حرفياً بما فيه الإيموجي — الافتراضي ${defaultExpenseType} لأي فاتورة شراء
 - paySource: ثابت حسب من رفع المستند — ${
@@ -329,6 +339,9 @@ ${categorySection}
 
   // Normalize to always { invoices: [...] }
   const normalized = result.invoices ? result : { invoices: [result] }
+  // تقرير المبيعات: القنوات من أسطر وسائل الدفع المنسوخة (المرادفات والتحويل والمرتجعات وغير المعروف) — src/lib/salesReport.js.
+  // مرة واحدة عند القراءة: تعديلات المحاسب بعدها لا يُعاد حسابها.
+  normalized.invoices = normalized.invoices.map(normalizeSalesReading)
 
   // تصحيح أسماء التصنيفات لكل الفواتير
   if (categories.length > 0) {

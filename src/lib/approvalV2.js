@@ -89,7 +89,8 @@ export function ledgerTypeFor(main, transTypes, fallbackTransType) {
 const CHANNEL_LABEL = { cash: 'النقدي', network: 'الشبكة', transfer: 'التحويل', hunger: 'هنقر', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
 const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'التاريخ', invoiceNumber: 'رقم الفاتورة', totalAmount: 'الإجمالي', amount: 'المبلغ',
   vatAmount: 'الضريبة', paySource: 'مصدر الدفع', transType: 'التصنيف الأساسي', category_sub: 'التصنيف الفرعي', amountsBasis: 'أساس المبالغ',
-  type: 'نوع المستند', cashSales: 'نقدي', networkSales: 'شبكة', transferSales: 'تحويل', hungerSales: 'هنقر ستيشن', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
+  type: 'نوع المستند', cashSales: 'نقدي', networkSales: 'شبكة', transferSales: 'تحويل', hungerSales: 'هنقر ستيشن', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول',
+  totalSales: 'إجمالي التقرير المطبوع' }
 const same = (a, b) => String(a ?? '') === String(b ?? '')
 
 /** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
@@ -178,6 +179,8 @@ export function approvalMessage(res) {
     discount_needs_items: 'الخصم على الإجمالي يوزَّع على البنود؛ أضف بنود الفاتورة أولًا.',
     zero_items_nonzero_vat: 'البنود صفرية والضريبة ليست صفرًا.',
     amounts_mismatch: `البنود${d.discount ? ' بعد الخصم' : ''} لا تطابق الإجمالي: الفرق ${money(Math.abs(d.difference ?? 0))} ر.س. طابق مبالغ البنود وخصوماتها والضريبة مع المستند؛ لا يُعتمد بفرق.`,
+    unknown_payment: `في تقرير المبيعات وسيلة دفع غير معروفة${d.labels?.length ? `: ${d.labels.map(l => `«${l}»`).join('، ')}` : ''}. انسبها إلى قناتها أو استبعدها بسبب، ثم اعتمد. لم يُسجَّل شيء.`,
+    sales_unexplained: `${d.reason || 'تقرير المبيعات فيه فرق غير مفسّر.'} لم يُسجَّل شيء.`,
     supplier_required: 'اختر المورد.',
     supplier_decision_required: `«${d.name || ''}» غير مسجّل في الموردين. أكّد أنه مورد جديد أو اختر المورد الموجود.`,
     duplicate_invoice: 'هذه الفاتورة معتمدة مسبقًا (الرقم نفسه للمورد نفسه). لا يمكن اعتمادها مرة ثانية.',
