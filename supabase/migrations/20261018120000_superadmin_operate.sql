@@ -53,7 +53,8 @@ begin
     if not exists (select 1 from public.projects where id = p_project_id) then return approval_private.err('not_found'); end if;
     -- الترويسة نفسها يجب أن تصل إلى سياسات القراءة، وإلا عادت الأرقام أصفارًا مضللة
     if public.auth_view_project_id() is distinct from p_project_id then return approval_private.err('view_not_applied'); end if;
-    return jsonb_build_object('ok', true, 'role', 'superadmin', 'can_set_targets', true, 'read_only', false);
+    -- منشأة موقوفة: اطّلاع فقط كما كان (analysis_target_set يرفضها لكل الأدوار)
+    return jsonb_build_object('ok', true, 'role', 'superadmin', 'can_set_targets', coalesce((select ps.active from public.project_settings ps where ps.project_id = p_project_id), true), 'read_only', not coalesce((select ps.active from public.project_settings ps where ps.project_id = p_project_id), true));
   end if;
   if a.role is distinct from 'owner' and a.role is distinct from 'accountant' then return approval_private.err('forbidden'); end if;
   if a.project_id is distinct from p_project_id then return approval_private.err('forbidden'); end if;
