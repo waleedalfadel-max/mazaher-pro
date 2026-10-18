@@ -60,6 +60,53 @@ test('بلا إجمالي مطبوع: لا totalSales (لا يُخترع)، وا
   const r = normalizeSalesReading({ ...READING, reportGrossTotal: undefined })
   assert.equal('totalSales' in r, false)
   const c = salesReportCheck(r); assert.equal(c.total, null); assert.equal(c.diff, null)
+  // مراجعة a2f72ca: القراءة الجديدة بلا إجمالي مستقل لا تُعتمد (كان ok: true)
+  assert.equal(r.salesReadingVersion, 2)
+  assert.equal(c.ok, false); assert.match(c.reasons.join(' '), /إجمالي التقرير المطبوع/)
+  // إدخال الإجمالي من التقرير يدويًا: يُطابق
+  assert.equal(salesReportCheck({ ...r, totalSales: '2184.40' }).ok, true)
+  assert.equal(salesReportCheck({ ...r, totalSales: '2184.50' }).ok, false)
+  assert.equal(salesReportCheck({ ...r, totalSales: 'abc' }).ok, false)
+})
+
+test('مراجعة a2f72ca: سطر وسيلة دفع بمبلغ null لا يُحذف بصمت ويمنع الاعتماد حتى يُكتب مبلغه أو يُستبعد بسبب', () => {
+  const r = normalizeSalesReading({ ...READING, paymentLines: [...READING.paymentLines, { label: 'شبكة توصيل', amount: null }] })
+  assert.equal(r.salesBreakdown.unreadable, 1)
+  assert.deepEqual(r.unknownPayments, [{ label: 'شبكة توصيل', amount: null, kind: 'payment', unreadable: true }])
+  const c = salesReportCheck(r)
+  assert.equal(c.ok, false); assert.match(c.reasons[0], /بلا مبلغ مقروء: «شبكة توصيل» \(وسيلة دفع\)/)
+  // النسبة بلا مبلغ صالح لا تغيّر شيئًا؛ وبمبلغه من التقرير تُضاف إلى القناة
+  assert.equal(resolveUnknownPayment(r, 0, 'network'), r)
+  assert.equal(resolveUnknownPayment(r, 0, 'network', '', '0'), r)
+  const fixed = resolveUnknownPayment(r, 0, 'network', '', '5.00')
+  assert.equal(fixed.networkSales, 1485.4); assert.deepEqual(fixed.unknownPayments, [])
+  assert.deepEqual(fixed.resolvedPayments, [{ label: 'شبكة توصيل', amount: '5.00', kind: 'payment', channel: 'network', unreadable: true }])
+  assert.equal(salesReportCheck({ ...fixed, totalSales: 2189.4 }).ok, true)
+  // الاستبعاد بلا سبب لا يُقبل؛ وبسبب موثّق يُسجَّل
+  assert.equal(resolveUnknownPayment(r, 0, null, '  '), r)
+  const excluded = resolveUnknownPayment(r, 0, null, 'سطر عنوان لا مبلغ له')
+  assert.deepEqual(excluded.resolvedPayments, [{ label: 'شبكة توصيل', amount: null, kind: 'payment', channel: null, unreadable: true, reason: 'سطر عنوان لا مبلغ له' }])
+  assert.equal(salesReportCheck(excluded).ok, true)
+  // سجل استبعاد بلا سبب (من عميل لا يمر بالدالة) يمنع
+  assert.equal(salesReportCheck({ ...excluded, resolvedPayments: [{ label: 'x', channel: null, reason: '' }] }).ok, false)
+})
+
+test('مراجعة a2f72ca: سطر مرتجع بمبلغ null يبقى للمراجعة، ولا يُحسب الإجمالي من «قبل المرتجعات» حتى يُعرف', () => {
+  const r = normalizeSalesReading({ ...READING, returnLines: [...READING.returnLines, { label: 'مرتجع جاهز', amount: null }] })
+  assert.equal(r.salesBreakdown.unreadable, 1)
+  assert.deepEqual(r.unknownPayments, [{ label: 'مرتجع جاهز', amount: null, kind: 'return', unreadable: true }])
+  assert.equal('totalSales' in r, false)                    // المرتجعات غير مكتملة ⇒ لا إجمالي محسوب
+  const c = salesReportCheck(r)
+  assert.equal(c.ok, false); assert.match(c.reasons.join(' '), /«مرتجع جاهز» \(مرتجع\)/); assert.match(c.reasons.join(' '), /إجمالي التقرير المطبوع/)
+  const fixed = resolveUnknownPayment(r, 0, 'jahez', '', 30)   // يُطرح من جاهز
+  assert.equal(fixed.jahez, 120)
+  assert.equal(salesReportCheck({ ...fixed, totalSales: 2154.4 }).ok, true)
+})
+
+test('توافق المستندات القديمة: قراءة بلا أسطر (بلا salesReadingVersion) وبلا إجمالي تبقى كما كانت', () => {
+  const old = { type: 'sales', cashSales: 10, networkSales: 5 }
+  assert.equal(salesReportCheck(old).ok, true)
+  assert.equal(salesReportCheck({ ...old, totalSales: 16 }).ok, false)   // والفرق إن وُجد إجمالي يمنع كما كان
 })
 
 test('وسيلة غير معروفة بمبلغ غير صفري لا تُهمل: تمنع الاعتماد حتى تُنسب أو تُستبعد بسبب', () => {

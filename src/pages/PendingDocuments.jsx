@@ -1452,9 +1452,13 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
       )}
       {unknown.map((u, i) => {
         const c = choice[i] || {}
-        const apply = () => { onReplace?.(resolveUnknownPayment(invoice, i, c.channel === 'exclude' ? null : c.channel, c.reason)); setChoice({}) }
+        const apply = () => { onReplace?.(resolveUnknownPayment(invoice, i, c.channel === 'exclude' ? null : c.channel, c.reason, c.amount)); setChoice({}) }
+        // سطر بلا مبلغ مقروء: نسبته تتطلب مبلغه من التقرير (موجبًا)
+        const needsAmount = u.unreadable && c.channel && c.channel !== 'exclude'
+        const amountOk = !needsAmount || Number(String(c.amount || '').replace(/,/g, '')) > 0
         return (
-          <Note key={i} tone="warning" icon={CircleAlert} title={`${u.kind === 'return' ? 'مرتجع بوسيلة' : 'وسيلة دفع'} غير معروفة: «${u.label || '—'}» ${money(u.amount)}`}>
+          <Note key={i} tone="warning" icon={CircleAlert} title={u.unreadable ? `سطر بلا مبلغ مقروء (${u.kind === 'return' ? 'مرتجع' : 'وسيلة دفع'}): «${u.label || '—'}»`
+            : `${u.kind === 'return' ? 'مرتجع بوسيلة' : 'وسيلة دفع'} غير معروفة: «${u.label || '—'}» ${money(u.amount)}`}>
             <div className="ts-form-grid" data-k="unknown-payment" data-index={i}>
               <Field label="انسبها إلى">
                 <Select value={c.channel || ''} placeholder="— اختر —" disabled={readOnly} data-k={`unknown-channel-${i}`}
@@ -1464,18 +1468,23 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
               {c.channel === 'exclude' && (
                 <Field label="سبب الاستبعاد"><Input value={c.reason || ''} data-k={`unknown-reason-${i}`} onChange={e => setChoice({ ...choice, [i]: { ...c, reason: e.target.value } })} /></Field>
               )}
-              <Button size="sm" disabled={readOnly || !c.channel || (c.channel === 'exclude' && !String(c.reason || '').trim())} data-k={`unknown-apply-${i}`} onClick={apply}>تطبيق</Button>
+              {needsAmount && (
+                <Field label="المبلغ من التقرير"><Num value={c.amount || ''} data-k={`unknown-amount-${i}`} onChange={e => setChoice({ ...choice, [i]: { ...c, amount: e.target.value } })} /></Field>
+              )}
+              <Button size="sm" disabled={readOnly || !c.channel || !amountOk || (c.channel === 'exclude' && !String(c.reason || '').trim())} data-k={`unknown-apply-${i}`} onClick={apply}>تطبيق</Button>
             </div>
           </Note>
         )
       })}
       {(invoice?.resolvedPayments || []).length > 0 && (
         <ul className="rp-sales-resolved" data-k="sales-resolved">
-          {invoice.resolvedPayments.map((r, i) => <li key={i}>«{r.label}» {money(r.amount)} ← {r.channel ? CHANNEL_NAME[r.channel] : `مستبعدة: ${r.reason}`}</li>)}
+          {invoice.resolvedPayments.map((r, i) => <li key={i}>«{r.label}» {r.amount == null ? 'بلا مبلغ' : money(r.amount)}{r.unreadable ? ' (كان غير مقروء)' : ''} ← {r.channel ? CHANNEL_NAME[r.channel] : `مستبعدة: ${r.reason}`}</li>)}
         </ul>
       )}
       <div className="rp-totals">
-        <Field label="إجمالي التقرير المطبوع (بعد المرتجعات)" hint={check.total == null ? 'لم يُقرأ إجمالي مطبوع: اكتبه من التقرير ليُطابق قبل الاعتماد.' : undefined}>
+        <Field label="إجمالي التقرير المطبوع شامل الضريبة (بعد المرتجعات)"
+          error={check.total == null && Number(invoice?.salesReadingVersion) >= 2 ? 'مطلوب: اكتبه من التقرير (Net sales with tax، لا قبل الضريبة) ليُطابق وسائل الدفع.' : undefined}
+          hint={check.total == null && !(Number(invoice?.salesReadingVersion) >= 2) ? 'لم يُقرأ إجمالي مطبوع: اكتبه من التقرير ليُطابق قبل الاعتماد.' : undefined}>
           <Num value={invoice?.totalSales ?? ''} data-k="sales-printed-total" disabled={readOnly} onChange={e => onEdit('totalSales', e.target.value)} />
         </Field>
         {check.diff != null && (

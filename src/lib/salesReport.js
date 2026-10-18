@@ -69,9 +69,11 @@ export function normalizeSalesReading(inv) {
   const zero = () => Object.fromEntries(CHANNELS.map(c => [c, 0]))
   const gross = zero(), returns = zero(), unknown = [], lines = [], returnLines = []
   let unreadable = 0
+  // سطر بلا مبلغ مقروء لا يُحذف: يبقى باسمه ونوعه للمراجعة (unreadable)، ويمنع الاعتماد حتى يُكتب مبلغه أو يُستبعد بسبب (مراجعة a2f72ca)
+  const keepUnreadable = (l, kind) => { unreadable++; unknown.push({ label: String(l?.label ?? ''), amount: null, kind, unreadable: true }) }
   for (const l of inv.paymentLines) {
     const h = amountH(l?.amount)
-    if (h == null) { unreadable++; continue }
+    if (h == null) { keepUnreadable(l, 'payment'); continue }
     if (h === 0) continue
     const ch = classifyPaymentLabel(l?.label)
     lines.push({ label: String(l?.label ?? ''), amount: fromHalalas(h), channel: ch })
@@ -79,7 +81,7 @@ export function normalizeSalesReading(inv) {
   }
   for (const l of inv.returnLines || []) {
     const h = amountH(l?.amount)
-    if (h == null) { unreadable++; continue }
+    if (h == null) { keepUnreadable(l, 'return'); continue }
     if (h === 0) continue
     const ch = classifyPaymentLabel(l?.label, { returns: true })
     returnLines.push({ label: String(l?.label ?? ''), amount: fromHalalas(Math.abs(h)), channel: ch })
@@ -87,11 +89,16 @@ export function normalizeSalesReading(inv) {
   }
   const out = { ...inv }
   for (const c of CHANNELS) out[CHANNEL_FIELD[c]] = Number(fromHalalas(gross[c] - returns[c]))
-  const totalReturns = Object.values(returns).reduce((t, h) => t + h, 0) + unknown.filter(u => u.kind === 'return').reduce((t, u) => t - amountH(u.amount), 0)
+  const knownUnknownReturns = unknown.filter(u => u.kind === 'return' && !u.unreadable)
+  const totalReturns = Object.values(returns).reduce((t, h) => t + h, 0) + knownUnknownReturns.reduce((t, u) => t - amountH(u.amount), 0)
   const netPrinted = amountH(inv.reportNetTotal), grossPrinted = amountH(inv.reportGrossTotal)
-  const printed = netPrinted ?? (grossPrinted != null ? grossPrinted - totalReturns : null)
+  // الإجمالي المطبوع بعد المرتجعات: المطبوع صراحة، أو قبل المرتجعات − المرتجعات ما دامت كلها مقروءة؛ وإلا يُكتب من التقرير يدويًا
+  const unreadableReturn = unknown.some(u => u.kind === 'return' && u.unreadable)
+  const printed = netPrinted ?? (grossPrinted != null && !unreadableReturn ? grossPrinted - totalReturns : null)
   if (printed != null) out.totalSales = Number(fromHalalas(printed)); else delete out.totalSales
   out.unknownPayments = unknown
+  // قراءة بالأسطر (الجديدة): الإجمالي المستقل من التقرير شرط للاعتماد في الشاشة والخادم؛ المستندات القديمة بلا هذه العلامة كما كانت
+  out.salesReadingVersion = 2
   out.salesBreakdown = {
     lines, returnLines, unreadable,
     gross: Object.fromEntries(CHANNELS.map(c => [c, Number(fromHalalas(gross[c]))])),
@@ -113,13 +120,20 @@ export const channelsTotalH = inv => CHANNELS.reduce((t, c) => t + (amountH(inv?
  */
 export function salesReportCheck(inv) {
   const reasons = []
-  const unknown = (inv?.unknownPayments || []).filter(u => (amountH(u?.amount) ?? 0) !== 0)
-  if (unknown.length) reasons.push(`وسيلة دفع غير معروفة في التقرير: ${unknown.map(u => `«${u.label || '—'}» ${u.amount}`).join('، ')}. انسبها إلى قناتها أو استبعدها بسبب.`)
+  // غير المعروف بمبلغ غير صفري، وكل سطر بلا مبلغ مقروء (لا يُعدّ صفرًا)
+  const unknown = (inv?.unknownPayments || []).filter(u => { const h = amountH(u?.amount); return h == null || h !== 0 })
+  const unreadable = unknown.filter(u => amountH(u?.amount) == null), unmapped = unknown.filter(u => amountH(u?.amount) != null)
+  if (unreadable.length) reasons.push(`سطر في التقرير بلا مبلغ مقروء: ${unreadable.map(u => `«${u.label || '—'}» (${u.kind === 'return' ? 'مرتجع' : 'وسيلة دفع'})`).join('، ')}. اكتب مبلغه من التقرير وانسبه إلى قناته، أو استبعده بسبب.`)
+  if (unmapped.length) reasons.push(`وسيلة دفع غير معروفة في التقرير: ${unmapped.map(u => `«${u.label || '—'}» ${u.amount}`).join('، ')}. انسبها إلى قناتها أو استبعدها بسبب.`)
+  if ((inv?.resolvedPayments || []).some(r => !r?.channel && !String(r?.reason || '').trim())) reasons.push('سطر مستبعد بلا سبب موثّق. اكتب سبب الاستبعاد.')
   const negative = CHANNELS.filter(c => (amountH(inv?.[CHANNEL_FIELD[c]] ?? 0) ?? 0) < 0)
   if (negative.length) reasons.push(`مرتجعات ${negative.map(c => CHANNEL_NAME[c]).join(' و')} أكبر من مبيعاتها في التقرير. راجع القراءة.`)
   const ch = channelsTotalH(inv)
   const t = inv?.totalSales == null || inv.totalSales === '' ? null : amountH(inv.totalSales)
   const diff = t == null ? null : ch - t
+  // القراءة الجديدة بلا إجمالي مستقل من التقرير: لا اعتماد (لا يُستعمل مجموع القنوات بديلًا). القديمة (بلا salesReadingVersion) كما كانت
+  if (t == null && Number(inv?.salesReadingVersion) >= 2) reasons.push('اكتب «إجمالي التقرير المطبوع» شامل الضريبة بعد المرتجعات (مثل Net sales with tax) من التقرير نفسه، ليُطابق قبل الاعتماد.')
+  if (inv?.totalSales != null && inv.totalSales !== '' && t == null) reasons.push('إجمالي التقرير المطبوع ليس مبلغًا صالحًا.')
   if (diff) reasons.push(`مجموع وسائل الدفع ${fromHalalas(ch)} لا يطابق إجمالي التقرير ${fromHalalas(t)}: الفرق ${fromHalalas(Math.abs(diff))}.`)
   return { ok: reasons.length === 0, reasons, unknown, total: t == null ? null : Number(fromHalalas(t)), channels: Number(fromHalalas(ch)), diff: diff == null ? null : Number(fromHalalas(diff)) }
 }
@@ -128,15 +142,27 @@ export function salesReportCheck(inv) {
  * نسبة سطر غير معروف إلى قناة (أو استبعاده بسبب): يُضاف مبلغه إلى القناة (أو يُطرح إن كان مرتجعًا)، ويُسجَّل القرار للمراجعة.
  * @param {number} index موضعه في unknownPayments
  * @param {string|null} channel قناة من CHANNELS، أو null للاستبعاد (ليس وسيلة دفع)
+ * @param {string} reason سبب الاستبعاد (شرط له)
+ * @param {string|number} [amount] المبلغ من التقرير لسطر بلا مبلغ مقروء (شرط لنسبته؛ موجب، والمرتجع يُطرح)
+ * لا تغيير (يعيد الفاتورة كما هي) لاستبعاد بلا سبب، أو لنسبة سطر غير مقروء بلا مبلغ صالح.
  */
-export function resolveUnknownPayment(inv, index, channel, reason = '') {
+export function resolveUnknownPayment(inv, index, channel, reason = '', amount) {
   const u = inv?.unknownPayments?.[index]
   if (!u) return inv
+  const why = String(reason || '').trim()
+  if (!channel && !why) return inv
+  let h = amountH(u.amount)
+  if (channel && h == null) {
+    const typed = amountH(amount)
+    if (typed == null || typed <= 0) return inv
+    h = u.kind === 'return' ? -typed : typed
+  }
   const out = { ...inv, unknownPayments: inv.unknownPayments.filter((_, i) => i !== index) }
   if (channel) {
     const f = CHANNEL_FIELD[channel]
-    out[f] = Number(fromHalalas((amountH(inv[f] ?? 0) ?? 0) + amountH(u.amount)))
+    out[f] = Number(fromHalalas((amountH(inv[f] ?? 0) ?? 0) + h))
   }
-  out.resolvedPayments = [...(inv.resolvedPayments || []), { label: u.label, amount: u.amount, kind: u.kind, channel: channel || null, ...(channel ? {} : { reason: String(reason || '').trim() }) }]
+  out.resolvedPayments = [...(inv.resolvedPayments || []), { label: u.label, amount: h == null ? null : fromHalalas(h), kind: u.kind, channel: channel || null,
+    ...(u.unreadable ? { unreadable: true } : {}), ...(channel ? {} : { reason: why }) }]
   return out
 }

@@ -1,7 +1,9 @@
 -- تقرير المبيعات (2026-10-18): وسيلة دفع غير معروفة في التقرير تمنع الاعتماد في الخادم أيضًا، لا في الشاشة وحدها.
 -- القراءة تنسخ أسطر وسائل الدفع، والتطبيق يصنّفها (src/lib/salesReport.js)؛ ما لا يُعرف يبقى في unknownPayments حتى يُنسب لقناة أو يُستبعد بسبب.
 -- فحص الفرق مع الإجمالي المطبوع قائم أصلًا هنا (totalSales ⇒ amounts_mismatch)، والتطبيق صار يرسل الإجمالي المطبوع لا مجموع القنوات.
--- التعديل الوحيد: الشرط المضاف بعد قراءة المبالغ؛ بقية النص مطابق لنص الإنتاج حرفيًا (ومنح التنفيذ كما هو: create or replace يبقيه).
+-- وبعد مراجعة a2f72ca: سطر بلا مبلغ مقروء يمنع كغير المعروف، والاستبعاد يتطلب سببًا، والقراءة بالأسطر (salesReadingVersion ≥ 2) تتطلب
+-- إجماليًا مطبوعًا مستقلًا (total_required). المستندات القديمة بلا العلامة لا يتغير لها شيء.
+-- التعديل الوحيد: الشروط المضافة بعد قراءة المبالغ؛ بقية النص مطابق لنص الإنتاج حرفيًا (ومنح التنفيذ كما هو: create or replace يبقيه).
 
 CREATE OR REPLACE FUNCTION approval_private.sales_channels(inv jsonb)
  RETURNS jsonb
@@ -25,6 +27,15 @@ begin
   if jsonb_typeof(inv -> 'unknownPayments') = 'array' and exists (select 1 from jsonb_array_elements(inv -> 'unknownPayments') e
       where coalesce(nullif(btrim(e ->> 'amount'), ''), '1') !~ '^-?0*([.]0*)?$') then
     return jsonb_build_object('code', 'unknown_payment', 'labels', (select jsonb_agg(e ->> 'label') from jsonb_array_elements(inv -> 'unknownPayments') e));
+  end if;
+  -- سطر مستبعد بلا سبب موثّق (مراجعة a2f72ca)
+  if jsonb_typeof(inv -> 'resolvedPayments') = 'array' and exists (select 1 from jsonb_array_elements(inv -> 'resolvedPayments') e
+      where nullif(e ->> 'channel', '') is null and nullif(btrim(e ->> 'reason'), '') is null) then
+    return jsonb_build_object('code', 'exclusion_reason_required');
+  end if;
+  -- القراءة بالأسطر (salesReadingVersion ≥ 2) لا تُعتمد بلا إجمالي مستقل من التقرير؛ المستندات القديمة بلا العلامة كما كانت (مراجعة a2f72ca)
+  if v_total is null and coalesce(inv ->> 'salesReadingVersion', '') ~ '^[0-9]{1,4}$' and (inv ->> 'salesReadingVersion')::int >= 2 then
+    return jsonb_build_object('code', 'total_required');
   end if;
   for k, v in select key, value::numeric from jsonb_each_text(v_ch) loop
     if v < 0 then return jsonb_build_object('code', 'negative_amount', 'field', k); end if;
