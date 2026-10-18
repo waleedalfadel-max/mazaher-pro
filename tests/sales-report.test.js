@@ -25,6 +25,7 @@ test('«كاش توصيل» و«توصيل كاش» نقدي، و«مدى توص
   for (const l of ['تحويل', 'تحويل بنكي', 'Transfer']) assert.equal(classifyPaymentLabel(l), 'transfer', l)
   assert.equal(classifyPaymentLabel('هنقرستيشن'), 'hunger'); assert.equal(classifyPaymentLabel('هنقر ستيشن'), 'hunger')
   assert.equal(classifyPaymentLabel('جاهز'), 'jahez'); assert.equal(classifyPaymentLabel('مرسول'), 'mrsool'); assert.equal(classifyPaymentLabel('كيتا'), 'keeta')
+  assert.equal(classifyPaymentLabel('Marsool'), 'mrsool'); assert.equal(classifyPaymentLabel('Hunger'), 'hunger'); assert.equal(classifyPaymentLabel('Mada'), 'network')
   assert.equal(classifyPaymentLabel('توصيل'), null)            // لا دليل على تطبيق
   assert.equal(classifyPaymentLabel('أبل باي'), null)          // غير معروفة ⇒ مراجعة
   assert.equal(classifyPaymentLabel('كاش مدى'), null)          // قناتان ⇒ مراجعة
