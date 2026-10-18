@@ -8,6 +8,7 @@ import { Button, ChoiceList, Dialog, EmptyState, Field, IconButton, Input, Note,
 import { formatAgo, plural } from '../ui/format.js'
 import { CLASSES, actionLabel, categoryMessage, categoryTree, classOf, cleanName, nameError } from '../lib/categorySettings'
 import TeamSettings from './TeamSettings.jsx'
+import { useAuth } from '../contexts/AuthContext'
 import ItemDictionary from './ItemDictionary.jsx'
 
 const entriesText = n => plural(n, 'قيد واحد', 'قيدان', 'قيود', 'قيدًا')
@@ -33,6 +34,7 @@ const TABS = [{ value: 'categories', label: 'التصنيفات' }, { value: 'te
 const initialTab = () => { try { const t = new URLSearchParams(window.location.search).get('tab'); return TABS.some(x => x.value === t) ? t : 'categories' } catch { return 'categories' } }
 
 export default function Settings() {
+  const { role } = useAuth()
   const [tab, setTab] = useState(initialTab)
   // «قاموس الأصناف» يظهر للمنشأة التي لها قاموس فقط (20261014140000)؛ غيرها يرى القسمين كما كانا
   const [hasDictionary, setHasDictionary] = useState(false)
@@ -83,8 +85,9 @@ export default function Settings() {
     return `أُعيد تفعيل «${c.name}».${extra.length ? ` ${extra.join('، ')}.` : ''}`
   })
 
-  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => t.value !== 'items' || hasDictionary || tab === 'items')} value={tab} onChange={setTab} />
-  if (tab === 'team') return <div className="cs-page"><Heading />{tabs}<TeamSettings /></div>
+  // إدارة تحسيب تدير موظفي المنشأة من لوحة إدارة العملاء (admin_write_user)؛ «الموظفون» هنا للمالك وحده
+  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => (t.value !== 'items' || hasDictionary || tab === 'items') && (t.value !== 'team' || role !== 'superadmin'))} value={tab} onChange={setTab} />
+  if (tab === 'team' && role !== 'superadmin') return <div className="cs-page"><Heading />{tabs}<TeamSettings /></div>
   if (tab === 'items') return <div className="cs-page"><Heading />{tabs}<ItemDictionary /></div>
   if (loadError && !state) {
     return (

@@ -3,7 +3,7 @@ import { ChevronDown, Info, Plus, RefreshCw, Store, Wallet } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { fetchEveryRow } from '../lib/fetchAll.js'
-import { Button, DateInput, Dialog, EmptyState, Field, Input, Panel, Select, Status } from '../ui/components.jsx'
+import { Button, DateInput, Dialog, EmptyState, Field, Input, Note, Panel, Select, Status } from '../ui/components.jsx'
 import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup'
 
@@ -34,7 +34,10 @@ const PAY_MESSAGES = {
 }
 
 export default function Suppliers() {
-  const { projectId } = useAuth()
+  const { projectId, role } = useAuth()
+  // المحاسب وإدارة تحسيب (داخل منشأة اختارتها) يضيفان ويسددان؛ المالك يطّلع على الموردين وأرصدتهم وحركاتهم للقراءة وحدها.
+  // الخادم يفرض ذلك بنفسه: قراءة المالك بسياسات *_owner_read، والكتابة لا تُقبل منه.
+  const canManage = role === 'accountant' || role === 'superadmin'
   const [suppliers, setSuppliers]   = useState([])
   const [loading, setLoading]       = useState(true)
   const [loadError, setLoadError]   = useState('')
@@ -193,8 +196,9 @@ export default function Suppliers() {
           <h1>الموردون</h1>
           <p className="ldg-showing"><Store className="ts-icon--sm" aria-hidden="true" /><span data-k="sup.count">{loading || loadError ? '—' : `${suppliers.length} مورد نشط`}</span></p>
         </div>
-        <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => { setFormError(''); setAddModal(true) }}>إضافة مورد</Button>
+        {canManage && <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => { setFormError(''); setAddModal(true) }}>إضافة مورد</Button>}
       </div>
+      {!canManage && <Note tone="info" data-k="sup.readOnly">اطّلاع فقط: الأرصدة والحركات كما سجّلها المحاسب. إضافة الموردين وتسجيل الدفعات من حساب المحاسب.</Note>}
 
       {loading ? (
         <Panel><div className="ldg-loading" aria-busy="true">جارٍ تحميل الموردين…</div></Panel>
@@ -239,7 +243,7 @@ export default function Suppliers() {
                           <strong className={`ts-num ${sup.balance > 0 ? 'amt-due' : 'amt-clear'}`} data-k="balance">{fmt(sup.balance)}</strong>
                         </span>
                       </button>
-                      <Button size="sm" variant="primary" data-k="pay" disabled={sup.balance <= 0} onClick={() => openPay(sup)}>تسجيل دفعة</Button>
+                      {canManage && <Button size="sm" variant="primary" data-k="pay" disabled={sup.balance <= 0} onClick={() => openPay(sup)}>تسجيل دفعة</Button>}
                     </div>
 
                     {isOpen && (
@@ -290,7 +294,7 @@ export default function Suppliers() {
               <li key={p.id} data-payable={p.id}>
                 <span className="sup-txn-main"><strong data-k="name">{p.name}</strong></span>
                 <strong className={`ts-num ${p.balance > 0 ? 'amt-due' : 'amt-clear'}`} data-k="balance">{fmt(p.balance)}</strong>
-                <Button size="sm" variant="primary" data-k="pay" disabled={p.balance <= 0} onClick={() => openPay(p)}>تسجيل دفعة</Button>
+                {canManage && <Button size="sm" variant="primary" data-k="pay" disabled={p.balance <= 0} onClick={() => openPay(p)}>تسجيل دفعة</Button>}
               </li>
             ))}
           </ul>

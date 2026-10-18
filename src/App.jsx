@@ -120,7 +120,7 @@ function AppRoutes() {
       } />
 
       <Route path="/invoice" element={
-        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'cashier', 'owner']}>
+        <ProtectedRoute allowedRoles={['purchasing', 'accountant', 'cashier', 'owner', 'superadmin']}>
           <InvoiceUpload />
         </ProtectedRoute>
       } />
@@ -137,7 +137,7 @@ function AppRoutes() {
 
       {/* إعدادات المالك: التصنيفات (والخادم يتحقق من المالك بنفسه) */}
       <Route path="/settings" element={
-        <ProtectedRoute allowedRoles={['owner']}>
+        <ProtectedRoute allowedRoles={['owner', 'superadmin']}>
           <Settings />
         </ProtectedRoute>
       } />
@@ -161,7 +161,7 @@ function AppRoutes() {
       } />
 
       <Route path="/suppliers" element={
-        <ProtectedRoute allowedRoles={['accountant']}>
+        <ProtectedRoute allowedRoles={['accountant', 'owner', 'superadmin']}>
           <Suppliers />
         </ProtectedRoute>
       } />

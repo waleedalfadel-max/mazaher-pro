@@ -16,7 +16,7 @@ function navItems(pendingCount) {
     { to: '/',                label: 'لوحة التحكم',      icon: House,        roles: ['owner', 'accountant'] },
     { to: '/reports',         label: 'التقارير',          icon: ChartColumn,  roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant'], module: 'suppliers' },
+    { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant', 'owner', 'superadmin'], module: 'suppliers' },
     { to: '/ledger',          label: 'سجل الدفتر',       icon: BookOpen,     roles: ['accountant', 'superadmin'] },
     { to: '/journal',         label: 'سجل الحركات',      icon: NotebookText, roles: ['accountant', 'superadmin'] },
     { to: '/archive',         label: 'أرشيف الحركات',    icon: Archive,      roles: ['owner', 'accountant', 'superadmin'] },
@@ -26,10 +26,10 @@ function navItems(pendingCount) {
     { to: '/pending',         label: 'مستندات جديدة',    icon: FileText,     roles: ['accountant', 'superadmin'], badge: pendingCount },
     { to: '/users',           label: 'المستخدمون',       icon: Users,        roles: ['accountant'] },
     { to: '/admin',           label: 'إدارة العملاء',    icon: Settings,     roles: ['superadmin'] },
-    { to: '/settings',        label: 'الإعدادات',        icon: Settings,     roles: ['owner'] },
+    { to: '/settings',        label: 'الإعدادات',        icon: Settings,     roles: ['owner', 'superadmin'] },
   ]
 }
-const UPLOAD_ROLES = ['purchasing', 'accountant', 'cashier', 'owner']
+const UPLOAD_ROLES = ['purchasing', 'accountant', 'cashier', 'owner', 'superadmin']
 const PREVIEW_ROLES = [
   { r: 'owner', label: 'المالك' }, { r: 'accountant', label: 'المحاسب' },
   { r: 'cashier', label: 'الكاشير' }, { r: 'purchasing', label: 'المشتريات' },
@@ -69,7 +69,7 @@ export default function Layout({ children }) {
     let q = supabase.from('documents')
       .select('id', { count: 'exact', head: true })
       .in('status', ['uploaded', 'analyzed'])
-    if (!isSuperAdmin && projectId) q = q.eq('project_id', projectId)
+    if (projectId) q = q.eq('project_id', projectId)   // ومدير المنصة: عدد مستندات منشأته المختارة وحدها
     const { count } = await q
     setPendingCount(count || 0)
   }
@@ -79,10 +79,11 @@ export default function Layout({ children }) {
     (!item.module || modules.includes(item.module)) &&
     (!item.cond || item.cond(projectName))
   )
-  const canUpload = UPLOAD_ROLES.includes(role)
+  // مدير المنصة يرفع داخل منشأة اختارها وتحقق منها الخادم فقط
+  const canUpload = UPLOAD_ROLES.includes(role) && (role !== 'superadmin' || (!!projectId && viewState === 'ok' && location.pathname !== '/admin'))
 
   function handleLogout() { logout(); navigate('/login') }
-  // مدير المنصة خارج لوحة المنصة = يعرض منشأة للقراءة فقط
+  // مدير المنصة خارج لوحة المنصة = يعمل داخل منشأة اختارها (20261018120000): كل إجراء باسمه، بقواعد المنشأة نفسها
   const adminViewing = isSuperAdmin && location.pathname !== '/admin'
   function backToAdmin() { leaveProjectView(); navigate('/admin') }
 
@@ -174,11 +175,11 @@ export default function Layout({ children }) {
           </div>
         )}
 
-        {/* مدير المنصة يعرض منشأة للقراءة فقط */}
+        {/* مدير المنصة يعمل داخل منشأة: تنبيه دائم بالمنشأة وبأن الإجراءات تُسجَّل باسمه */}
         {adminViewing && projectId && viewState === 'ok' && (
           <div className="ts-impersonation" role="status" data-admin-view={projectId}>
             <TriangleAlert className="ts-icon--sm" aria-hidden="true" />
-            <span>عرض للقراءة فقط: <strong>{projectName}</strong> — بصفتك مدير المنصة، لا تعديل ولا اعتماد</span>
+            <span data-k="operate-banner">تعمل داخل: <strong>{projectName}</strong> — بصفتك إدارة تحسيب. كل إجراء يُسجَّل باسمك ({userName}) في هذه المنشأة وحدها</span>
             <Button size="sm" onClick={backToAdmin}>لوحة المنصة</Button>
           </div>
         )}
