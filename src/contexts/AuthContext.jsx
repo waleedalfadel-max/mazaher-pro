@@ -215,7 +215,11 @@ export function AuthProvider({ children }) {
     try { const { data, error } = await supabase.rpc('admin_view_project', { p_project_id: id }); res = error ? { ok: false, code: 'network' } : (data || { ok: false, code: 'network' }) }
     catch { res = { ok: false, code: 'network' } }
     if (request !== viewRequest.current) return { ok: false, code: 'superseded' }   // اختيار أحدث سبقه: تُتجاهل نتيجته
-    if (res.ok) setViewState('ok')
+    if (res.ok) {
+      setViewState('ok')
+      // وحدات المنشأة المختارة (الموردون، مطابقة التطبيقات…) كما يراها موظفوها؛ وإلا غابت صفحاتها عن مدير المنصة
+      getProjectModules(id).then(m => { if (request === viewRequest.current) setModules(m || []) }, () => {})
+    }
     else { setViewState('error'); setViewError(res.code || 'network') }
     return res
   }
@@ -227,6 +231,7 @@ export function AuthProvider({ children }) {
   }
   function leaveProjectView() {
     viewRequest.current++
+    setModules([])
     setViewProject(null); setViewState('none'); setViewError('')
     switchProject(null, null)
   }

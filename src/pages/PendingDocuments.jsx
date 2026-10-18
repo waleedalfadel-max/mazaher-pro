@@ -36,7 +36,7 @@ const FALLBACK_TRANS_TYPES = [
   '🔄 تحويل داخلي — صرف عهدة','🏧 تحويل داخلي — إيداع نقدي','📥 تحصيل جملة',
 ]
 
-const ROLE_AR    = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك', cashier: 'الكاشير' }
+const ROLE_AR    = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك', cashier: 'الكاشير', superadmin: 'إدارة تحسيب' }
 const ROLE_COLOR = {
   purchasing: 'bg-blue-100 text-blue-700',
   accountant: 'bg-purple-100 text-purple-700',
@@ -114,7 +114,10 @@ function docSummary(doc) {
 }
 
 export default function PendingDocuments() {
-  const { projectId, projectName, isSuperAdmin } = useAuth()
+  // مدير المنصة داخل منشأة اختارها (20261018120000) يعمل كمحاسبها: منشأة واحدة، وطريقة اعتمادها، والإجراءات كلها، والخادم ينسبها إليه.
+  // المسار متعدد المنشآت للقراءة يبقى لمدير المنصة بلا منشأة مختارة فقط.
+  const { projectId, projectName, isSuperAdmin: superAdminAccount } = useAuth()
+  const isSuperAdmin = superAdminAccount && !projectId
   const [docs, setDocs]               = useState([])
   const [loading, setLoading]         = useState(true)
   const [transTypes, setTransTypes]   = useState(FALLBACK_TRANS_TYPES)

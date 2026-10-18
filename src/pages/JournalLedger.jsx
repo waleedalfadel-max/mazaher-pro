@@ -29,7 +29,7 @@ const QUICK_PERIODS = [
   { value: 'custom',    label: 'فترة أخرى' },
 ]
 const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url'
-const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
+const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير', superadmin: 'إدارة تحسيب' }
 
 function getRange(type) {
   const n = new Date()
