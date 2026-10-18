@@ -15,7 +15,7 @@ import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
-import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
+import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
 import { applyRulesToDocument, indexRules } from '../lib/itemRules'
 import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
 
@@ -412,6 +412,8 @@ export default function PendingDocuments() {
 
   // اعتماد فاتورة واحدة — يرمي خطأ عند فشل أو dup
   async function _approveOne(doc, res, forceNew) {
+    // مصروفات على مستوى المنشأة (إعداد expenses_scope): قيد المصروف بلا فرع ولو رُفع المستند من مستخدم فرع (والخادم يفعل الشيء نفسه في الاعتماد الجديد)
+    const expenseBranch = expensesAtProjectLevel(projectSettings) ? null : (doc.branch || null)
     const pid        = doc.project_id || pidRef.current
     const docProjName = projMap[pid] || projectName || ''
     const pay        = res.paySource || 'custody'
@@ -557,7 +559,7 @@ export default function PendingDocuments() {
         payable_out: 0,
         supplier_id: supplierId,
         vat_amount: vatTotal, total_amount: totalAmt, status: 'approved',
-        file_url: doc.file_url || '', journal_number: jn, branch: doc.branch || null,
+        file_url: doc.file_url || '', journal_number: jn, branch: expenseBranch,
         purchase_category: doc.purchase_category || null, category_main: categoryMain, category_sub: null,
       }).select('id').single()
       if (ledgerErr) throw new Error(ledgerErr.message)
@@ -602,7 +604,7 @@ export default function PendingDocuments() {
         supplier_id: supplierId,
         vat_amount: Number(res.vatAmount) || 0, total_amount: amount,
         status: 'approved', file_url: doc.file_url || '', journal_number: jn,
-        branch: doc.branch || null, purchase_category: doc.purchase_category || null,
+        branch: expenseBranch, purchase_category: doc.purchase_category || null,
         category_main: normCat(res.transType || '') || res.category_main || null, category_sub: res.category_sub || null,
       }).select('id').single()
       if (err) throw new Error(err.message)
@@ -1369,9 +1371,12 @@ function BankAccountField({ invoice, branch, setup, onEdit }) {
   }
   const value = chosenBankAccount(accounts, branch, invoice?.bankAccountId)
   const stale = invoice?.bankAccountId && invoice.bankAccountId !== value
+  // مصروف على مستوى المنشأة: حسابات المنشأة كلها، بلا ذكر فرع
+  const projectWide = !branch && invoice?.type === 'expense' && expensesAtProjectLevel(setup?.settings)
   return (
-    <Field label="الحساب البنكي" error={!list.length ? `لا حساب بنكي مربوط بفرع «${branch || ''}».` : stale ? staleMsg : undefined}
-      hint={list.length === 1 ? 'الحساب الوحيد المتاح لهذا الفرع.' : branch ? `الحسابات المربوطة بفرع «${branch}».` : 'اختر الفرع أولًا لتظهر حساباته.'}>
+    <Field label="الحساب البنكي" error={!list.length ? (projectWide ? 'لا حساب بنكي نشط للمنشأة.' : `لا حساب بنكي مربوط بفرع «${branch || ''}».`) : stale ? staleMsg : undefined}
+      hint={projectWide ? (list.length === 1 ? 'الحساب الوحيد للمنشأة.' : 'حسابات المنشأة (المصروف على مستوى المنشأة، لا فرع).')
+        : list.length === 1 ? 'الحساب الوحيد المتاح لهذا الفرع.' : branch ? `الحسابات المربوطة بفرع «${branch}».` : 'اختر الفرع أولًا لتظهر حساباته.'}>
       <Select value={value} placeholder="— اختر الحساب —" data-k="bank-account" onChange={e => onEdit('bankAccountId', e.target.value)} options={opts} />
     </Field>
   )
@@ -1743,7 +1748,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
                   <Input value={res.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} />
                 </Field>
               )}
-              {doc._branchEditable && branches.length > 0 && (
+              {doc._branchEditable && branches.length > 0 && !(expensesAtProjectLevel(setup?.settings) && !(isMultiInvoice ? rawRes.invoices.some(x => x.type === 'sales') : isSales)) && (
                 <Field label="الفرع">
                   <Select value={doc.branch || ''} placeholder="— اختر الفرع —" onChange={e => onBranchChange(e.target.value)}
                     options={branches.map(b => ({ value: b, label: b }))} />
@@ -1767,7 +1772,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
                   <Input value={supplierName} placeholder="اسم المورد" onChange={e => onSupplierNameChange(e.target.value)} />
                 </Field>
               )}
-              {!isSales && <BankAccountField invoice={res} branch={doc.branch} setup={setup} onEdit={onEdit} />}
+              {!isSales && <BankAccountField invoice={res} branch={res?.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : doc.branch} setup={setup} onEdit={onEdit} />}
               {/* الاعتماد الجديد: التصنيف على البند نفسه (من قائمة التصنيفات)، ولو كان بندًا واحدًا؛ نوع القيد ومعالجته منه */}
               {!isSales && !(isExpenseItems && (itemCount > 1 || isV2)) && (
                 <Field label={<>التصنيف الأساسي{doc._aiSuggestedType && res.transType ? <span className="rp-ai-tag">اقتراح القراءة</span> : null}</>}
@@ -1917,7 +1922,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           {isSales && visibleSalesChannels(SALES_CHANNELS.filter(c => !['transferSales', 'mrsool'].includes(c.key)), setup?.settings, branch, invoice).map(({ key, label, enabled }) => (
             <Field key={key} label={label} error={enabled ? undefined : `غير مفعّلة لفرع «${branch}».`}><Num value={invoice[key] || ''} onChange={e => onEdit(key, e.target.value)} /></Field>
           ))}
-          {(v2 || !isSales) && <BankAccountField invoice={invoice} branch={branch} setup={setup} onEdit={onEdit} />}
+          {(v2 || !isSales) && <BankAccountField invoice={invoice} branch={invoice.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : branch} setup={setup} onEdit={onEdit} />}
         </div>
         {!isSales && (
           <div className="rp-subinv-items">

@@ -20,6 +20,10 @@ export function visibleSalesChannels(channels, settings, branch, values = {}) {
     .filter(c => c.enabled || Number(values?.[c.key] || 0) !== 0)
 }
 
+/** مصروفات المنشأة على مستواها لا الفروع (إعداد المنشأة expenses_scope = 'project'، 20261019120000): فاتورة المصروف بلا فرع،
+ *  وحسابها البنكي من حسابات المنشأة كلها. الخادم يطبّق الشيء نفسه (approval_private.plan_invoice). بلا الإعداد: كما كان. */
+export const expensesAtProjectLevel = settings => settings?.expenses_scope === 'project'
+
 /** الحسابات المتاحة لفرع: النشطة، المربوطة بالفرع أو بكل الفروع؛ بلا فرع ⇒ كل النشطة. */
 export function eligibleBankAccounts(accounts, branch) {
   return (accounts || []).filter(a => a.is_active !== false
