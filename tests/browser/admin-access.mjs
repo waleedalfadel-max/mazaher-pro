@@ -43,6 +43,7 @@ await build({
     window.rpc = async (name, args = {}) => {
       window.calls.push({name,args});
       if (name === 'category_settings') return {data:{ok:true,can_edit:true,categories:[],changes:[],review:[]}};
+      if (name === 'admin_business_settings') return {data:{ok:true,project_id:window.auth.projectId,project:{name:'Test business'},settings:{branches:['Test branch']},banks:[],suppliers:[],payables:[],rules:[],categories:[]}};
       if (name === 'admin_project_users') return window.failList ? {error:{message:'simulated failure'}} :
         {data:{ok:true,project_id:args.p_project_id,branches:['Test branch'],members:structuredClone(window.rows[args.p_project_id] || [])}};
       if (window.denyWrite) return {data:{ok:false,code:'forbidden'}};
@@ -150,6 +151,12 @@ try {
   await page.getByRole('tab',{name:'الموظفون',exact:true}).click()
   await page.locator('[data-user-id="user-a"]').waitFor()
   check('settings employees tab uses full admin manager')
+  await page.getByRole('tab',{name:'قاموس الأصناف',exact:true}).click()
+  await page.getByRole('link',{name:'إضافة أصناف للقاموس',exact:true}).click()
+  await page.locator('[data-admin-business-controls]').waitFor()
+  assert.equal(await page.getByRole('tab',{name:'إدارة المنشأة',exact:true}).getAttribute('aria-selected'),'true')
+  assert.equal(await page.getByRole('tab',{name:'القاموس',exact:true}).getAttribute('aria-selected'),'true')
+  check('dictionary management link opens correct settings tab and section')
   await render('layout')
   // Sidebar is an aside; inspect its navigation links directly.
   for (const href of ['/','/users','/suppliers','/app-reconciliation','/settings']) {
