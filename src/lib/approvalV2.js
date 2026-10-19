@@ -50,6 +50,16 @@ export function exactTotals(inv) {
   return { ...base, status: diff === 0 ? 'match' : 'mismatch', diff }
 }
 
+/** اقتراح للمراجع فقط؛ لا يغيّر القراءة أو المبالغ ولا يسمح بالاعتماد قبل اختياره. */
+export function expenseBasisSuggestion(inv) {
+  if (inv?.type !== 'expense') return null
+  const current = exactTotals(inv)
+  if (current.status !== 'mismatch' || current.vat <= 0 || current.total <= 0) return null
+  if (inv.items.some(item => toHalalas(item.amount) == null)) return null
+  const basis = current.basis === 'inclusive' ? 'exclusive' : 'inclusive'
+  return exactTotals({ ...inv, amountsBasis: basis }).status === 'match' ? basis : null
+}
+
 /** توزيع الضريبة على البنود بالهللة بطريقة الباقي الأكبر (مطابق لـ approval_private.allocate). للعرض. */
 export function allocateHalalas(weights, amount) {
   const sum = weights.reduce((a, b) => a + b, 0)
