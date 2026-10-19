@@ -13,6 +13,7 @@ import Loans from './pages/Loans'
 import InvoiceUpload from './pages/InvoiceUpload'
 import PendingDocuments from './pages/PendingDocuments'
 import UsersManagement from './pages/UsersManagement'
+import AdminBusinessUsers from './pages/AdminBusinessUsers'
 import JournalLedger from './pages/JournalLedger'
 import JournalArchive from './pages/JournalArchive'
 import SuperAdmin from './pages/SuperAdmin'
@@ -143,8 +144,8 @@ function AppRoutes() {
       } />
 
       <Route path="/users" element={
-        <ProtectedRoute allowedRoles={['accountant']}>
-          <UsersManagement />
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
+          {role === 'superadmin' ? <AdminBusinessUsers /> : <UsersManagement />}
         </ProtectedRoute>
       } />
 

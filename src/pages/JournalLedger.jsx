@@ -129,7 +129,7 @@ function AttachDialog({ entry, projectId, role, onClose, onChanged }) {
                   <span>{ROLE_AR[a.uploaded_by] || a.uploaded_by} — <span className="ts-num">{day(a.uploaded_at)}</span></span>
                 </div>
                 <Button size="sm" variant="quiet" icon={ExternalLink} onClick={() => openFile(a.file_url)}>فتح</Button>
-                {(role === 'owner' || role === 'accountant') && (
+                {['owner', 'accountant', 'superadmin'].includes(role) && (
                   <Button size="sm" variant="quiet" className="jrl-del" icon={Trash2} onClick={() => handleDelete(a.id)}>حذف</Button>
                 )}
               </li>

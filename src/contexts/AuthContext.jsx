@@ -2,13 +2,14 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 import { supabase, setViewProject } from '../lib/supabase'
 import { getProjectModules } from '../lib/projectSettings'
 import { pinLogin, throttleMessage } from '../lib/pinLogin'
+import { canEditLedger } from '../lib/adminAccess'
 
 export const ROLE_LABELS = {
   owner:      'المالك',
   accountant: 'المحاسب',
   purchasing: 'مسؤول المشتريات',
   cashier:    'الكاشير',
-  superadmin: 'مزود الخدمة',
+  superadmin: 'إدارة تحسيب',
 }
 
 export const ROLE_ICONS = {
@@ -331,8 +332,8 @@ export function AuthProvider({ children }) {
       login, loginWithEmail, logout, switchProject,
       enterProjectView, leaveProjectView, retryProjectView: () => projectId && verifyView(projectId), viewState, viewError,
       isImpersonating, canImpersonate, startImpersonation, stopImpersonation,
-      // مدير المنصة يعرض المنشآت للقراءة فقط: لا أزرار تعديل (صلاحيات الكتابة في الخادم كما هي)
-      canEdit:      effectiveRole === 'accountant',
+      // نفس الجلسة والدور الحقيقي؛ إدارة تحسيب تعدّل بعد تحقق الخادم من منشأة العمل.
+      canEdit:      canEditLedger(effectiveRole, projectId, viewState),
       isOwner:      effectiveRole === 'owner'      || effectiveRole === 'superadmin',
       isPurchasing: effectiveRole === 'purchasing',
       isCashier:    effectiveRole === 'cashier',

@@ -8,12 +8,13 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { Brand, Button, Dialog } from '../ui/components.jsx'
 import VersionNotice from './VersionNotice.jsx'
+import { operatesBusiness } from '../lib/adminAccess'
 
-// العناصر والأدوار والوحدات والشروط كما كانت حرفيًا؛ التغيير في الشكل فقط. أُزيلت لوحة الكاشير والإدخال السريع للمبيعات بقرار المالك:
+// إدارة تحسيب ترى أدوات المنشأة كاملة بعد التحقق من سياقها. أدوار المنشأة ووحداتها تبقى كما كانت.
 // الكاشير، مثل المشتريات، يرفع المستندات من زر الرفع وحده.
 function navItems(pendingCount) {
   return [
-    { to: '/',                label: 'لوحة التحكم',      icon: House,        roles: ['owner', 'accountant'] },
+    { to: '/',                label: 'لوحة التحكم',      icon: House,        roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/reports',         label: 'التقارير',          icon: ChartColumn,  roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant', 'owner', 'superadmin'], module: 'suppliers' },
@@ -24,7 +25,7 @@ function navItems(pendingCount) {
     { to: '/bank-reconciliation', label: 'المطابقة البنكية', icon: Scale,    roles: ['accountant', 'superadmin'] },
     { to: '/app-reconciliation', label: 'مطابقة التطبيقات', icon: Smartphone, roles: ['accountant', 'superadmin'], module: 'app_reconciliation' },
     { to: '/pending',         label: 'مستندات جديدة',    icon: FileText,     roles: ['accountant', 'superadmin'], badge: pendingCount },
-    { to: '/users',           label: 'المستخدمون',       icon: Users,        roles: ['accountant'] },
+    { to: '/users',           label: 'المستخدمون',       icon: Users,        roles: ['accountant', 'superadmin'] },
     { to: '/admin',           label: 'إدارة العملاء',    icon: Settings,     roles: ['superadmin'] },
     { to: '/settings',        label: 'الإعدادات',        icon: Settings,     roles: ['owner', 'superadmin'] },
   ]
@@ -74,9 +75,10 @@ export default function Layout({ children }) {
     setPendingCount(count || 0)
   }
 
+  const adminWorking = operatesBusiness(role, projectId, viewState)
   const visibleItems = navItems(pendingCount).filter(item =>
     item.roles.includes(role) &&
-    (!item.module || modules.includes(item.module)) &&
+    (!item.module || adminWorking || modules.includes(item.module)) &&
     (!item.cond || item.cond(projectName))
   )
   // مدير المنصة يرفع داخل منشأة اختارها وتحقق منها الخادم فقط

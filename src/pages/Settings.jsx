@@ -8,6 +8,7 @@ import { Button, ChoiceList, Dialog, EmptyState, Field, IconButton, Input, Note,
 import { formatAgo, plural } from '../ui/format.js'
 import { CLASSES, actionLabel, categoryMessage, categoryTree, classOf, cleanName, nameError } from '../lib/categorySettings'
 import TeamSettings from './TeamSettings.jsx'
+import AdminBusinessUsers from './AdminBusinessUsers.jsx'
 import { useAuth } from '../contexts/AuthContext'
 import ItemDictionary from './ItemDictionary.jsx'
 
@@ -85,9 +86,9 @@ export default function Settings() {
     return `أُعيد تفعيل «${c.name}».${extra.length ? ` ${extra.join('، ')}.` : ''}`
   })
 
-  // إدارة تحسيب تدير موظفي المنشأة من لوحة إدارة العملاء (admin_write_user)؛ «الموظفون» هنا للمالك وحده
-  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => (t.value !== 'items' || hasDictionary || tab === 'items') && (t.value !== 'team' || role !== 'superadmin'))} value={tab} onChange={setTab} />
-  if (tab === 'team' && role !== 'superadmin') return <div className="cs-page"><Heading />{tabs}<TeamSettings /></div>
+  // نفس إدارة المستخدمين ونفس دوال الخادم من لوحة المنصة ومن داخل المنشأة.
+  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => t.value !== 'items' || hasDictionary || tab === 'items' || role === 'superadmin')} value={tab} onChange={setTab} />
+  if (tab === 'team') return <div className="cs-page"><Heading />{tabs}{role === 'superadmin' ? <AdminBusinessUsers /> : <TeamSettings />}</div>
   if (tab === 'items') return <div className="cs-page"><Heading />{tabs}<ItemDictionary /></div>
   if (loadError && !state) {
     return (
