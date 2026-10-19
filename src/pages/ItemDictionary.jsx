@@ -2,6 +2,7 @@
 // الأصناف «للمراجعة» منفصلة ولا تُصنَّف تلقائيًا أبدًا؛ المالك يختار تصنيفها هنا (أو يعيد صنفًا معتمدًا إلى المراجعة).
 // الكتابة بدالة الخادم item_rule_set وحدها (المالك الفعلي في منشأته)؛ الشاشة تعيد القراءة بعد كل حفظ.
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { CircleAlert, CircleCheck, ListChecks, Pencil, Undo2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
@@ -16,7 +17,7 @@ const MESSAGES = {
 const message = r => MESSAGES[r?.code] || `تعذّر الحفظ (${r?.code || 'غير معروف'}).`
 
 export default function ItemDictionary() {
-  const { projectId } = useAuth()
+  const { projectId, role } = useAuth()
   const [rules, setRules] = useState(null)
   const [cats, setCats] = useState([])
   const [loadError, setLoadError] = useState('')
@@ -63,7 +64,7 @@ export default function ItemDictionary() {
 
   if (loadError && !rules) return <Panel><div className="ts-panel-body"><Note tone="error" icon={CircleAlert} action={<Button size="sm" onClick={load}>إعادة المحاولة</Button>}>{loadError}</Note></div></Panel>
   if (!rules) return <Panel><div className="ts-panel-body"><small className="ts-field-hint">جارٍ التحميل…</small></div></Panel>
-  if (rules.length === 0) return <Panel title="قاموس الأصناف" icon={ListChecks}><EmptyState icon={ListChecks}>لا قاموس أصناف لهذه المنشأة.</EmptyState></Panel>
+  if (rules.length === 0) return <Panel title="قاموس الأصناف" icon={ListChecks}><EmptyState icon={ListChecks}>لا قاموس أصناف لهذه المنشأة.</EmptyState>{role==='superadmin'&&<Link className="ts-btn" to="/settings?tab=manage&section=item">إضافة أصناف للقاموس</Link>}</Panel>
 
   const total = { review: rules.filter(r => r.status === 'review').length, active: rules.filter(r => r.status === 'active').length }
   const row = (r, isReview) => (
@@ -96,6 +97,7 @@ export default function ItemDictionary() {
 
   return (
     <>
+      {role==='superadmin'&&<Link className="ts-btn" to="/settings?tab=manage&section=item">إضافة وتعديل وحذف الأصناف</Link>}
       <Panel title="قاموس الأصناف" icon={ListChecks}
         subtitle={`${total.active} صنف معتمد يُقترح تصنيفه تلقائيًا عند مراجعة المستندات، و${total.review} صنف للمراجعة لا يُصنَّف تلقائيًا حتى تختار تصنيفه.`}>
         <div className="ts-panel-body">

@@ -2,12 +2,15 @@
 // كل تغيير يمر بدوال الخادم (supabase/migrations/20260928000800_category_settings.sql): المالك الفعلي وحده، في منشأته،
 // مع التحقق والسجل هناك. الشاشة تعيد القراءة من الخادم بعد كل حفظ، فما يظهر هو المحفوظ.
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ArrowDown, ArrowUp, CircleAlert, CircleCheck, History, Lock, Pencil, Plus, Power, PowerOff, Tags, TriangleAlert } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Button, ChoiceList, Dialog, EmptyState, Field, IconButton, Input, Note, Panel, Status, Switch, Tabs } from '../ui/components.jsx'
 import { formatAgo, plural } from '../ui/format.js'
 import { CLASSES, actionLabel, categoryMessage, categoryTree, classOf, cleanName, nameError } from '../lib/categorySettings'
 import TeamSettings from './TeamSettings.jsx'
+import AdminBusinessUsers from './AdminBusinessUsers.jsx'
+import AdminBusinessSettings, { AdminActionHistory } from './AdminBusinessSettings.jsx'
 import { useAuth } from '../contexts/AuthContext'
 import ItemDictionary from './ItemDictionary.jsx'
 
@@ -30,12 +33,14 @@ async function call(fn, args) {
   } catch { return { ok: false, code: 'network' } }
 }
 
-const TABS = [{ value: 'categories', label: 'التصنيفات' }, { value: 'team', label: 'الموظفون' }, { value: 'items', label: 'قاموس الأصناف' }]
-const initialTab = () => { try { const t = new URLSearchParams(window.location.search).get('tab'); return TABS.some(x => x.value === t) ? t : 'categories' } catch { return 'categories' } }
+const TABS = [{ value: 'categories', label: 'التصنيفات' }, { value: 'team', label: 'الموظفون' }, { value: 'items', label: 'قاموس الأصناف' }, {value:'manage',label:'إدارة المنشأة',admin:true}, {value:'activity',label:'سجل الإدارة',admin:true}]
 
 export default function Settings() {
   const { role } = useAuth()
-  const [tab, setTab] = useState(initialTab)
+  const [params, setParams] = useSearchParams()
+  const requestedTab = params.get('tab')
+  const tab = TABS.some(t => t.value === requestedTab && (!t.admin || role === 'superadmin')) ? requestedTab : 'categories'
+  const setTab = value => setParams(previous => { const next = new URLSearchParams(previous); next.set('tab', value); return next })
   // «قاموس الأصناف» يظهر للمنشأة التي لها قاموس فقط (20261014140000)؛ غيرها يرى القسمين كما كانا
   const [hasDictionary, setHasDictionary] = useState(false)
   useEffect(() => {
@@ -85,9 +90,11 @@ export default function Settings() {
     return `أُعيد تفعيل «${c.name}».${extra.length ? ` ${extra.join('، ')}.` : ''}`
   })
 
-  // إدارة تحسيب تدير موظفي المنشأة من لوحة إدارة العملاء (admin_write_user)؛ «الموظفون» هنا للمالك وحده
-  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => (t.value !== 'items' || hasDictionary || tab === 'items') && (t.value !== 'team' || role !== 'superadmin'))} value={tab} onChange={setTab} />
-  if (tab === 'team' && role !== 'superadmin') return <div className="cs-page"><Heading />{tabs}<TeamSettings /></div>
+  // نفس إدارة المستخدمين ونفس دوال الخادم من لوحة المنصة ومن داخل المنشأة.
+  const tabs = <Tabs label="أقسام الإعدادات" tabs={TABS.filter(t => (!t.admin || role === 'superadmin') && (t.value !== 'items' || hasDictionary || tab === 'items' || role === 'superadmin'))} value={tab} onChange={setTab} />
+  if (tab === 'manage' && role === 'superadmin') return <div className="cs-page"><Heading />{tabs}<AdminBusinessSettings /></div>
+  if (tab === 'activity' && role === 'superadmin') return <div className="cs-page"><Heading />{tabs}<AdminActionHistory /></div>
+  if (tab === 'team') return <div className="cs-page"><Heading />{tabs}{role === 'superadmin' ? <AdminBusinessUsers /> : <TeamSettings />}</div>
   if (tab === 'items') return <div className="cs-page"><Heading />{tabs}<ItemDictionary /></div>
   if (loadError && !state) {
     return (
@@ -197,7 +204,7 @@ function Heading() {
     <div className="ts-heading">
       <div>
         <h1>الإعدادات</h1>
-        <p>يديرها مالك المنشأة. تُحفظ مباشرة في منشأتك.</p>
+        <p>إعدادات المنشأة والموظفين والتصنيفات.</p>
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ChevronDown, Info, Plus, RefreshCw, Store, Wallet } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
@@ -72,8 +73,8 @@ export default function Suppliers() {
     const seq = ++loadSeq.current
     setLoading(true); setLoadError('')
     const list = await fetchEveryRow(() => supabase.from('suppliers')
-      .select('id,name,phone,opening_balance,notes')
-      .eq('project_id', projectId).eq('is_active', true)
+      .select('id,name,phone,opening_balance,notes,is_active')
+      .eq('project_id', projectId)
       .order('name').order('id'))
     const ts = list.error ? null : await fetchEveryRow(() => supabase.from('supplier_transactions')
       .select('supplier_id,type,amount')
@@ -97,7 +98,8 @@ export default function Suppliers() {
       const balance  = Number(s.opening_balance || 0) + invoices - payments
       return { ...s, balance, invoices, payments }
     })
-    setSuppliers(withBalance)
+    // Archived suppliers with an outstanding balance must stay visible in totals.
+    setSuppliers(withBalance.filter(s => s.is_active !== false || Math.abs(s.balance) >= 0.005))
     setLoading(false)
   }
 
@@ -194,9 +196,10 @@ export default function Suppliers() {
       <div className="ts-heading">
         <div>
           <h1>الموردون</h1>
-          <p className="ldg-showing"><Store className="ts-icon--sm" aria-hidden="true" /><span data-k="sup.count">{loading || loadError ? '—' : `${suppliers.length} مورد نشط`}</span></p>
+          <p className="ldg-showing"><Store className="ts-icon--sm" aria-hidden="true" /><span data-k="sup.count">{loading || loadError ? '—' : `${suppliers.length} مورد`}</span></p>
         </div>
-        {canManage && <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => { setFormError(''); setAddModal(true) }}>إضافة مورد</Button>}
+        <div className="flex gap-2">{role === 'superadmin' && <Link className="ts-btn" to="/settings?tab=manage&section=supplier">إدارة الموردين</Link>}
+        {canManage && <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => { setFormError(''); setAddModal(true) }}>إضافة مورد</Button>}</div>
       </div>
       {!canManage && <Note tone="info" data-k="sup.readOnly">اطّلاع فقط: الأرصدة والحركات كما سجّلها المحاسب. إضافة الموردين وتسجيل الدفعات من حساب المحاسب.</Note>}
 
@@ -235,6 +238,7 @@ export default function Suppliers() {
                         <ChevronDown className="ts-icon jar-chev" aria-hidden="true" />
                         <span className="sup-name">
                           <strong data-k="name">{sup.name}</strong>
+                          {sup.is_active === false && <small>موقوف للاستخدام الجديد — له رصيد قائم</small>}
                           {sup.phone && <span className="ts-num" data-k="phone">{sup.phone}</span>}
                           <small>فواتير: <span className="ts-num" data-k="invoices">{fmt(sup.invoices)}</span> · مدفوع: <span className="ts-num" data-k="payments">{fmt(sup.payments)}</span></small>
                         </span>
