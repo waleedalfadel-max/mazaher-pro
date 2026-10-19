@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useLayoutEffect } from 'react'
+import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Ban, Check, CircleAlert, FileSearch, FileText, FlaskConical, Inbox, Info, Layers, ListChecks, LoaderCircle, Maximize2, Plus, RefreshCw, Save, ScanText, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button, Chip, DateInput, Dialog, EmptyState, Field, GrowInput, IconButton, Input, Money, Note, Panel, SearchBox, Segment, Select, Status, Tabs, Textarea } from '../ui/components.jsx'
@@ -13,7 +13,7 @@ import { matchSupplier } from '../lib/supplierMatching'
 import { compareItemsToTotal } from '../lib/documentTotals'
 import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
-import { approvalMessage, buildInvoicePayload, exactTotals, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
+import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
 import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck } from '../lib/salesReport.js'
 import { bankAccountLabel, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
@@ -1568,24 +1568,34 @@ function ItemLines({ items, independent, categories, transType, onEditItem, onDe
   )
 }
 
-function ItemsTotals({ check, exact, res, onEdit }) {
+function ExpenseBasis({ invoice, onEdit, readOnly }) {
+  return <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0 }}>
+    <Segment label="أساس مبالغ البنود" value={invoice.amountsBasis === 'exclusive' ? 'exclusive' : 'inclusive'}
+      onChange={v => onEdit('amountsBasis', v)}
+      options={[{ value: 'inclusive', label: 'البنود شاملة الضريبة' }, { value: 'exclusive', label: 'البنود قبل الضريبة' }]} />
+  </fieldset>
+}
+
+function ItemsTotals({ check, exact, res, onEdit, readOnly }) {
+  const id = useId()
   const totalKey = res.totalAmount != null ? 'totalAmount' : 'amount'
+  const suggestedBasis = exact ? expenseBasisSuggestion(res) : null
   if (exact) return (
     <div className="rp-totals">
       {exact.status !== 'none' && (
         <div className="rp-total-row"><span>{exact.basis === 'exclusive' ? 'مجموع البنود قبل الضريبة' : 'مجموع البنود'}</span><Money value={exact.itemsTotal / 100} /></div>
       )}
       <div className="rp-total-row">
-        <label htmlFor="rv-disc">خصم على إجمالي الفاتورة <small className="ts-field-hint">يُوزَّع على البنود بنسبة مبالغها</small></label>
-        <Num id="rv-disc" value={res.invoiceDiscount ?? ''} placeholder="0" onChange={e => onEdit('invoiceDiscount', e.target.value)} />
+        <label htmlFor={`${id}-disc`}>خصم على إجمالي الفاتورة <small className="ts-field-hint">يُوزَّع على البنود بنسبة مبالغها</small></label>
+        <Num id={`${id}-disc`} disabled={readOnly} value={res.invoiceDiscount ?? ''} placeholder="0" onChange={e => onEdit('invoiceDiscount', e.target.value)} />
       </div>
       <div className="rp-total-row">
-        <label htmlFor="rv-vat">{exact.basis === 'exclusive' ? 'ضريبة القيمة المضافة' : 'منها ضريبة القيمة المضافة'} <small className="ts-field-hint">كما في المستند</small></label>
-        <Num id="rv-vat" value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)} />
+        <label htmlFor={`${id}-vat`}>{exact.basis === 'exclusive' ? 'ضريبة القيمة المضافة' : 'منها ضريبة القيمة المضافة'} <small className="ts-field-hint">كما في المستند</small></label>
+        <Num id={`${id}-vat`} disabled={readOnly} value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)} />
       </div>
       <div className="rp-total-row rp-total-row--strong">
-        <label htmlFor="rv-total">إجمالي المستند <small className="ts-field-hint">شامل الضريبة</small></label>
-        <Num id="rv-total" value={res.totalAmount ?? res.amount ?? ''} onChange={e => onEdit(totalKey, e.target.value)} />
+        <label htmlFor={`${id}-total`}>إجمالي المستند <small className="ts-field-hint">شامل الضريبة</small></label>
+        <Num id={`${id}-total`} disabled={readOnly} value={res.totalAmount ?? res.amount ?? ''} onChange={e => onEdit(totalKey, e.target.value)} />
       </div>
       {exact.status === 'match' && (
         <div className="rp-total-row rp-total-row--ok"><span>{[exact.basis === 'exclusive' ? 'البنود' : 'مجموع البنود', exact.discount ? '− الخصم' : '', exact.basis === 'exclusive' ? '+ الضريبة' : ''].filter(Boolean).join(' ')} = الإجمالي، بالهللة</span><Check className="ts-icon--sm" aria-hidden="true" /></div>
@@ -1595,6 +1605,18 @@ function ItemsTotals({ check, exact, res, onEdit }) {
           <span>فرق غير مفسّر: البنود {exact.diff > 0 ? 'تزيد' : 'تنقص'} عن الإجمالي. طابق مبالغ البنود وخصوماتها والضريبة مع المستند؛ لا يُعتمد بفرق</span><Money value={Math.abs(exact.diff) / 100} />
         </div>
       )}
+      {exact.status === 'mismatch' && (suggestedBasis ? (
+        <Note tone="warning" title="راجع أساس مبالغ البنود في صورة الفاتورة"
+          action={<Button size="sm" disabled={readOnly} onClick={() => onEdit('amountsBasis', suggestedBasis)}>
+            {suggestedBasis === 'exclusive' ? 'تأكيد أن البنود قبل الضريبة' : 'تأكيد أن البنود شاملة الضريبة'}
+          </Button>}>
+          {suggestedBasis === 'exclusive'
+            ? 'مجموع البنود بعد خصم الفاتورة، مضافًا إليه الضريبة، يطابق الإجمالي بالهللة. إن كانت البنود مطبوعة قبل الضريبة، أكّد ذلك دون تغيير الأرقام.'
+            : 'مجموع البنود بعد خصم الفاتورة يطابق الإجمالي بالهللة دون إضافة الضريبة مرة أخرى. إن كانت البنود مطبوعة شاملة الضريبة، أكّد ذلك دون تغيير الأرقام.'}
+        </Note>
+      ) : <Note tone="warning" title="طابق كل صنف مرة واحدة">
+        قد يظهر سعر الوحدة والمبلغ قبل الضريبة والإجمالي في أسطر متتابعة للصنف نفسه. تأكد أنها لم تُقرأ كبنود إضافية، وأن مبلغ البند هو إجمالي الكمية لا سعر الوحدة. لا تضف بندًا لتغطية الفرق.
+      </Note>)}
       {exact.status === 'invalid' && (
         <div className="rp-total-row rp-total-row--diff" role="status"><span>في المبالغ قيمة غير صالحة (رقم بأكثر من هللتين أو نص).</span></div>
       )}
@@ -1911,12 +1933,11 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
             <div className="rp-section">
               <h3>البنود <span className="ts-num">{itemCount}</span> <span className="ts-field-hint">{exact?.basis === 'exclusive' ? 'المبالغ قبل الضريبة كما في المستند' : 'المبالغ شاملة الضريبة كما في المستند'}</span></h3>
               {isV2 && (
-                <Segment label="أساس مبالغ البنود" value={exact?.basis || 'inclusive'} onChange={v => onEdit('amountsBasis', v)}
-                  options={[{ value: 'inclusive', label: 'البنود شاملة الضريبة' }, { value: 'exclusive', label: 'البنود قبل الضريبة' }]} />
+                <ExpenseBasis invoice={res} onEdit={onEdit} readOnly={readOnly} />
               )}
               <ItemLines items={res.items || []} independent={itemCount > 1 || isV2} categories={categories} transType={res.transType} discounts={isV2}
                 onEditItem={onEditItem} onDeleteItem={onDeleteItem} onAddItem={onAddItem} />
-              <ItemsTotals check={totalsCheck} exact={exact} res={res} onEdit={onEdit} />
+              <ItemsTotals check={totalsCheck} exact={exact} res={res} onEdit={onEdit} readOnly={readOnly} />
             </div>
           )}
 
@@ -2015,7 +2036,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
                 options={PAY_OPTIONS.filter(o => o.value !== 'payable')} />
             </Field>
           )}
-          {!isSales && (
+          {!isSales && !(v2 && invoice.type === 'expense') && (
             <Field label="المبلغ">
               <Num value={invoice.totalAmount ?? invoice.amount ?? ''} onChange={e => onEdit(invoice.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)} />
             </Field>
@@ -2035,10 +2056,12 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
         {!isSales && (
           <div className="rp-subinv-items">
             <h4>البنود <span className="ts-num">{items.length}</span></h4>
+            {v2 && invoice.type === 'expense' && <ExpenseBasis invoice={invoice} onEdit={onEdit} readOnly={readOnly} />}
             <ItemLines items={items} independent={isMultiItem || v2} categories={categories || []} transType={invoice.transType} discounts={v2}
               onEditItem={(i, patch) => onEdit('items', items.map((it, j) => j === i ? { ...it, ...patch } : it))}
               onDeleteItem={i => onEdit('items', items.filter((_, j) => j !== i))}
               onAddItem={() => onEdit('items', [...items, blankItem()])} />
+            {v2 && invoice.type === 'expense' && <ItemsTotals exact={exactTotals(invoice)} res={invoice} onEdit={onEdit} readOnly={readOnly} />}
           </div>
         )}
         {(onApprove || onReject) && (
