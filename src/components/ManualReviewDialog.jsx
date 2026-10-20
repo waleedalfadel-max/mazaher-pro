@@ -4,7 +4,9 @@ import { MANUAL_CHANNELS, manualInvoice } from '../lib/manualReview.js'
 import { toHalalas } from '../lib/approvalV2.js'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, withSalesChannelAccount } from '../lib/branchSetup.js'
 
-export default function ManualReviewDialog({ invoice, categories, setup, branch, onClose, onConfirm }) {
+export default function ManualReviewDialog({ invoice, categories, setup, branch, supplierName, onClose, onConfirm }) {
+  // حسابات المنشأة كما تمررها شاشة المستندات (bankAccounts)؛ كانت تُقرأ من banks فلا يظهر حقل الحساب في هذه النافذة (مراجعة 2026-10-20)
+  const banks = setup?.bankAccounts || setup?.banks || []
   const [fields, setFields] = useState(() => ({ ...invoice, totalAmount: invoice.totalAmount ?? invoice.amount ?? '',
     vatAmount: invoice.vatAmount ?? '', categoryId: '', subcategoryId: '', reason: '', confirmed: false }))
   const [error, setError] = useState('')
@@ -14,26 +16,26 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
   const parents = categories.filter(c => !c.parent_id && c.is_active !== false)
   const children = categories.filter(c => c.parent_id === fields.categoryId && c.is_active !== false)
   const accountBranch = expense && expensesAtProjectLevel(setup?.settings) ? null : branch
-  const accounts = eligibleBankAccounts(setup?.banks, accountBranch)
+  const accounts = eligibleBankAccounts(banks, accountBranch)
   const bankChannels = sales ? [['networkSales', 'network', 'الشبكة / مدى'], ['transferSales', 'transfer', 'التحويل']].filter(([k]) => Number(fields[k]) > 0) : []
   const bankNeeded = needsBankAccount(fields)
   const sum = MANUAL_CHANNELS.reduce((s, [k]) => s + (toHalalas(fields[k]) || 0), 0) / 100
-  const pay = { cash: 'الصندوق', bank: 'البنك', custody: 'العهدة', credit: 'آجل — المورد المحدد في المستند', payable: 'آجل — باسم المورد' }
+  const pay = { cash: 'الصندوق', bank: 'البنك', custody: 'العهدة', credit: 'آجل — مورد من القائمة', payable: 'آجل — باسم المورد' }
   async function confirm() {
     if (sending) return
     let result
     try {
       let values = fields
-      if (bankNeeded && setup?.banks?.length) {
+      if (bankNeeded && banks.length) {
         if (sales) {
           values = { ...fields, bankAccounts: { ...fields.bankAccounts } }
           for (const [, channel, label] of bankChannels) {
-            const id = chosenBankAccount(setup.banks, accountBranch, salesChannelAccount(fields, channel))
+            const id = chosenBankAccount(banks, accountBranch, salesChannelAccount(fields, channel))
             if (!id) throw new Error(`اختر الحساب البنكي لقناة ${label}.`)
             values.bankAccounts[channel] = id
           }
         } else {
-          const id = chosenBankAccount(setup.banks, accountBranch, fields.bankAccountId)
+          const id = chosenBankAccount(banks, accountBranch, fields.bankAccountId)
           if (!id) throw new Error('اختر الحساب البنكي الذي سيُسجَّل عليه المبلغ.')
           values = { ...fields, bankAccountId: id }
         }
@@ -69,17 +71,17 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
           <Field label="التصنيف الفرعي"><Select value={fields.subcategoryId} placeholder="— بدون فرعي —" onChange={e => edit('subcategoryId', e.target.value)}
             options={children.map(c => ({ value: c.id, label: c.name }))} /></Field>
         </>}
-        {bankNeeded && !!setup?.banks?.length && (sales ? bankChannels.map(([, channel, label]) =>
+        {bankNeeded && !!banks.length && (sales ? bankChannels.map(([, channel, label]) =>
           <Field key={channel} label={`حساب ${label}`}><Select
-            value={chosenBankAccount(setup.banks, accountBranch, salesChannelAccount(fields, channel))}
+            value={chosenBankAccount(banks, accountBranch, salesChannelAccount(fields, channel))}
             placeholder="— اختر الحساب —" options={accounts.map(a => ({ value: a.id, label: bankAccountLabel(a) }))}
             onChange={e => edit('bankAccounts', withSalesChannelAccount(fields, [channel], e.target.value))} /></Field>) :
-          <Field label="الحساب البنكي المعتمد"><Select value={chosenBankAccount(setup.banks, accountBranch, fields.bankAccountId)}
+          <Field label="الحساب البنكي المعتمد"><Select value={chosenBankAccount(banks, accountBranch, fields.bankAccountId)}
             placeholder="— اختر الحساب —" options={accounts.map(a => ({ value: a.id, label: bankAccountLabel(a) }))}
             onChange={e => edit('bankAccountId', e.target.value)} /></Field>)}
         <Field label="ملاحظة المراجعة اليدوية" span><Textarea rows={2} value={fields.reason} onChange={e => edit('reason', e.target.value)} placeholder="مثال: راجعت الصورة، والقراءة كررت تفاصيل الصنف." /></Field>
       </div>
-      {sales ? <p>الإجمالي الذي سيُعتمد: <Money value={sum} /></p> : <p>مصدر الدفع: {pay[invoice.paySource] || 'يُحدد في المستند'}. المورد كما اخترته في المستند؛ لتغيير المورد أو مصدر الدفع ارجع إلى حقوله.</p>}
+      {sales ? <p>الإجمالي الذي سيُعتمد: <Money value={sum} /></p> : <p data-k="manual-pay">مصدر الدفع: {pay[invoice.paySource] || 'يُحدد في المستند'}{['credit', 'payable'].includes(invoice.paySource) ? <> — المورد: <strong>{supplierName || 'غير محدد'}</strong></> : null}. المورد ومصدر الدفع كما اخترتهما في الفاتورة؛ لتغييرهما ارجع إلى حقولها.</p>}
       <label className="ts-check"><input type="checkbox" checked={fields.confirmed} onChange={e => setFields(f => ({ ...f, confirmed: e.target.checked }))} />
         راجعت صورة المستند وأؤكد الأرقام والتصنيف ومصدر الدفع أعلاه، وأعتمدها بدل قراءة البرنامج.
       </label>
