@@ -20,6 +20,12 @@ export function manualInvoice(invoice, fields, categories) {
   const next = { ...invoice, _id: invoice._id || newRequestId(), description: String(fields.description || '').trim(), date: fields.date }
   if (fields.bankAccountId !== undefined) next.bankAccountId = fields.bankAccountId
   if (fields.bankAccounts !== undefined) next.bankAccounts = { ...fields.bankAccounts }
+  // هوية مورد «آجل — باسم المورد» ثابتة من لحظة فتح المراجعة (fields.supplierName، وهو المعروض في النافذة): تعديل الوصف مستقل
+  // عنها، فلا يتحول الاسم المرسل إلى الوصف الجديد ولا يُنشأ مورد جديد بسببه (مراجعة 0e0a5f1). «مورد من القائمة» بمعرّفه كما هو.
+  if (invoice.type === 'expense' && invoice.paySource === 'payable') {
+    next.supplier_name = String(fields.supplierName ?? invoice.supplier_name ?? invoice.description ?? '').trim()
+    if (!next.supplier_name) throw new Error('اسم المورد غير محدد لهذه الفاتورة الآجلة؛ حدده في حقولها أولًا.')
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(next.date || '')) throw new Error('أدخل تاريخ المستند.')
   if (!next.description) throw new Error('أدخل وصف المستند أو اسم المورد.')
   const review = { version: 1, reason, mode: invoice.type === 'sales' ? 'confirmed_channels' : 'confirmed_total',

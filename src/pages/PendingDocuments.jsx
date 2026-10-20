@@ -13,7 +13,7 @@ import { matchSupplier } from '../lib/supplierMatching'
 import { compareItemsToTotal } from '../lib/documentTotals'
 import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
-import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
+import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import { withManualInvoice } from '../lib/manualReview.js'
@@ -525,7 +525,7 @@ export default function PendingDocuments() {
       await supabase.from('documents').update({ journal_number: jn }).eq('id', doc.id)
 
     } else if (pay === 'credit') {
-      const supplierId = doc._supplierId
+      const supplierId = res.supplier_id || doc._supplierId   // مورد الفاتورة داخل الصورة متعددة الفواتير أولًا
       if (!supplierId) throw new Error('يرجى اختيار المورد قبل التسجيل')
       const amount = Number(res.totalAmount || res.amount) || 0
       const jn = await getOrCreateJournalNumber(pid, res.date)
@@ -812,21 +812,20 @@ export default function PendingDocuments() {
     }
     const originals = Object.fromEntries((doc.analysis_result?.invoices || []).map(x => [x._id, x]))
     const decisions = { suppliers: {}, duplicates: { ...(doc._dupDecisions || {}) } }
+    // الصورة متعددة الفواتير: مورد كل فاتورة وحدها (invoiceSupplierContext)، والفاتورة المفردة: اختيار المستند كما كان
+    const multi = list.length > 1
     const payload = invs.map(inv => {
+      const ctx = invoiceSupplierContext(doc, inv, multi)
       const pl = buildInvoicePayload(inv, { original: originals[inv._id], categories: docCategories, transTypes: docTransTypes,
-        purchaseCategory: doc.purchase_category, supplierId: doc._supplierId })
+        purchaseCategory: doc.purchase_category, supplierId: ctx.supplierId })
       if (pl.paySource === 'payable') {
-        const name = (doc._supplierName ?? inv.supplier_name ?? inv.description ?? '').trim()
-        const m = matchSupplier(name, docPayable)
-        pl.supplier_name = name
-        const decision = m.matchType === 'exact' ? { resolution: 'existing', supplier_id: m.supplier.id }
-          : doc._supplierResolution === 'existing' ? { resolution: 'existing', supplier_id: doc._matchedSupplierId }
-          : m.matchType === 'fuzzy' && !doc._supplierResolution ? null : { resolution: 'new' }
+        pl.supplier_name = ctx.name
+        const decision = payableDecision(matchSupplier(ctx.name, docPayable), ctx)
         if (decision) decisions.suppliers[inv._id] = decision
       }
       return pl
     })
-    const document = { branch: doc.branch || null, file_name: readableName(doc, payload[0]), supplier_id: doc._supplierId || null }
+    const document = { branch: doc.branch || null, file_name: readableName(doc, payload[0]), supplier_id: multi ? null : (doc._supplierId || null) }
     const fp = JSON.stringify([payload, decisions, document])
     const requestId = doc._req?.fp === fp ? doc._req.id : newRequestId()   // إعادة المحاولة نفسها بالمعرّف نفسه
     updateDoc(doc.id, { _state: 'approving', _v2Error: null, _notice: '', _req: { id: requestId, fp },
@@ -1728,7 +1727,8 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
 
   // مطابقة اسم المورد — فقط لفواتير "آجل"، تُعاد حسبتها حياً مع كل تعديل بالاسم
   const isPayable      = res?.paySource === 'payable'
-  const supplierName   = doc._supplierName ?? res?.supplier_name ?? ''
+  // الاعتماد الجديد يرسل اسم invoiceSupplierContext (وفيه الوصف بديلًا)، فيُعرض ويُطابق الاسم نفسه الذي سيُسجَّل عليه الآجل
+  const supplierName   = doc._supplierName ?? res?.supplier_name ?? (v2 ? res?.description ?? '' : '')
   const supplierMatch  = isPayable && supplierName.trim()
     ? matchSupplier(supplierName, payableSuppliers || [])
     : { matchType: 'none', supplier: null }
@@ -1745,6 +1745,11 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
   const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid')
     : isV2 && isMultiInvoice && rawRes.invoices.some(x => (invStatus(x._id)?.status ?? 'pending') === 'pending'
       && x.type === 'expense' && x.items?.length && ['mismatch', 'invalid'].includes(exactTotals(x).status))
+  // الآجل لكل فاتورة في الصورة متعددة الفواتير: مورد من القائمة مطلوب، والاسم المشابه لمورد مسجل يُؤكَّد قبل الاعتماد
+  const supplierBlocked = isMultiInvoice && rawRes.invoices.some(x => (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && (() => {
+    const ctx = invoiceSupplierContext(null, x, true)
+    return !!supplierBlockReason(x, ctx, x.paySource === 'payable' && ctx.name ? matchSupplier(ctx.name, payableSuppliers || []) : null)
+  })())
   // تقرير المبيعات (src/lib/salesReport.js): وسيلة دفع غير معروفة أو فرق مع الإجمالي المطبوع أو مرتجع أكبر من قناته يمنع الاعتماد
   const salesCheck = isSales ? salesReportCheck(res) : null
   const salesBlocked = (salesCheck && !salesCheck.ok) || (isMultiInvoice && rawRes.invoices.some(x => x.type === 'sales'
@@ -1775,6 +1780,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
     <div className="rp-action-bar">
       {paused ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />الاعتماد متوقف مؤقتًا لهذه المنشأة.</div>
         : decisionPending ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />{decisionPending}</div>
+        : supplierBlocked ? <div className="rp-action-why" data-k="supplier-blocked"><Info className="ts-icon--sm" aria-hidden="true" />في الصورة فاتورة آجلة بلا مورد محدد أو باسم يشبه موردًا مسجلًا: أكمل المورد في فاتورتها.</div>
         : amountsBlocked ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />البنود لا تطابق الإجمالي بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.</div>
         : salesBlocked ? <div className="rp-action-why" data-k="sales-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{salesCheck?.reasons?.[0] || 'تقرير مبيعات في الصورة فيه وسيلة دفع غير معروفة أو فرق مع إجماليه. راجعه في فاتورته.'}</div>
         : needsSupplierConfirm
@@ -1782,7 +1788,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
         : <div className="rp-action-hint">{(exact ? amountsBlocked : totalsCheck.status === 'mismatch') ? <strong>البنود لا تطابق الإجمالي — راجعها قبل الاعتماد. </strong> : null}{approveHint}</div>}
       <div className="rp-action-buttons">
         <Button variant="primary" icon={doc._state === 'approving' ? LoaderCircle : Check} className="rp-approve"
-          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || preparing || !!decisionPending} onClick={onApprove}>
+          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || supplierBlocked || preparing || !!decisionPending} onClick={onApprove}>
           {doc._state === 'approving' ? 'جارٍ الاعتماد…' : approveCount ? approveLabel(approveCount) : 'اعتماد'}
         </Button>
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
@@ -1797,6 +1803,8 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
     <div className="rp-form">
       {manualIndex != null && canManual && <ManualReviewDialog
         invoice={isMultiInvoice ? rawRes.invoices[manualIndex] : res} categories={categories} setup={setup} branch={doc.branch}
+        supplierName={(() => { const inv = isMultiInvoice ? rawRes.invoices[manualIndex] : res, ctx = invoiceSupplierContext(doc, inv, isMultiInvoice)
+          return inv?.paySource === 'credit' ? (suppliers.find(x => x.id === ctx.supplierId)?.name || '') : ctx.name })()}
         onClose={() => setManualIndex(null)} onConfirm={invoice => onManualApprove(manualIndex, invoice)} />}
       {isStub && (
         <Note tone="info" icon={FlaskConical} title="قراءة محاكاة محليًا">
@@ -1861,6 +1869,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
                 setup={setup} branch={doc.branch}
                 v2={isV2} decision={isV2 ? invStatus(inv._id) : null}
                 onEdit={(f, v) => onEditInvoice(idx, f, v)} onReplace={next => onReplaceInvoice(idx, next)} readOnly={readOnly}
+                suppliers={suppliers} payableSuppliers={payableSuppliers || []}
                 onApprove={readOnly ? null : () => onApproveInvoice(idx)}
                 onManualApprove={canManual ? () => setManualIndex(idx) : null}
                 onReject={readOnly ? null : () => onRejectInvoice(idx)}
@@ -2003,7 +2012,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
 }
 
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision }) {
+function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision, suppliers = [], payableSuppliers = [] }) {
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -2026,6 +2035,15 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
     ? SALES_CHANNELS.reduce((t, c) => t + (Number(invoice[c.key]) || 0), 0)
     : Number(invoice.totalAmount || invoice.amount) || 0
   const items = invoice.items || []
+  // الآجل لهذه الفاتورة وحدها: مورد من القائمة (supplier_id) أو باسم المورد (supplier_name مع تأكيد المشابه)
+  const isExpense = invoice.type === 'expense'
+  const supCtx = invoiceSupplierContext(null, invoice, true)
+  const payableMatch = isExpense && invoice.paySource === 'payable' && supCtx.name ? matchSupplier(supCtx.name, payableSuppliers) : null
+  const supplierBlocked = supplierBlockReason(invoice, supCtx, payableMatch)
+  const why = blocked || supplierBlocked
+  const payOptions = isExpense
+    ? [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : [])]
+    : PAY_OPTIONS.filter(o => o.value !== 'payable')
 
   return (
     <details className="rp-subinv" open={isFutureDate || undefined}>
@@ -2048,8 +2066,27 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           )}
           {!isSales && (
             <Field label="مصدر الدفع" error={payError ? 'مطلوب' : undefined}>
-              <Select value={invoice.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
-                options={PAY_OPTIONS.filter(o => o.value !== 'payable')} />
+              <Select value={invoice.paySource || ''} placeholder="— اختر —" data-k={`pay-source-${index}`} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
+                options={payOptions} />
+            </Field>
+          )}
+          {isExpense && invoice.paySource === 'credit' && (
+            <Field label="المورد" error={!invoice.supplier_id ? 'اختر المورد لهذه الفاتورة.' : undefined}>
+              <Select value={invoice.supplier_id || ''} placeholder="— اختر المورد —" data-k={`supplier-${index}`} disabled={readOnly}
+                onChange={e => onEdit('supplier_id', e.target.value || null)} options={suppliers.map(x => ({ value: x.id, label: x.name }))} />
+            </Field>
+          )}
+          {isExpense && invoice.paySource === 'payable' && (
+            <Field label="اسم المورد (آجل)" hint="يُسجَّل المستحق باسمه في «موردو الآجل».">
+              <Input value={invoice.supplier_name ?? invoice.description ?? ''} data-k={`payable-name-${index}`} disabled={readOnly}
+                onChange={e => onReplace?.({ ...invoice, supplier_name: e.target.value, _supplierResolution: undefined, _matchedSupplierId: undefined })} />
+            </Field>
+          )}
+          {payableMatch?.matchType === 'fuzzy' && (
+            <Field label={`هل هو المورد المسجل «${payableMatch.supplier.name}»؟`}>
+              <Select value={invoice._supplierResolution || ''} placeholder="— أكّد —" data-k={`payable-resolution-${index}`} disabled={readOnly}
+                onChange={e => onReplace?.({ ...invoice, _supplierResolution: e.target.value || undefined, _matchedSupplierId: e.target.value === 'existing' ? payableMatch.supplier.id : undefined })}
+                options={[{ value: 'existing', label: `نعم، «${payableMatch.supplier.name}»` }, { value: 'new', label: 'لا، مورد جديد' }]} />
             </Field>
           )}
           {!isSales && !(v2 && invoice.type === 'expense') && (
@@ -2083,9 +2120,9 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
         {(onApprove || onReject) && (
           <div className="rp-subinv-actions">
             {payError && <span className="ts-field-error">اختر مصدر الدفع قبل اعتماد التحويل.</span>}
-            {blocked && <span className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />{blocked}</span>}
+            {why && <span className="rp-action-why" data-k={`invoice-blocked-${index}`}><Info className="ts-icon--sm" aria-hidden="true" />{why}</span>}
             {onApprove && (
-              <Button size="sm" icon={Check} disabled={approving || !!blocked} onClick={() => {
+              <Button size="sm" icon={Check} disabled={approving || !!why} onClick={() => {
                 if (invoice.type === 'transfer' && !invoice.paySource) { setPayError(true); return }
                 setPayError(false)
                 onApprove()

@@ -143,10 +143,44 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
   const payload = { ...inv, transType: effectiveType, items, category_main: inv.category_main || normCat(transType) || null, category_id: invCat?.id || inv.category_id || null }
-  if (inv.paySource === 'credit' && supplierId) payload.supplier_id = supplierId
-  delete payload._localStub
+  // المورد لكل فاتورة (2026-10-20): يُرسل مورد السياق (اختيار المستند للفاتورة المفردة، ومورد الفاتورة نفسها في الصورة متعددة
+  // الفواتير — invoiceSupplierContext)، ولا يبقى معرّف مورد على فاتورة ليست آجلة لمورد من القائمة
+  if (inv.paySource === 'credit') { if (supplierId) payload.supplier_id = supplierId } else delete payload.supplier_id
+  delete payload._localStub; delete payload._supplierResolution; delete payload._matchedSupplierId
   payload.review_changes = reviewChanges(original, payload)
   return payload
+}
+
+/**
+ * سياق المورد لفاتورة عند الاعتماد (2026-10-20، بلاغ «الآجل لا يظهر في الصورة متعددة الفواتير»):
+ *  • فاتورة مفردة: اختيار المستند كما كان (doc._supplierId / _supplierName / _supplierResolution).
+ *  • صورة متعددة الفواتير: مورد كل فاتورة وحدها (invoice.supplier_id / supplier_name / _supplierResolution)؛ لا يتغلب عليها مورد
+ *    المستند العام، ولا يُرسل مورد للمستند (الخادم يقدّم مورد الفاتورة ثم مورد المستند).
+ */
+export function invoiceSupplierContext(doc, inv, multi) {
+  if (multi) return { supplierId: inv?.supplier_id || null, name: String(inv?.supplier_name ?? inv?.description ?? '').trim(),
+    resolution: inv?._supplierResolution || null, matchedId: inv?._matchedSupplierId || null, documentSupplierId: null }
+  return { supplierId: doc?._supplierId || null, name: String(doc?._supplierName ?? inv?.supplier_name ?? inv?.description ?? '').trim(),
+    resolution: doc?._supplierResolution || null, matchedId: doc?._matchedSupplierId || null, documentSupplierId: doc?._supplierId || null }
+}
+
+/** قرار مورد «آجل — باسم المورد»: مطابق تمامًا ⇒ الموجود؛ مؤكَّد أنه الموجود ⇒ هو؛ مشابه بلا تأكيد ⇒ null (يتوقف للتأكيد)؛ وإلا جديد. */
+export function payableDecision(match, ctx) {
+  if (match?.matchType === 'exact') return { resolution: 'existing', supplier_id: match.supplier.id }
+  if (ctx.resolution === 'existing' && ctx.matchedId) return { resolution: 'existing', supplier_id: ctx.matchedId }
+  if (match?.matchType === 'fuzzy' && !ctx.resolution) return null
+  return { resolution: 'new' }
+}
+
+/** سبب منع اعتماد فاتورة آجلة قبل إرسالها: مورد من القائمة غير مختار، أو اسم مشابه لمورد قائم لم يُؤكَّد. null ⇒ لا مانع. */
+export function supplierBlockReason(inv, ctx, payableMatch) {
+  if (inv?.type !== 'expense') return null
+  if (inv.paySource === 'credit' && !ctx.supplierId) return 'اختر المورد من القائمة لهذه الفاتورة الآجلة.'
+  if (inv.paySource === 'payable') {
+    if (!ctx.name) return 'اكتب اسم المورد لهذه الفاتورة الآجلة.'
+    if (payableMatch?.matchType === 'fuzzy' && !ctx.resolution) return `«${ctx.name}» يشبه موردًا مسجلًا («${payableMatch.supplier.name}»): أكّد هل هو نفسه أم مورد جديد.`
+  }
+  return null
 }
 
 export const newRequestId = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID()
