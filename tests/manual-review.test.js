@@ -71,3 +71,30 @@ test('manual entry action is for verified platform-admin business context only',
   assert.equal(operatesBusiness('superadmin',null,'ok'),false)
   assert.equal(operatesBusiness('superadmin','business-a','error'),false)
 })
+
+test('مراجعة 0e0a5f1: هوية مورد «آجل — باسم المورد» ثابتة من فتح النافذة؛ تعديل الوصف لا يغيّر المورد المرسل (مفردة ومتعددة)', async () => {
+  const { invoiceSupplierContext, payableDecision, buildInvoicePayload } = await import('../src/lib/approvalV2.js')
+  const cats = [{ id: 'm', name: 'مصروفات', ledger_type: 'مصروفات', is_active: true }]
+  const inv = { _id: 'p1', type: 'expense', paySource: 'payable', description: 'مورد الألبان', date: '2026-01-05', totalAmount: 70, vatAmount: 0, items: [], _supplierResolution: 'existing', _matchedSupplierId: 'ps-1' }
+  const fields = { description: 'وصف معدّل للفاتورة', date: '2026-01-05', totalAmount: '70', vatAmount: '0', categoryId: 'm', reason: 'مراجعة', confirmed: true }
+  // متعددة: الهوية المعروضة = invoiceSupplierContext عند الفتح
+  const shown = invoiceSupplierContext({}, inv, true).name
+  const next = manualInvoice(inv, { ...fields, supplierName: shown }, cats)
+  assert.equal(next.description, 'وصف معدّل للفاتورة')
+  assert.equal(next.supplier_name, 'مورد الألبان')
+  const ctx = invoiceSupplierContext({}, next, true)
+  assert.equal(ctx.name, 'مورد الألبان')                                 // المرسل = المعروض، لا الوصف المعدّل
+  assert.deepEqual(payableDecision({ matchType: 'fuzzy', supplier: { id: 'ps-1' } }, ctx), { resolution: 'existing', supplier_id: 'ps-1' })   // تأكيد المشابه باقٍ
+  assert.equal(buildInvoicePayload(next, { categories: cats }).supplier_name, 'مورد الألبان')
+  // مفردة بلا اسم مورد على المستند: الهوية من القراءة الأصلية لا من الوصف المعدّل
+  const single = manualInvoice(inv, fields, cats)                         // بلا supplierName (احتياطي: القراءة الأصلية)
+  assert.equal(invoiceSupplierContext({}, single, false).name, 'مورد الألبان')
+  // مفردة باسم مورد مكتوب على المستند: هو المعروض والمرسل
+  const doc = { _supplierName: 'مورد الألبان والأجبان' }
+  const shownSingle = invoiceSupplierContext(doc, inv, false).name
+  assert.equal(invoiceSupplierContext(doc, manualInvoice(inv, { ...fields, supplierName: shownSingle }, cats), false).name, 'مورد الألبان والأجبان')
+  // «مورد من القائمة» بمعرّفه كما هو؛ والآجل بلا أي اسم يُرفض بدل إرساله فارغًا
+  const credit = manualInvoice({ ...inv, paySource: 'credit', supplier_id: 's-9' }, fields, cats)
+  assert.equal(credit.supplier_id, 's-9'); assert.equal(credit.supplier_name, undefined)
+  assert.throws(() => manualInvoice({ ...inv, description: '' }, { ...fields, supplierName: '' }, cats), /اسم المورد غير محدد/)
+})

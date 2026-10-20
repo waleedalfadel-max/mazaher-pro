@@ -7,8 +7,9 @@ import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts, expensesAtPr
 export default function ManualReviewDialog({ invoice, categories, setup, branch, supplierName, onClose, onConfirm }) {
   // حسابات المنشأة كما تمررها شاشة المستندات (bankAccounts)؛ كانت تُقرأ من banks فلا يظهر حقل الحساب في هذه النافذة (مراجعة 2026-10-20)
   const banks = setup?.bankAccounts || setup?.banks || []
+  // supplierName: هوية المورد كما عُرضت عند فتح النافذة؛ ثابتة ولا تتبع تعديل الوصف (manualInvoice يرسلها اسمًا للمورد الآجل)
   const [fields, setFields] = useState(() => ({ ...invoice, totalAmount: invoice.totalAmount ?? invoice.amount ?? '',
-    vatAmount: invoice.vatAmount ?? '', categoryId: '', subcategoryId: '', reason: '', confirmed: false }))
+    vatAmount: invoice.vatAmount ?? '', categoryId: '', subcategoryId: '', reason: '', confirmed: false, supplierName }))
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
   const edit = (key, value) => { setFields(f => ({ ...f, [key]: value, confirmed: false })); setError('') }

@@ -36,7 +36,7 @@ await build({ stdin: { contents: `
         window.payloads.push(buildInvoicePayload(next._edit.invoices[index],{original:invoices[index],categories,transTypes:[]}));
         setRows(next._edit.invoices);
       }:null}
-      setup={{settings:{},banks:[{id:'bank-a',name:'Bank A',is_active:true},{id:'bank-b',name:'Bank B',is_active:true}]}} onEdit={(k,v)=>edit(0,k,v)} onEditInvoice={edit}
+      setup={{settings:{},bankAccounts:[{id:'bank-a',name:'Bank A',is_active:true},{id:'bank-b',name:'Bank B',is_active:true}]}} onEdit={(k,v)=>edit(0,k,v)} onEditInvoice={edit}
       onEditItem={(i,patch)=>edit(0,'items',rows[0].items.map((it,j)=>j===i?{...it,...patch}:it))}
       onDeleteItem={i=>edit(0,'items',rows[0].items.filter((_,j)=>i!==j))}
       onApprove={()=>rows.forEach((_,i)=>capture(i))} onApproveInvoice={capture} />

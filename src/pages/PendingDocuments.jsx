@@ -1727,7 +1727,8 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
 
   // مطابقة اسم المورد — فقط لفواتير "آجل"، تُعاد حسبتها حياً مع كل تعديل بالاسم
   const isPayable      = res?.paySource === 'payable'
-  const supplierName   = doc._supplierName ?? res?.supplier_name ?? ''
+  // الاعتماد الجديد يرسل اسم invoiceSupplierContext (وفيه الوصف بديلًا)، فيُعرض ويُطابق الاسم نفسه الذي سيُسجَّل عليه الآجل
+  const supplierName   = doc._supplierName ?? res?.supplier_name ?? (v2 ? res?.description ?? '' : '')
   const supplierMatch  = isPayable && supplierName.trim()
     ? matchSupplier(supplierName, payableSuppliers || [])
     : { matchType: 'none', supplier: null }
