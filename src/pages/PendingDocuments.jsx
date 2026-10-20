@@ -850,7 +850,8 @@ export default function PendingDocuments() {
 
   function v2Failed(doc, data) {
     if (data.code === 'already_approved') { clearDraftOf(doc); setListNotice(approvalMessage(data)); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
-    updateDoc(doc.id, { _state: 'analyzed', _v2Error: data, ...(['stale', 'invoice_already_decided', 'payment_deleted'].includes(data.code) ? { _req: null } : {}) })
+    const dup = data.code === 'payment_possible_duplicate' && data.invoice_id ? { _receiptDup: { ...(doc._receiptDup || {}), [data.invoice_id]: data } } : {}
+    updateDoc(doc.id, { _state: 'analyzed', _v2Error: data, ...dup, ...(['stale', 'invoice_already_decided', 'payment_deleted'].includes(data.code) ? { _req: null } : {}) })
     if (['stale', 'invoice_already_decided', 'payment_deleted'].includes(data.code)) prepareV2(doc)
   }
 
@@ -862,9 +863,10 @@ export default function PendingDocuments() {
       setDocs(ds => ds.filter(d => d.id !== doc.id)); return
     }
     const done = Object.fromEntries((data.journals || []).map(j => [j.invoice_id, j.journal_number]))
+    const receiptDup = Object.fromEntries(Object.entries(doc._receiptDup || {}).filter(([id]) => !done[id]))
     const invoices = doc._v2.invoices.map(i => (done[i.id] ? { ...i, status: 'approved', journal_number: done[i.id] } : i))
     for (const id of Object.keys(done)) if (!invoices.some(i => i.id === id)) invoices.push({ id, status: 'approved', journal_number: done[id] })
-    updateDoc(doc.id, { _state: 'analyzed', _req: null, _v2Error: null, _draftSavedAt: null,
+    updateDoc(doc.id, { _state: 'analyzed', _req: null, _v2Error: null, _draftSavedAt: null, _receiptDup: receiptDup,
       _v2: { ...doc._v2, version: data.version, invoices },
       _notice: jns.length ? `اعتُمدت بالقيد ${jns.join('، ')}. الباقي بانتظار المراجعة.` : 'حُدّثت حالة الفواتير.' })
   }
@@ -1765,7 +1767,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
     return !!supplierBlockReason(x, ctx, x.paySource === 'payable' && ctx.name ? matchSupplier(ctx.name, payableSuppliers || []) : null)
   })())
   // إيصال سداد مورد (2026-10-20): مورد ومبلغ وتاريخ، ومصدر دفعة جديدة أو دفعة مربوطة، قبل الاعتماد
-  const serverDup = id => (doc._v2Error?.code === 'payment_possible_duplicate' && (!doc._v2Error.invoice_id || doc._v2Error.invoice_id === id) ? doc._v2Error : null)
+  const serverDup = id => (id && doc._receiptDup?.[id]) || (doc._v2Error?.code === 'payment_possible_duplicate' && (!doc._v2Error.invoice_id || doc._v2Error.invoice_id === id) ? doc._v2Error : null)
   const receiptBlocked = isMultiInvoice
     ? rawRes.invoices.find(x => (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && receiptBlockReason(x, receiptCtx[x._id], serverDup(x._id))) ? 'في الصورة إيصال سداد غير مكتمل أو مشتبه بتكراره: افتحه وأكمل المورد وطريقة الاعتماد أو سبب الاشتباه.' : null
     : receiptBlockReason(res, receiptCtx[res?._id], serverDup(res?._id))
