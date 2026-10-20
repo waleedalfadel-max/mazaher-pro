@@ -528,6 +528,9 @@ export default function Ledger() {
             {deleting.journal_number && <div><dt>رقم القيد</dt><dd className="ts-num">{deleting.journal_number}</dd></div>}
           </dl>
         )}
+        {deleting && isSupplierPaymentType(deleting.type) && deleting.document_id && (
+          <p className="ts-field-hint" data-k="delete-receipt-note">هذه الدفعة مرتبطة بإيصال في «المستندات». حذفها يعيد الإيصال إلى «مستندات جديدة» بانتظار اعتماده من جديد أو استبعاده، فلا يبقى معتمدًا بلا دفعة.</p>
+        )}
         {deleting && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
       </Dialog>
     </div>

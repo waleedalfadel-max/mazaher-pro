@@ -100,7 +100,10 @@ const CHANNEL_LABEL = { cash: 'النقدي', network: 'الشبكة', transfer:
 const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'التاريخ', invoiceNumber: 'رقم الفاتورة', totalAmount: 'الإجمالي', amount: 'المبلغ',
   vatAmount: 'الضريبة', paySource: 'مصدر الدفع', transType: 'التصنيف الأساسي', category_sub: 'التصنيف الفرعي', amountsBasis: 'أساس المبالغ',
   type: 'نوع المستند', cashSales: 'نقدي', networkSales: 'شبكة', transferSales: 'تحويل', hungerSales: 'هنقر ستيشن', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول',
-  totalSales: 'إجمالي التقرير المطبوع' }
+  totalSales: 'إجمالي التقرير المطبوع',
+  // إيصال سداد مورد (20261020120000)
+  beneficiary: 'المستفيد', reference: 'مرجع العملية', supplierKind: 'قائمة المورد', supplierId: 'المورد', paymentMode: 'طريقة الاعتماد',
+  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي' }
 const same = (a, b) => String(a ?? '') === String(b ?? '')
 
 /** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
@@ -196,6 +199,10 @@ export function salesCorrectionChanges(previous, corrected) {
     .map(k => `${SALES_CHANNEL_NAMES[k]} من ${money(previous?.[k] || 0)} إلى ${money(corrected?.[k] || 0)}`)
 }
 
+/** وصف عملية سابقة مشابهة لإيصال سداد: إيصال معتمد، أو دفعة قائمة، أو مستند مرفق بالدفعة، أو إيصال آخر في الطلب نفسه. */
+export const dupCandidate = c => c.kind === 'batch' ? 'إيصال مشابه في الصورة نفسها'
+  : `${c.kind === 'receipt' ? (c.same_reference ? 'إيصال معتمد بالمرجع نفسه' : 'إيصال معتمد بالتاريخ والمبلغ نفسيهما') : c.kind === 'payment_document' ? 'مستند مرفق بالدفعة' : 'دفعة مسجلة'}${c.journal_number ? ` ${c.journal_number}` : ''}${c.date ? ` بتاريخ ${c.date}` : ''}${c.amount != null ? ` بمبلغ ${money(c.amount)}` : ''}${c.file_name ? ` («${c.file_name}»)` : ''}`
+
 /** رسالة عربية لرمز الخادم. linked: بيانات المستند المرتبط إن وُجد. */
 export function approvalMessage(res) {
   const d = res || {}
@@ -211,7 +218,7 @@ export function approvalMessage(res) {
     bad_status: 'حالة المستند لا تسمح بالاعتماد.',
     empty: 'لا فواتير للاعتماد.',
     duplicate_in_batch: 'في المستند فاتورتان بالرقم نفسه للمورد نفسه.',
-    supplier_payment_via_suppliers: 'سداد الموردين لا يُعتمد من المستندات: سجّله من صفحة «الموردين» (تخفض المستحق للمورد مع القيد). غيّر نوع هذه الفاتورة أو استبعدها. لم يُسجَّل شيء.',
+    supplier_payment_via_suppliers: 'هذه الفاتورة مصنفة «سداد مورد» كمصروف. غيّر «نوع المستند» إلى «سداد مورد» واختر المورد (يخفض مستحقه مع القيد)، أو سجّل الدفعة من «الموردين» ثم اربط الإيصال بها، أو صنّفها مصروفًا آخر. لم يُسجَّل شيء.',
     date_required: 'التاريخ مطلوب.',
     pay_required: 'اختر مصدر الدفع.',
     type_required: 'اختر التصنيف الأساسي.',
@@ -264,6 +271,16 @@ export function approvalMessage(res) {
     bank_account_mismatch: `مبلغ «${d.label || CHANNEL_LABEL[d.channel] || ''}» في التقرير الأصلي على حساب «${d.account || ''}»، والتصحيح يُسجَّل على الحساب نفسه. اختر «${d.account || ''}» في حقل الحساب البنكي؛ لم يُسجَّل شيء.`,
     report_entries_unproven: `قيود «${d.label || CHANNEL_LABEL[d.channel] || ''}» في التقرير الموجود ${d.split ? 'موزعة على أكثر من حساب' : `لا تطابق رقمه (${money(d.report)} مقابل ${money(d.entries)})`}، فلا يُعرف حسابها. راجع قيود التقرير في «سجل الدفتر» قبل التصحيح؛ لم يُسجَّل شيء.`,
     bank_account_unassigned: `مبلغ «${d.label || CHANNEL_LABEL[d.channel] || ''}» في التقرير الأصلي غير مربوط بحساب بنكي. اربطه بحسابه من «سجل الدفتر» (ربط بحساب)، ثم صحّح؛ لم يُسجَّل شيء.`,
+    // إيصالات سداد الموردين (20261020120000)
+    exceeds_balance: `مبلغ السداد أكبر من المستحق${d.name ? ` لـ«${d.name}»` : ''} (${money(d.balance)}). راجع المبلغ أو المورد؛ لم يُسجَّل شيء.`,
+    // اشتباه تكرار إيصال سداد (20261020120000): يُعرض السابق، والمحاسب أو إدارة تحسيب يحسم بسبب مكتوب
+    payment_possible_duplicate: `قد يكون هذا الإيصال مكررًا لـ«${d.name || 'المورد'}»: ${(d.candidates || []).map(dupCandidate).join('؛ ') || 'عملية سابقة مشابهة'}. التشابه لا يثبت التكرار: ${d.mode === 'link' ? 'إن كان مستندًا آخر للدفعة نفسها (مثل سند قبض المورد مع إشعار التحويل) فاكتب ذلك سببًا ثم اعتمد' : 'إن كانت الدفعة نفسها فاختر «ربط بدفعة مسجلة»، وإن كانت دفعة مختلفة فعلًا فاكتب السبب ثم اعتمد'}؛ وإن كانت نسخة مكررة فارفضها. لم يُسجَّل شيء.`,
+    link_amount_mismatch: `مبلغ الإيصال (${money(d.amount)}) لا يساوي مبلغ الدفعة ${d.journal_number || ''} (${money(d.payment_amount)}). الربط بمبلغ مختلف يضلل؛ صحّح المبلغ أو اختر دفعة أخرى. لم يُسجَّل شيء.`,
+    link_not_found: `الدفعة ${d.journal_number || ''} غير موجودة (ربما حُذفت). اختر دفعة أخرى أو سجّلها دفعة جديدة؛ لم يُسجَّل شيء.`,
+    link_supplier_mismatch: `الدفعة ${d.journal_number || ''} ليست لـ«${d.name || 'المورد المختار'}». اختر دفعة لهذا المورد؛ لم يُسجَّل شيء.`,
+    link_required: 'اختر الدفعة المسجلة التي يخصها الإيصال.',
+    payment_mode_required: 'اختر: تسجيل دفعة جديدة، أو ربط بدفعة مسجلة.',
+    payment_deleted: `الدفعة ${d.journal_number || ''} المسجلة من هذا الإيصال حُذفت من «سجل الدفتر» بعد اعتماده، فعاد الإيصال بانتظار الاعتماد. حُدّثت الصفحة؛ راجعه ثم اعتمده من جديد إن كان صحيحًا.`,
     bank_account_invalid: `الحساب البنكي المختار غير متاح${d.branch ? ` لفرع «${d.branch}»` : ''} أو معطّل. اختر حسابًا من القائمة؛ لم يُسجَّل شيء.`,
   }
   return M[d.code] || `تعذّر الإجراء (${d.code || 'غير معروف'}).`
