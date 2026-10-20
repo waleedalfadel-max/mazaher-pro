@@ -61,16 +61,20 @@ export function fromReceipt(inv, type = 'expense') {
 
 const days = (a, b) => Math.round(Math.abs(new Date(`${a}T00:00:00Z`) - new Date(`${b}T00:00:00Z`)) / 86400000)
 
+/** مستندات الدفعة المعتمدة (قد تكون أكثر من مستند: إشعار التحويل وسند قبض المورد). */
+export const paymentDocuments = p => (Array.isArray(p?.documents) && p.documents.length ? p.documents : p?.document_id ? [{ document_id: p.document_id, file_name: p.file_name }] : [])
+
 /**
- * الدفعات المسجلة للمورد مرتبة للربط: غير المربوطة بإيصال أولًا، ثم المبلغ نفسه، ثم الأقرب تاريخًا.
- * likely: المبلغ نفسه وخلال نافذة التكرار — اقتراح لا يثبت أنها هي.
+ * الدفعات المسجلة للمورد مرتبة للربط: بلا مستند أولًا، ثم المبلغ نفسه، ثم الأقرب تاريخًا.
+ * likely: المبلغ نفسه وخلال نافذة التكرار — اقتراح لا يثبت أنها هي. الدفعة التي لها مستند تُربط بمستند آخر بعد تأكيد المراجع.
  */
 export function rankPayments(payments = [], inv) {
   const amt = toHalalas(inv?.amount)
   return payments.map(p => {
     const same = amt != null && !Number.isNaN(amt) && toHalalas(p.amount) === amt
     const d = inv?.date && p.date ? days(inv.date, p.date) : null
-    return { ...p, sameAmount: same, days: d, linked: !!p.document_id, likely: same && d != null && d <= DUPLICATE_WINDOW_DAYS && !p.document_id }
+    const linked = paymentDocuments(p).length > 0
+    return { ...p, sameAmount: same, days: d, linked, likely: same && d != null && d <= DUPLICATE_WINDOW_DAYS && !linked }
   }).sort((a, b) => (a.linked - b.linked) || (b.sameAmount - a.sameAmount) || ((a.days ?? 1e9) - (b.days ?? 1e9)))
 }
 
@@ -90,12 +94,15 @@ export function receiptBlockReason(inv, ctx = null) {
     if (!inv.linkJournal) return 'اختر الدفعة المسجلة التي يخصها هذا الإيصال.'
     const p = ctx?.payments?.find(x => x.journal_number === inv.linkJournal)
     if (p && toHalalas(p.amount) !== amt) return `مبلغ الإيصال (${money(amt / 100)}) لا يساوي مبلغ الدفعة ${p.journal_number} (${money(p.amount)}). صحّح المبلغ أو اختر دفعة أخرى.`
-    if (p?.document_id) return `الدفعة ${p.journal_number} مرتبطة بإيصال آخر.`
+    // مستند آخر للدفعة نفسها مشروع (إشعار تحويل وسند قبض)؛ يُعرض المرفق، والمراجع يؤكد بسبب مكتوب
+    if (p && paymentDocuments(p).length && !String(inv.linkReason || '').trim()) {
+      return `الدفعة ${p.journal_number} مرفق بها مستند («${paymentDocuments(p).map(x => x.file_name).join('»، «')}»). إن كان هذا مستندًا آخر للدفعة نفسها فاكتب ذلك سببًا.`
+    }
     return null
   }
   if (!['cash', 'bank'].includes(inv.paySource)) return 'اختر مصدر الدفع: الصندوق أو البنك.'
   if (ctx?.payments && !String(inv.newPaymentReason || '').trim() && possibleDuplicates(ctx.payments, inv).length) {
-    return 'للمورد دفعة مسجلة بالمبلغ نفسه قريبة التاريخ: اربط الإيصال بها، أو اكتب سبب أنها دفعة أخرى.'
+    return 'للمورد دفعة مسجلة بالمبلغ نفسه قريبة التاريخ: اربط الإيصال بها إن كانت هي، أو اكتب سبب أنها دفعة أخرى.'
   }
   return null
 }
@@ -109,8 +116,11 @@ export function buildReceiptPayload(inv, { original } = {}) {
   for (const k of RECEIPT_FIELDS) if (inv[k] !== undefined && inv[k] !== null && inv[k] !== '') out[k] = inv[k]
   out.type = RECEIPT_TYPE
   out.paymentMode = inv.paymentMode === 'link' ? 'link' : 'new'
-  if (out.paymentMode === 'link') out.linkJournal = inv.linkJournal || null
-  else {
+  if (out.paymentMode === 'link') {
+    out.linkJournal = inv.linkJournal || null
+    const reason = String(inv.linkReason || '').trim()
+    if (reason) out.linkReason = reason
+  } else {
     out.paySource = inv.paySource || null
     if (inv.paySource === 'bank' && inv.bankAccountId) out.bankAccountId = inv.bankAccountId
     const reason = String(inv.newPaymentReason || '').trim()

@@ -44,9 +44,11 @@ test('منع قبل الإرسال: المورد والمبلغ والتاريخ
   assert.match(receiptBlockReason(receipt({ paySource: 'custody' })), /الصندوق أو البنك/)
   assert.equal(receiptBlockReason(receipt()), null)
   assert.match(receiptBlockReason(receipt({ paymentMode: 'link' })), /اختر الدفعة/)
-  const ctx = { payments: [{ journal_number: 'J1', amount: 120, date: '2026-09-24' }, { journal_number: 'J2', amount: 50, date: '2026-09-01', document_id: 'd' }] }
+  const ctx = { payments: [{ journal_number: 'J1', amount: 120, date: '2026-09-24' }, { journal_number: 'J2', amount: 50, date: '2026-09-01', document_id: 'd', documents: [{ document_id: 'd', file_name: 'إشعار تحويل.png' }] }] }
   assert.equal(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J1' }), ctx), null)
-  assert.match(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J2', amount: 50 }), ctx), /مرتبطة بإيصال آخر/)
+  // للدفعة الواحدة أكثر من مستند مشروع: المرفق يُعرض، ويُقبل الربط بسبب مكتوب (اشتباه لا منع)
+  assert.match(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J2', amount: 50 }), ctx), /مرفق بها مستند.*إشعار تحويل/)
+  assert.equal(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J2', amount: 50, linkReason: 'سند قبض المورد لهذه الحوالة' }), ctx), null)
   assert.match(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J1', amount: 119 }), ctx), /لا يساوي مبلغ الدفعة/)
   // دفعة جديدة بمبلغ دفعة قائمة قريبة: تتوقف حتى الربط أو كتابة السبب
   assert.match(receiptBlockReason(receipt(), ctx), /اربط الإيصال بها/)
@@ -74,6 +76,7 @@ test('الحمولة: حقول السداد وحدها؛ الدفعة الجدي
   assert.ok(p.review_changes.some(c => c.startsWith('نوع المستند')))
   const l = buildReceiptPayload(receipt({ paymentMode: 'link', linkJournal: 'J1', paySource: 'bank', bankAccountId: 'b1', newPaymentReason: 'x' }), { original })
   assert.equal(l.linkJournal, 'J1'); assert.equal(l.paySource, undefined); assert.equal(l.bankAccountId, undefined); assert.equal(l.newPaymentReason, undefined)
+  assert.equal(buildReceiptPayload(receipt({ paymentMode: 'link', linkJournal: 'J1', linkReason: ' سند قبض ' }), { original }).linkReason, 'سند قبض')
   const c = buildReceiptPayload(receipt({ paySource: 'cash', bankAccountId: 'b1' }), { original })
   assert.equal(c.bankAccountId, undefined, 'لا حساب بنكي لدفعة من الصندوق')
 })

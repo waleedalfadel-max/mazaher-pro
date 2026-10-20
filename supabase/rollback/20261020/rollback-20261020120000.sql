@@ -1,5 +1,5 @@
 -- رجوع 20261020120000 (إيصالات سداد الموردين من المستندات): نصوص الدوال قبلها حرفيًا (كما في الإنتاج 7f47603 / الهجرة 20261018120000
--- وما قبلها)، وحذف الدوال الجديدة والفهرس. لا بيانات تُحذف:
+-- وما قبلها)، وحذف الدوال الجديدة. لا بيانات تُحذف:
 --   • الدفعات المسجلة من الإيصالات تبقى دفعات صحيحة في «الموردين» والدفتر، وروابطها بالمستندات (document_id) تبقى للاطلاع.
 --   • عمود approval_private.document_invoices.history يبقى (سجل ما حدث)، ولا تقرؤه الدوال السابقة.
 --   • بعد الرجوع: «سداد مورد» من المستندات يُرفض كما كان (supplier_payment_via_suppliers)، وحذف دفعة مرتبطة بإيصال لا يعيد
@@ -482,5 +482,4 @@ drop function public.supplier_payment_context(text, uuid, uuid);
 drop function approval_private.write_supplier_payment(public.documents, jsonb, uuid);
 drop function approval_private.plan_supplier_payment(public.documents, jsonb, jsonb, boolean);
 drop function approval_private.supplier_payment_core(uuid, uuid, text, text, text, uuid, numeric, date, text, text, uuid, uuid, uuid, uuid, text);
-drop index approval_private.document_invoices_receipt_once;
 commit;

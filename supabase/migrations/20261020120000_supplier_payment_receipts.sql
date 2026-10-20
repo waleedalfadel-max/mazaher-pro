@@ -6,11 +6,17 @@
 --   • new  — دفعة جديدة: الدالة نفسها التي تسجّل دفعة «الموردين» (supplier_payment_core، منقولة حرفيًا من supplier_payment_record)
 --            داخل معاملة الاعتماد: حركة «دفعة» للمورد + قيد «🏪 سداد مورد» يخفض المستحق والصندوق أو البنك، مربوطان بالمستند وفاتورته.
 --            قواعد البيانات القديمة كما هي: الرصيد الافتتاحي أولًا (تسوية)، ثم فواتير لم تدخل الدفتر قط (تكلفة)، ثم المسجلة (تسوية).
---   • link — ربط بدفعة مسجلة سابقًا: يُرفق المستند بقيدها وحركتها، بلا أي أثر مالي جديد. المبلغ يجب أن يساوي مبلغ الدفعة،
---            والدفعة لا تُربط بأكثر من إيصال.
+--   • link — ربط بدفعة مسجلة سابقًا: يُرفق المستند بها بلا أي أثر مالي جديد. المبلغ يجب أن يساوي مبلغ الدفعة. للدفعة الواحدة
+--            أكثر من مستند مشروع (إشعار التحويل وسند قبض المورد): المستند المرفق سابقًا يُعرض، والمراجع يؤكد بسبب مكتوب.
 -- الدفعة والربط وحالة الفاتورة والمستند في معاملة approval_approve نفسها: كلها أو لا شيء، وإعادة الطلب نفسه لا تكرر شيئًا.
--- دفعة جديدة بمبلغ دفعة قائمة للمورد نفسه خلال 7 أيام تتوقف حتى يختار المراجع الربط أو يكتب سبب أنها دفعة أخرى.
--- الإيصال نفسه لا يُعتمد مرتين بأي مسار ولا بسبب: مرجعه مرة واحدة للمورد، وبلا مرجع يُطابَق بالمورد والتاريخ والمبلغ.
+-- التكرار:
+--   • المثبت يُمنع قطعيًا: المستند نفسه أو فاتورته بعد اعتمادها (already_approved / invoice_already_decided)، والطلب نفسه (يعيد
+--     نتيجته الأولى بلا كتابة)، والاعتماد المتزامن للمستند نفسه (قفله).
+--   • التشابه اشتباه يُعرض ولا يُمنع: إيصال معتمد للمورد نفسه بالمرجع نفسه، أو بالتاريخ والمبلغ نفسيهما وأحدهما بلا مرجع؛ ودفعة
+--     قائمة بالمبلغ نفسه خلال 7 أيام؛ ومستند مرفق سابقًا بالدفعة المربوطة؛ وإيصالان متشابهان في الطلب نفسه. يتوقف الاعتماد حتى يكتب
+--     المحاسب أو إدارة تحسيب سببًا (newPaymentReason / linkReason)، فيُحفظ مع المرشحين والمنفّذ والوقت في duplicate_decision.
+--   • حدود الكشف: المرجع والتاريخ والمبلغ من قراءة الإيصال (قد تُخطئ القراءة)؛ لا مقارنة لمحتوى الصورة، فإعادة تصوير الإيصال
+--     ملف آخر؛ النافذة 7 أيام؛ المقارنة داخل المورد الواحد.
 -- حذف دفعة مرتبطة بإيصال (supplier_payment_delete) يعيد فاتورة الإيصال «بانتظار الاعتماد» ومستندها إلى «مستندات جديدة»، مع سجل
 -- في history، فلا يبقى مستند «معتمد» بلا دفعة.
 -- supplier_payment_context: قراءة لشاشة المراجعة و«الموردين» (الرصيد، الدفعات وإيصالاتها، الإيصالات المنتظرة للمورد).
@@ -18,9 +24,6 @@
 
 alter table approval_private.document_invoices add column if not exists history jsonb not null default '[]'::jsonb;
 
--- مرجع العملية (رقم الحوالة) لا يُعتمد مرتين للمورد نفسه
-create unique index if not exists document_invoices_receipt_once on approval_private.document_invoices (project_id, supplier_key, invoice_number_norm)
-  where status = 'approved' and kind = 'supplier_payment' and invoice_number_norm is not null;
 
 -- ─── الدفعة نفسها: جسم supplier_payment_record السابق بلا تحديد المنفّذ، ومعه ربط اختياري بالمستند ─────────────────────────
 create function approval_private.supplier_payment_core(p_project uuid, p_actor uuid, p_actor_name text, p_actor_role text,
@@ -159,33 +162,31 @@ begin
   v_key := case v_kind when 'list' then 's:' else 'ps:' end || v_sup;
   v_ref_raw := nullif(btrim(coalesce(inv ->> 'reference', '')), '');
   v_ref := approval_private.norm_invoice_number(v_ref_raw);
-  if v_ref is not null then
-    select x.document_id, x.journal_number, x.invoice_date, x.total, dd.file_name into v_link
-      from approval_private.document_invoices x join public.documents dd on dd.id = x.document_id
-     where x.project_id = d.project_id and x.status = 'approved' and x.kind = 'supplier_payment' and x.supplier_key = v_key
-       and x.invoice_number_norm = v_ref limit 1;
-    if found then return approval_private.err('duplicate_receipt', v_inv || jsonb_build_object('linked', to_jsonb(v_link))); end if;
-  end if;
-  -- الإيصال نفسه لا يُعتمد مرتين، ولا يتجاوز ذلك سببٌ مكتوب: إيصال معتمد للمورد نفسه بالتاريخ والمبلغ نفسيهما، ومرجعه نفسه أو
-  -- أحدهما بلا مرجع، هو هذا الإيصال (صورة مكررة). سبب «دفعة أخرى» يخص دفعة قائمة بلا هذا التطابق؛ دفعتان مختلفتان فعلًا في اليوم
-  -- نفسه وبالمبلغ نفسه تتميزان بمرجع كل منهما المطبوع.
-  select x.document_id, x.journal_number, x.invoice_date, x.total, dd.file_name into v_link
-    from approval_private.document_invoices x join public.documents dd on dd.id = x.document_id
-   where x.project_id = d.project_id and x.status = 'approved' and x.kind = 'supplier_payment' and x.supplier_key = v_key
-     and x.invoice_date = v_date and x.total = v_amt and (v_ref is null or x.invoice_number_norm is null or x.invoice_number_norm = v_ref)
-   limit 1;
-  if found then return approval_private.err('receipt_already_approved', v_inv || jsonb_build_object('linked', to_jsonb(v_link), 'name', v_name)); end if;
   v_mode := coalesce(nullif(inv ->> 'paymentMode', ''), 'new');
   if v_mode not in ('new', 'link') then return approval_private.err('payment_mode_required', v_inv); end if;
+  -- سبب المراجع لاشتباه التكرار: «دفعة أخرى» للدفعة الجديدة، و«مستند آخر للدفعة نفسها» للربط
+  v_reason := nullif(btrim(coalesce(inv ->> case v_mode when 'link' then 'linkReason' else 'newPaymentReason' end, '')), '');
   plan := jsonb_build_object('ok', true, 'id', v_id, 'kind', 'supplier_payment', 'date', v_date, 'total', v_amt,
     'description', coalesce(nullif(btrim(coalesce(inv ->> 'description', '')), ''), 'إيصال سداد — ' || v_name),
     'number_raw', v_ref_raw, 'number', v_ref, 'payload', inv, 'known', v_known, 'branch', null,
     'supplier_kind', v_kind, 'supplier_id', v_sup, 'supplier_key', v_key, 'label', v_name, 'mode', v_mode);
 
+  -- اشتباه التكرار (لا منع): إيصالات معتمدة للمورد نفسه بالمرجع نفسه، أو بالتاريخ والمبلغ نفسيهما وأحدهما بلا مرجع.
+  -- التشابه لا يثبت أنه الإيصال نفسه: يُعرض السابق، والمراجع يحسم بسبب مكتوب. المنع القاطع للتكرار المثبت وحده (المستند نفسه
+  -- أو الطلب نفسه، في approval_approve).
+  select jsonb_agg(c order by c.date desc, c.journal_number) into v_cands from (
+    select 'receipt' as kind, x.journal_number, x.invoice_date as date, x.total as amount, x.document_id, dd.file_name,
+           (v_ref is not null and x.invoice_number_norm = v_ref) as same_reference, x.approved_payload ->> 'payment_mode' as payment_mode
+      from approval_private.document_invoices x join public.documents dd on dd.id = x.document_id
+     where x.project_id = d.project_id and x.status = 'approved' and x.kind = 'supplier_payment' and x.supplier_key = v_key
+       and ((v_ref is not null and x.invoice_number_norm = v_ref)
+            or (x.invoice_date = v_date and x.total = v_amt and (v_ref is null or x.invoice_number_norm is null)))
+     limit 5) c;
+
   if v_mode = 'link' then
     v_jn := nullif(btrim(coalesce(inv ->> 'linkJournal', '')), '');
     if v_jn is null then return approval_private.err('link_required', v_inv); end if;
-    select le.id, le.date, le.total_amount, le.document_invoice_id, le.document_id, le.supplier_id into v_link
+    select le.id, le.date, le.total_amount, le.document_id, le.supplier_id into v_link
       from public.ledger_entries le
      where le.project_id = d.project_id and le.journal_number = v_jn and le.type like '%سداد مورد%' and le.status in ('approved', 'auto')
      limit 1;
@@ -198,13 +199,21 @@ begin
     if v_link.total_amount <> v_amt then
       return approval_private.err('link_amount_mismatch', v_inv || jsonb_build_object('journal_number', v_jn, 'payment_amount', v_link.total_amount, 'amount', v_amt));
     end if;
-    if v_link.document_invoice_id is not null or v_link.document_id is not null
-       or exists (select 1 from public.supplier_transactions t where t.project_id = d.project_id and t.journal_number = v_jn
-                     and t.type = 'payment' and t.document_id is not null) then
-      return approval_private.err('payment_already_linked', v_inv || jsonb_build_object('journal_number', v_jn,
+    -- الربط لا ينشئ أثرًا ماليًا. للدفعة الواحدة أكثر من مستند مشروع (إشعار التحويل وسند قبض المورد): المستند المرفق سابقًا
+    -- يُعرض، والمراجع يؤكد أنه مستند آخر للدفعة نفسها بسبب مكتوب
+    v_cands := coalesce(v_cands, '[]'::jsonb) || coalesce((select jsonb_agg(jsonb_build_object('kind', 'payment_document', 'journal_number', v_jn,
+        'date', x.invoice_date, 'amount', x.total, 'document_id', x.document_id, 'file_name', dd.file_name))
+      from approval_private.document_invoices x join public.documents dd on dd.id = x.document_id
+     where x.project_id = d.project_id and x.status = 'approved' and x.kind = 'supplier_payment' and x.journal_number = v_jn), '[]'::jsonb);
+    if v_link.document_id is not null and not exists (select 1 from jsonb_array_elements(v_cands) c where c ->> 'document_id' = v_link.document_id::text) then
+      v_cands := v_cands || jsonb_build_array(jsonb_build_object('kind', 'payment_document', 'journal_number', v_jn, 'document_id', v_link.document_id,
         'file_name', (select dd.file_name from public.documents dd where dd.id = v_link.document_id)));
     end if;
-    return plan || jsonb_build_object('link_journal', v_jn, 'pay', null);
+    if jsonb_array_length(v_cands) > 0 and v_reason is null then
+      return approval_private.err('payment_possible_duplicate', v_inv || jsonb_build_object('candidates', v_cands, 'name', v_name, 'mode', 'link'));
+    end if;
+    return plan || jsonb_build_object('link_journal', v_jn, 'pay', null,
+      'duplicate_decision', case when jsonb_array_length(v_cands) > 0 then jsonb_build_object('kind', 'receipt_link', 'reason', v_reason, 'candidates', v_cands) end);
   end if;
 
   -- دفعة جديدة: مصدرها وحسابها البنكي، ولا تتجاوز المستحق (يُعاد الفحص تحت قفل المورد عند الكتابة)
@@ -222,11 +231,9 @@ begin
      where le.project_id = d.project_id and le.supplier_id = v_sup and le.status in ('approved', 'auto');
   end if;
   if v_amt > v_bal then return approval_private.err('exceeds_balance', v_inv || jsonb_build_object('balance', greatest(v_bal, 0), 'name', v_name)); end if;
-  -- اشتباه تكرار: دفعة قائمة للمورد نفسه بالمبلغ نفسه خلال 7 أيام. التشابه لا يثبت أنها هي: المراجع يربط بها أو يكتب السبب
-  v_reason := nullif(btrim(coalesce(inv ->> 'newPaymentReason', '')), '');
-  if v_reason is null then
-    select jsonb_agg(c order by c.days, c.journal_number) into v_cands from (
-      select le.journal_number, le.date, le.total_amount as amount, abs(le.date - v_date) as days, le.document_id, dd.file_name,
+  -- ودفعات قائمة للمورد نفسه بالمبلغ نفسه خلال 7 أيام (من «الموردين» أو من إيصالات)
+  v_cands := coalesce(v_cands, '[]'::jsonb) || coalesce((select jsonb_agg(c order by c.days, c.journal_number) from (
+      select 'payment' as kind, le.journal_number, le.date, le.total_amount as amount, abs(le.date - v_date) as days, le.document_id, dd.file_name,
              case when le.bank_out > 0 then 'bank' else 'cash' end as source
         from public.ledger_entries le left join public.documents dd on dd.id = le.document_id
        where le.project_id = d.project_id and le.type like '%سداد مورد%' and le.status in ('approved', 'auto')
@@ -234,12 +241,12 @@ begin
          and ((v_kind = 'payable' and le.supplier_id = v_sup)
               or (v_kind = 'list' and exists (select 1 from public.supplier_transactions t where t.project_id = d.project_id
                                                 and t.journal_number = le.journal_number and t.type = 'payment' and t.supplier_id = v_sup)))
-       limit 5) c;
-    if v_cands is not null then
-      return approval_private.err('payment_possible_duplicate', v_inv || jsonb_build_object('candidates', v_cands, 'name', v_name));
-    end if;
+       limit 5) c), '[]'::jsonb);
+  if jsonb_array_length(v_cands) > 0 and v_reason is null then
+    return approval_private.err('payment_possible_duplicate', v_inv || jsonb_build_object('candidates', v_cands, 'name', v_name, 'mode', 'new'));
   end if;
-  return plan || jsonb_build_object('pay', v_src, 'bank', nullif(inv ->> 'bankAccountId', ''), 'new_reason', v_reason);
+  return plan || jsonb_build_object('pay', v_src, 'bank', nullif(inv ->> 'bankAccountId', ''), 'new_reason', v_reason,
+    'duplicate_decision', case when jsonb_array_length(v_cands) > 0 then jsonb_build_object('kind', 'receipt_new_payment', 'reason', v_reason, 'candidates', v_cands) end);
 exception when sqlstate 'P0001' then
   if sqlerrm like 'APPROVAL:%' then
     return approval_private.err(split_part(sqlerrm, ':', 2), v_inv || jsonb_build_object('field', split_part(sqlerrm, ':', 3)));
@@ -249,7 +256,7 @@ end $function$;
 revoke all on function approval_private.plan_supplier_payment(public.documents, jsonb, jsonb, boolean) from public, anon, authenticated;
 
 -- ─── كتابة «سداد مورد» داخل معاملة الاعتماد ────────────────────────────────────────────────────────────────────────
--- الخطأ هنا (مستحق تغيّر، دفعة رُبطت للتو) يُرفع APPROVAL_WRITE فيلغي approval_approve كل كتابة الطلب ويعيد رمزه.
+-- الخطأ هنا (مستحق تغيّر، دفعة حُذفت للتو) يُرفع APPROVAL_WRITE فيلغي approval_approve كل كتابة الطلب ويعيد رمزه.
 create function approval_private.write_supplier_payment(d public.documents, plan jsonb, p_actor uuid)
  returns jsonb
  language plpgsql
@@ -266,25 +273,22 @@ begin
     else
       perform 1 from public.payable_suppliers ps where ps.id = v_sup and ps.project_id = d.project_id for update;
     end if;
-    select le.id, le.document_invoice_id, le.document_id into v_led from public.ledger_entries le
+    select le.id, le.document_id into v_led from public.ledger_entries le
      where le.project_id = d.project_id and le.journal_number = v_jn and le.type like '%سداد مورد%' limit 1 for update;
     if not found then
       raise exception 'APPROVAL_WRITE:link_not_found' using errcode = 'P0001',
         detail = approval_private.err('link_not_found', jsonb_build_object('invoice_id', v_inv, 'journal_number', v_jn))::text;
     end if;
-    if v_led.document_invoice_id is not null or v_led.document_id is not null
-       or exists (select 1 from public.supplier_transactions t where t.project_id = d.project_id and t.journal_number = v_jn
-                     and t.type = 'payment' and t.document_id is not null) then
-      raise exception 'APPROVAL_WRITE:payment_already_linked' using errcode = 'P0001',
-        detail = approval_private.err('payment_already_linked', jsonb_build_object('invoice_id', v_inv, 'journal_number', v_jn))::text;
+    -- أول مستند للدفعة يُسجَّل على قيدها وحركتها؛ المستند الإضافي (بعد تأكيد المراجع) يرتبط بها برقم القيد في فاتورته وحدها
+    if v_led.document_id is null then
+      perform set_config('tahseeb.supplier_payment', 'on', true);
+      update public.ledger_entries le set document_id = d.id, document_invoice_id = v_inv, file_url = coalesce(nullif(d.file_url, ''), le.file_url)
+       where le.project_id = d.project_id and le.journal_number = v_jn and le.type like '%سداد مورد%';
+      update public.supplier_transactions t set document_id = d.id
+       where t.project_id = d.project_id and t.journal_number = v_jn and t.type = 'payment' and t.document_id is null;
+      perform set_config('tahseeb.supplier_payment', 'off', true);
     end if;
-    perform set_config('tahseeb.supplier_payment', 'on', true);
-    update public.ledger_entries le set document_id = d.id, document_invoice_id = v_inv, file_url = coalesce(nullif(d.file_url, ''), le.file_url)
-     where le.project_id = d.project_id and le.journal_number = v_jn and le.type like '%سداد مورد%';
-    update public.supplier_transactions t set document_id = d.id
-     where t.project_id = d.project_id and t.journal_number = v_jn and t.type = 'payment';
-    perform set_config('tahseeb.supplier_payment', 'off', true);
-    return jsonb_build_object('journal_number', v_jn, 'payment_mode', 'link');
+    return jsonb_build_object('journal_number', v_jn, 'payment_mode', 'link', 'primary_document', v_led.document_id is null);
   end if;
 
   v_res := approval_private.supplier_payment_core(d.project_id, u.id, u.name, u.role, plan ->> 'supplier_kind', v_sup,
@@ -564,11 +568,18 @@ begin
         return approval_private.err('duplicate_in_batch', jsonb_build_object('invoice_id', v_id, 'number', plan ->> 'number'));
       end if;
     end if;
-    -- إيصالان في الطلب نفسه: المرجع نفسه للمورد نفسه، أو الدفعة القائمة نفسها
-    if plan ->> 'kind' = 'supplier_payment' and exists (select 1 from jsonb_array_elements(plans) p where p ->> 'kind' = 'supplier_payment'
-         and ((plan ->> 'number' is not null and p ->> 'number' = plan ->> 'number' and p ->> 'supplier_key' = plan ->> 'supplier_key')
-              or (plan ->> 'link_journal' is not null and p ->> 'link_journal' = plan ->> 'link_journal'))) then
-      return approval_private.err('duplicate_in_batch', jsonb_build_object('invoice_id', v_id, 'number', coalesce(plan ->> 'number', plan ->> 'link_journal')));
+    -- إيصالان متشابهان في الطلب نفسه (المرجع نفسه للمورد، أو الدفعة المربوطة نفسها، أو التاريخ والمبلغ وأحدهما بلا مرجع):
+    -- اشتباه كالسابق، يحتاج سببًا مكتوبًا على الثاني
+    if plan ->> 'kind' = 'supplier_payment'
+       and nullif(btrim(coalesce(plan -> 'payload' ->> case plan ->> 'mode' when 'link' then 'linkReason' else 'newPaymentReason' end, '')), '') is null
+       and exists (select 1 from jsonb_array_elements(plans) p where p ->> 'kind' = 'supplier_payment' and p ->> 'supplier_key' = plan ->> 'supplier_key'
+         and ((plan ->> 'number' is not null and p ->> 'number' = plan ->> 'number')
+              or (plan ->> 'link_journal' is not null and p ->> 'link_journal' = plan ->> 'link_journal')
+              or (p ->> 'date' = plan ->> 'date' and (p ->> 'total')::numeric = (plan ->> 'total')::numeric
+                  and (plan ->> 'number' is null or p ->> 'number' is null)))) then
+      return approval_private.err('payment_possible_duplicate', jsonb_build_object('invoice_id', v_id, 'in_batch', true, 'name', plan ->> 'label',
+        'candidates', (select jsonb_agg(jsonb_build_object('kind', 'batch', 'invoice_id', p ->> 'id', 'date', p ->> 'date', 'amount', p ->> 'total'))
+                         from jsonb_array_elements(plans) p where p ->> 'kind' = 'supplier_payment' and p ->> 'supplier_key' = plan ->> 'supplier_key')));
     end if;
     plans := plans || jsonb_build_array(plan);
   end loop;
@@ -629,7 +640,10 @@ begin
        and le.document_id is not null and ((v_jn is not null and le.journal_number = v_jn) or le.id = p_entry_id)
     union all
     select t.document_id from public.supplier_transactions t where t.project_id = a.project_id and v_jn is not null
-       and t.journal_number = v_jn and t.type = 'payment' and t.document_id is not null) x;
+       and t.journal_number = v_jn and t.type = 'payment' and t.document_id is not null
+    union all
+    select di.document_id from approval_private.document_invoices di where di.project_id = a.project_id and v_jn is not null
+       and di.journal_number = v_jn and di.kind = 'supplier_payment' and di.status = 'approved') x;
   perform 1 from public.documents dd where dd.id = any (v_docs) order by dd.id for update;
 
   -- قفل مورد القائمة (أو المورد الآجل) قبل الحذف
@@ -659,9 +673,14 @@ begin
 
   -- الإيصال المرتبط بالدفعة (دفعة سُجّلت منه أو رُبط بها) يعود «بانتظار الاعتماد»: لا يبقى مستند معتمد بلا دفعة.
   -- ما كان معتمدًا يُحفظ في history، وإعادة طلب الاعتماد القديم تعيد payment_deleted بدل نتيجته.
-  for rd in select distinct le.document_invoice_id as inv_id, le.document_id from public.ledger_entries le
-            where le.project_id = a.project_id and le.type like '%سداد مورد%' and le.document_invoice_id is not null
-              and ((v_jn is not null and le.journal_number = v_jn) or le.id = p_entry_id) loop
+  for rd in select distinct x.inv_id, x.document_id from (
+              select le.document_invoice_id as inv_id, le.document_id from public.ledger_entries le
+               where le.project_id = a.project_id and le.type like '%سداد مورد%' and le.document_invoice_id is not null
+                 and ((v_jn is not null and le.journal_number = v_jn) or le.id = p_entry_id)
+              union all
+              select di.id, di.document_id from approval_private.document_invoices di
+               where di.project_id = a.project_id and v_jn is not null and di.journal_number = v_jn and di.kind = 'supplier_payment'
+                 and di.status = 'approved') x loop
     update approval_private.document_invoices x set
       status = 'pending', journal_number = null, decided_by = null, decided_at = null, request_id = null,
       approved_payload = null, review_changes = null,
@@ -724,7 +743,10 @@ begin
 
   select coalesce(jsonb_agg(p order by p.date desc, p.journal_number desc), '[]') into v_pay from (
     select le.journal_number, le.date, le.total_amount as amount, case when le.bank_out > 0 then 'bank' else 'cash' end as source,
-           le.bank_account_id, le.document_id, dd.file_name, dd.status as document_status, le.created_by_name
+           le.bank_account_id, le.document_id, dd.file_name, dd.status as document_status, le.created_by_name,
+           coalesce((select jsonb_agg(jsonb_build_object('document_id', x.document_id, 'file_name', xd.file_name) order by x.decided_at)
+              from approval_private.document_invoices x join public.documents xd on xd.id = x.document_id
+             where x.project_id = a.project_id and x.status = 'approved' and x.kind = 'supplier_payment' and x.journal_number = le.journal_number), '[]'::jsonb) as documents
       from public.ledger_entries le left join public.documents dd on dd.id = le.document_id
      where le.project_id = a.project_id and le.type like '%سداد مورد%' and le.status in ('approved', 'auto')
        and ((p_kind = 'payable' and le.supplier_id = p_supplier)

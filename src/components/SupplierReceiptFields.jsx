@@ -3,7 +3,7 @@ import { Link2, Info, ReceiptText } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Button, DateInput, Field, Input, Money, Note, Segment, Select, Status, Textarea } from '../ui/components.jsx'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup.js'
-import { balanceAfter, optionKey, possibleDuplicates, rankPayments, receiptHistoryNote, suggestSupplier, supplierOptions } from '../lib/supplierReceipts.js'
+import { balanceAfter, optionKey, paymentDocuments, possibleDuplicates, rankPayments, receiptHistoryNote, suggestSupplier, supplierOptions } from '../lib/supplierReceipts.js'
 import { money } from '../lib/approvalV2.js'
 
 const MODES = [{ value: 'new', label: 'تسجيل دفعة جديدة' }, { value: 'link', label: 'ربط بدفعة مسجلة' }]
@@ -48,7 +48,8 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
   const after = ctx ? balanceAfter(ctx.balance, invoice) : null
   const reopened = receiptHistoryNote(history)
   const k = s => `${s}-${index}`
-  const pick = o => onPatch({ supplierKind: o.kind, supplierId: o.id, linkJournal: null, newPaymentReason: '' })
+  const pick = o => onPatch({ supplierKind: o.kind, supplierId: o.id, linkJournal: null, newPaymentReason: '', linkReason: '' })
+  const linkedTo = ranked.find(p => p.journal_number === invoice.linkJournal) || null
 
   return (
     <div className="rp-receipt" data-k={k('receipt')}>
@@ -107,10 +108,10 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
                 {ranked.map(p => (
                   <li key={p.journal_number} data-journal={p.journal_number}>
                     <label className="ts-check">
-                      <input type="radio" name={k('receipt-link')} disabled={readOnly || p.linked} checked={invoice.linkJournal === p.journal_number}
+                      <input type="radio" name={k('receipt-link')} disabled={readOnly} checked={invoice.linkJournal === p.journal_number}
                         onChange={() => onPatch({ linkJournal: p.journal_number })} />
                       <span className="ts-num">{p.journal_number}</span> · {p.date} · {p.source === 'bank' ? 'البنك' : 'الصندوق'}
-                      {p.linked ? <Status tone="neutral">مرفق بها إيصال</Status> : p.likely ? <Status tone="warning">المبلغ نفسه وتاريخ قريب</Status> : null}
+                      {p.linked ? <Status tone="neutral">مرفق بها: {paymentDocuments(p).map(x => x.file_name).join('، ')}</Status> : p.likely ? <Status tone="warning">المبلغ نفسه وتاريخ قريب</Status> : null}
                     </label>
                     <Money value={Number(p.amount)} />
                   </li>
@@ -118,6 +119,12 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
               </ul>
             )}
           <p className="ts-field-hint">التشابه في المبلغ والتاريخ اقتراح لا يثبت أنها الدفعة نفسها: اختر الدفعة بنفسك. الربط لا يسجل أي مبلغ جديد.</p>
+          {linkedTo?.linked && (
+            <Field label="للدفعة مستند مرفق: إن كان هذا مستندًا آخر لها (مثل سند قبض المورد مع إشعار التحويل)، اكتب ذلك" span>
+              <Textarea rows={2} value={invoice.linkReason || ''} disabled={readOnly} data-k={k('receipt-link-reason')} onChange={e => onPatch({ linkReason: e.target.value })}
+                placeholder="مثال: سند قبض المورد لهذه الحوالة؛ إشعار التحويل مرفق سابقًا." />
+            </Field>
+          )}
         </div>
       )}
       {chosen && ctx && (
@@ -130,8 +137,8 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
       {dups.length > 0 && (
         <div data-k={k('receipt-duplicates')}><Note tone="warning" icon={Info} title="قد تكون هذه الدفعة مسجلة سابقًا">
           <ul>{dups.map(p => (
-            <li key={p.journal_number}><span className="ts-num">{p.journal_number}</span> بتاريخ {p.date} بمبلغ {money(p.amount)}{p.linked ? ' — مرفق بها إيصال آخر' : ''}
-              {!p.linked && !readOnly && <> — <Button size="sm" variant="quiet" icon={Link2} data-k={`${k('receipt-link-to')}-${p.journal_number}`}
+            <li key={p.journal_number}><span className="ts-num">{p.journal_number}</span> بتاريخ {p.date} بمبلغ {money(p.amount)}{p.linked ? ` — مرفق بها «${paymentDocuments(p).map(x => x.file_name).join('»، «')}»` : ''}
+              {!readOnly && <> — <Button size="sm" variant="quiet" icon={Link2} data-k={`${k('receipt-link-to')}-${p.journal_number}`}
                 onClick={() => onPatch({ paymentMode: 'link', linkJournal: p.journal_number })}>اربط الإيصال بها</Button></>}
             </li>))}</ul>
           <Field label="إن كانت دفعة أخرى فعلًا، اكتب السبب" span>
