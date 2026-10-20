@@ -516,7 +516,7 @@ AS $function$
 declare
   a record; d public.documents; rq record; di record; inv jsonb; plan jsonb; plans jsonb := '[]'; journals jsonb := '[]'; res jsonb;
   fp text := md5(jsonb_build_array(p_document_id, p_invoices, coalesce(p_decisions, '{}'), coalesce(p_document, '{}'))::text);
-  v_id uuid; v_seen text[] := '{}'; v_num_keys text[] := '{}'; jn text; v_first_jn text; v_pending int; v_detail text;
+  v_id uuid; v_seen text[] := '{}'; v_num_keys text[] := '{}'; jn text; v_first_jn text; v_pending int; v_detail text; v_batch jsonb; v_reason text;
 begin
   select * into a from approval_private.actor();
   if a.id is null then return approval_private.err('no_session'); end if;
@@ -569,17 +569,26 @@ begin
       end if;
     end if;
     -- إيصالان متشابهان في الطلب نفسه (المرجع نفسه للمورد، أو الدفعة المربوطة نفسها، أو التاريخ والمبلغ وأحدهما بلا مرجع):
-    -- اشتباه كالسابق، يحتاج سببًا مكتوبًا على الثاني
-    if plan ->> 'kind' = 'supplier_payment'
-       and nullif(btrim(coalesce(plan -> 'payload' ->> case plan ->> 'mode' when 'link' then 'linkReason' else 'newPaymentReason' end, '')), '') is null
-       and exists (select 1 from jsonb_array_elements(plans) p where p ->> 'kind' = 'supplier_payment' and p ->> 'supplier_key' = plan ->> 'supplier_key'
+    -- اشتباه كالسابق: بلا سبب على الثاني يتوقف ويعرض الأول؛ وبسبب يُحفظ القرار بالسبب والمرشحين (والمنفّذ والوقت في write_invoice)
+    if plan ->> 'kind' = 'supplier_payment' then
+      select jsonb_agg(jsonb_build_object('kind', 'batch', 'invoice_id', p ->> 'id', 'date', p ->> 'date', 'amount', (p ->> 'total')::numeric,
+               'reference', p ->> 'number_raw', 'same_reference', plan ->> 'number' is not null and p ->> 'number' = plan ->> 'number',
+               'link_journal', p ->> 'link_journal'))
+        into v_batch from jsonb_array_elements(plans) p
+       where p ->> 'kind' = 'supplier_payment' and p ->> 'supplier_key' = plan ->> 'supplier_key'
          and ((plan ->> 'number' is not null and p ->> 'number' = plan ->> 'number')
               or (plan ->> 'link_journal' is not null and p ->> 'link_journal' = plan ->> 'link_journal')
               or (p ->> 'date' = plan ->> 'date' and (p ->> 'total')::numeric = (plan ->> 'total')::numeric
-                  and (plan ->> 'number' is null or p ->> 'number' is null)))) then
-      return approval_private.err('payment_possible_duplicate', jsonb_build_object('invoice_id', v_id, 'in_batch', true, 'name', plan ->> 'label',
-        'candidates', (select jsonb_agg(jsonb_build_object('kind', 'batch', 'invoice_id', p ->> 'id', 'date', p ->> 'date', 'amount', p ->> 'total'))
-                         from jsonb_array_elements(plans) p where p ->> 'kind' = 'supplier_payment' and p ->> 'supplier_key' = plan ->> 'supplier_key')));
+                  and (plan ->> 'number' is null or p ->> 'number' is null)));
+      if v_batch is not null then
+        v_reason := nullif(btrim(coalesce(plan -> 'payload' ->> case plan ->> 'mode' when 'link' then 'linkReason' else 'newPaymentReason' end, '')), '');
+        if v_reason is null then
+          return approval_private.err('payment_possible_duplicate', jsonb_build_object('invoice_id', v_id, 'in_batch', true, 'name', plan ->> 'label',
+            'mode', plan ->> 'mode', 'candidates', v_batch));
+        end if;
+        plan := jsonb_set(plan, '{duplicate_decision}', coalesce(nullif(plan -> 'duplicate_decision', 'null'::jsonb),
+          jsonb_build_object('kind', 'receipt_batch', 'reason', v_reason, 'candidates', '[]'::jsonb)) || jsonb_build_object('batch_candidates', v_batch));
+      end if;
     end if;
     plans := plans || jsonb_build_array(plan);
   end loop;
@@ -619,7 +628,7 @@ CREATE OR REPLACE FUNCTION public.supplier_payment_delete(p_journal_number text,
  SET search_path TO ''
 AS $function$
 declare a record; v_jn text := nullif(btrim(coalesce(p_journal_number, '')), ''); v_sup uuid; v_led int; v_tx int;
-        v_docs uuid[]; rd record; v_reopened int := 0;
+        v_docs uuid[]; rd record; v_reopened int := 0; v_ap jsonb; v_restored jsonb;
 begin
   select * into a from approval_private.actor();
   if a.id is null then return approval_private.err('no_session'); end if;
@@ -681,6 +690,8 @@ begin
               select di.id, di.document_id from approval_private.document_invoices di
                where di.project_id = a.project_id and v_jn is not null and di.journal_number = v_jn and di.kind = 'supplier_payment'
                  and di.status = 'approved') x loop
+    select x.approved_payload into v_ap from approval_private.document_invoices x
+     where x.id = rd.inv_id and x.project_id = a.project_id and x.status = 'approved';
     update approval_private.document_invoices x set
       status = 'pending', journal_number = null, decided_by = null, decided_at = null, request_id = null,
       approved_payload = null, review_changes = null,
@@ -695,7 +706,15 @@ begin
        where q.project_id = a.project_id and q.document_id = rd.document_id and q.action = 'approve' and coalesce((q.result ->> 'ok')::boolean, false)
          and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(q.result -> 'journals') = 'array' then q.result -> 'journals' else '[]' end) j
                       where j ->> 'invoice_id' = rd.inv_id::text);
+      -- الإيصال كما أكده المراجع (النوع والمورد والمبلغ والتاريخ والمسار)، بلا نتيجة الكتابة ولا الدفعة المحذوفة؛ فاعتماده من جديد
+      -- لا يرجع إلى قراءة البرنامج (مصروفًا مثلًا)
+      v_restored := coalesce(v_ap, '{}'::jsonb) - 'journal_number' - 'payment_mode' - 'payment_result' - 'primary_document' - 'review_changes'
+                    - 'linkJournal' - 'linkReason' || jsonb_build_object('_id', rd.inv_id::text);
       update public.documents dd set
+        analysis_result = case when v_ap is not null and jsonb_typeof(dd.analysis_result -> 'invoices') = 'array'
+          then jsonb_set(dd.analysis_result, '{invoices}', (select jsonb_agg(case when e ->> '_id' = rd.inv_id::text then v_restored else e end order by o)
+                 from jsonb_array_elements(dd.analysis_result -> 'invoices') with ordinality t(e, o)))
+          else dd.analysis_result end,
         status = case when dd.status = 'approved' then 'analyzed' else dd.status end,
         approved_by = null, approved_at = null,
         journal_number = (select min(x.journal_number) from approval_private.document_invoices x where x.document_id = dd.id and x.status = 'approved'),
@@ -814,6 +833,7 @@ begin
   return jsonb_build_object('ok', true, 'mode', v_mode, 'version', d.version, 'status', d.status,
     'analysis_result', d.analysis_result,
     'invoices', coalesce((select jsonb_agg(jsonb_build_object('id', x.id, 'idx', x.idx, 'status', x.status,
-                 'journal_number', x.journal_number, 'excluded_reason', x.excluded_reason, 'history', x.history) order by x.idx)
+                 'journal_number', x.journal_number, 'excluded_reason', x.excluded_reason, 'history', x.history,
+                 'original_reading', case when jsonb_array_length(x.history) > 0 then x.original_reading end) order by x.idx)
                from approval_private.document_invoices x where x.document_id = d.id), '[]'));
 end $function$;

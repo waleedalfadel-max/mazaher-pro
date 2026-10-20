@@ -3,8 +3,8 @@ import { Link2, Info, ReceiptText } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Button, DateInput, Field, Input, Money, Note, Segment, Select, Status, Textarea } from '../ui/components.jsx'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup.js'
-import { balanceAfter, optionKey, paymentDocuments, possibleDuplicates, rankPayments, receiptHistoryNote, suggestSupplier, supplierOptions } from '../lib/supplierReceipts.js'
-import { money } from '../lib/approvalV2.js'
+import { balanceAfter, optionKey, paymentDocuments, possibleDuplicates, rankPayments, suggestSupplier, supplierOptions } from '../lib/supplierReceipts.js'
+import { dupCandidate, money } from '../lib/approvalV2.js'
 
 const MODES = [{ value: 'new', label: 'تسجيل دفعة جديدة' }, { value: 'link', label: 'ربط بدفعة مسجلة' }]
 const SOURCES = [{ value: 'cash', label: 'الصندوق' }, { value: 'bank', label: 'البنك / تحويل' }]
@@ -14,7 +14,7 @@ const KIND_LABEL = { list: 'من القائمة', payable: 'آجل باسم ال
  * حقول إيصال «سداد مورد» في مراجعة المستند (فاتورة مفردة أو داخل صورة متعددة). المورد يختاره المراجع؛ القراءة تقترح.
  * الرصيد والدفعات من supplier_payment_context (قراءة فقط). الاعتماد نفسه من شاشة المستندات بالمسار المعتاد.
  */
-export default function SupplierReceiptFields({ invoice, index = 0, documentId, suppliers, payableSuppliers, bankAccounts = [], onPatch, readOnly, history, onContext }) {
+export default function SupplierReceiptFields({ invoice, index = 0, documentId, suppliers, payableSuppliers, bankAccounts = [], onPatch, readOnly, onContext, serverDuplicate }) {
   const options = useMemo(() => supplierOptions(suppliers, payableSuppliers), [suppliers, payableSuppliers])
   const key = optionKey(invoice)
   const chosen = options.find(o => o.key === key) || null
@@ -46,14 +46,12 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
   const ranked = ctx ? rankPayments(ctx.payments, invoice) : []
   const dups = ctx && mode === 'new' ? possibleDuplicates(ctx.payments, invoice) : []
   const after = ctx ? balanceAfter(ctx.balance, invoice) : null
-  const reopened = receiptHistoryNote(history)
   const k = s => `${s}-${index}`
   const pick = o => onPatch({ supplierKind: o.kind, supplierId: o.id, linkJournal: null, newPaymentReason: '', linkReason: '' })
   const linkedTo = ranked.find(p => p.journal_number === invoice.linkJournal) || null
 
   return (
     <div className="rp-receipt" data-k={k('receipt')}>
-      {reopened && <div data-k={k('receipt-reopened')}><Note tone="warning" title="عاد هذا الإيصال للمراجعة">{reopened}</Note></div>}
       {invoice.paymentEvidence && <p className="ts-field-hint" data-k={k('receipt-evidence')}><ReceiptText className="ts-icon--sm" aria-hidden="true" /> ما دلّ على السداد في الإيصال: «{invoice.paymentEvidence}». تأكد أنه سداد لمورد، لا مصروف أو تحويل داخلي.</p>}
       <div className="ts-form-grid">
         <Field label="المستفيد كما قُرئ" hint="اسم المستلم في الإيصال؛ للمطابقة فقط.">
@@ -145,6 +143,18 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
             <Textarea rows={2} value={invoice.newPaymentReason || ''} disabled={readOnly} data-k={k('receipt-new-reason')} onChange={e => onPatch({ newPaymentReason: e.target.value })}
               placeholder="مثال: دفعتان لفاتورتين مختلفتين في الأسبوع نفسه." />
           </Field>
+        </Note></div>
+      )}
+      {serverDuplicate && (
+        <div data-k={k('receipt-server-dup')}><Note tone="warning" icon={Info} title={serverDuplicate.in_batch ? 'إيصال مشابه في الصورة نفسها' : 'وجد الخادم عمليات مشابهة'}>
+          <ul>{(serverDuplicate.candidates || []).map((c, i) => <li key={i}>{c.kind === 'batch' ? `فاتورة أخرى في هذه الصورة بتاريخ ${c.date} بمبلغ ${money(c.amount)}${c.same_reference ? ' وبالمرجع نفسه' : ''}` : dupCandidate(c)}</li>)}</ul>
+          التشابه لا يثبت التكرار. {mode === 'link' ? 'إن كان هذا مستندًا آخر للدفعة نفسها فاكتب ذلك سببًا.' : 'إن كانت دفعة مختلفة فعلًا فاكتب السبب، أو اربط الإيصال بالدفعة إن كانت هي.'} وإن كانت نسخة مكررة فارفضها.
+          {!(mode === 'new' && dups.length > 0) && !(mode === 'link' && linkedTo?.linked) && (
+            <Field label={mode === 'link' ? 'سبب إرفاق هذا المستند بالدفعة' : 'سبب أنها دفعة أخرى'} span>
+              <Textarea rows={2} disabled={readOnly} data-k={k('receipt-server-reason')} value={(mode === 'link' ? invoice.linkReason : invoice.newPaymentReason) || ''}
+                onChange={e => onPatch(mode === 'link' ? { linkReason: e.target.value } : { newPaymentReason: e.target.value })} />
+            </Field>
+          )}
         </Note></div>
       )}
       {ctx?.pending_receipts?.length > 0 && (

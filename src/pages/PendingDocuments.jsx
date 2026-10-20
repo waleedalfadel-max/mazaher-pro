@@ -17,7 +17,7 @@ import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggesti
 import { setUnsaved } from '../lib/unsavedChanges'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
-import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, receiptBlockReason, withSuggestedSuppliers, supplierOptions } from '../lib/supplierReceipts.js'
+import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, receiptBlockReason, receiptHistoryNote, withSuggestedSuppliers, supplierOptions } from '../lib/supplierReceipts.js'
 import { withManualInvoice } from '../lib/manualReview.js'
 import { operatesBusiness } from '../lib/adminAccess.js'
 import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck } from '../lib/salesReport.js'
@@ -816,7 +816,8 @@ export default function PendingDocuments() {
         if (!c.ok) { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'sales_unexplained', reason: c.reasons[0], invoice_id: inv._id } }); return }
       }
     }
-    const originals = Object.fromEntries((doc.analysis_result?.invoices || []).map(x => [x._id, x]))
+    // الإيصال المعاد فتحه (بعد حذف دفعته) يحمل بيانات المراجع السابقة؛ القراءة الأصلية من الخادم (original_reading)
+    const originals = Object.fromEntries((doc.analysis_result?.invoices || []).map(x => [x._id, doc._v2?.invoices?.find(i => i.id === x._id)?.original_reading || x]))
     const decisions = { suppliers: {}, duplicates: { ...(doc._dupDecisions || {}) } }
     // الصورة متعددة الفواتير: مورد كل فاتورة وحدها (invoiceSupplierContext)، والفاتورة المفردة: اختيار المستند كما كان
     const multi = list.length > 1
@@ -1764,9 +1765,12 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
     return !!supplierBlockReason(x, ctx, x.paySource === 'payable' && ctx.name ? matchSupplier(ctx.name, payableSuppliers || []) : null)
   })())
   // إيصال سداد مورد (2026-10-20): مورد ومبلغ وتاريخ، ومصدر دفعة جديدة أو دفعة مربوطة، قبل الاعتماد
+  const serverDup = id => (doc._v2Error?.code === 'payment_possible_duplicate' && (!doc._v2Error.invoice_id || doc._v2Error.invoice_id === id) ? doc._v2Error : null)
   const receiptBlocked = isMultiInvoice
-    ? rawRes.invoices.find(x => (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && receiptBlockReason(x, receiptCtx[x._id])) ? 'في الصورة إيصال سداد غير مكتمل: افتحه وأكمل المورد وطريقة الاعتماد.' : null
-    : receiptBlockReason(res, receiptCtx[res?._id])
+    ? rawRes.invoices.find(x => (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && receiptBlockReason(x, receiptCtx[x._id], serverDup(x._id))) ? 'في الصورة إيصال سداد غير مكتمل أو مشتبه بتكراره: افتحه وأكمل المورد وطريقة الاعتماد أو سبب الاشتباه.' : null
+    : receiptBlockReason(res, receiptCtx[res?._id], serverDup(res?._id))
+  // سبب عودة المستند للمراجعة (حُذفت دفعته بعد اعتماده)، ظاهر مهما كان النوع المعروض
+  const reopenedNote = !isMultiInvoice ? receiptHistoryNote(invStatus(res?._id)?.history) : null
   // تقرير المبيعات (src/lib/salesReport.js): وسيلة دفع غير معروفة أو فرق مع الإجمالي المطبوع أو مرتجع أكبر من قناته يمنع الاعتماد
   const salesCheck = isSales ? salesReportCheck(res) : null
   const salesBlocked = (salesCheck && !salesCheck.ok) || (isMultiInvoice && rawRes.invoices.some(x => x.type === 'sales'
@@ -1831,6 +1835,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
       )}
       {doc._error && <Note tone="error" icon={CircleAlert} title="تعذّر الإجراء">{doc._error}</Note>}
       {doc._notice && <Note tone="success" icon={Check} title={doc._notice} />}
+      {reopenedNote && <div data-k="receipt-reopened"><Note tone="warning" icon={CircleAlert} title="عاد هذا المستند للمراجعة">{reopenedNote}</Note></div>}
       <V2Error err={doc._v2Error} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />
       {doc._v2Error?.code === 'sales_report_exists' && <CorrectionAccounts linked={doc._v2Error.linked} invoice={res} branch={doc.branch} setup={setup} onEdit={onEditCorrection || onEdit} />}
       {doc._validationError && (
@@ -1891,6 +1896,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
                 onApprove={readOnly ? null : () => onApproveInvoice(idx)}
                 onManualApprove={canManual && !isReceipt(inv) ? () => setManualIndex(idx) : null}
                 documentId={doc.id} history={invStatus(inv._id)?.history} receiptContext={receiptCtx[inv._id]} onReceiptContext={onReceiptContext(inv._id)}
+                serverDuplicate={serverDup(inv._id)}
                 onReject={readOnly ? null : () => onRejectInvoice(idx)}
                 approving={busy}
                 blocked={isV2 ? (decisionPending && (!doc._v2Error?.invoice_id || doc._v2Error.invoice_id === inv._id) ? decisionPending
@@ -1911,7 +1917,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
               onChange={v => { if (readOnly) return; const next = typeChange(res, v); if (next === undefined) onEdit('type', v); else if (next) onReplaceInvoice(null, next) }} />
             {isReceipt(res) ? (
               <SupplierReceiptFields invoice={res} documentId={doc.id} suppliers={suppliers} payableSuppliers={payableSuppliers || []} readOnly={readOnly}
-                bankAccounts={setup?.bankAccounts || []} history={invStatus(res._id)?.history} onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })}
+                bankAccounts={setup?.bankAccounts || []} serverDuplicate={serverDup(res._id)} onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })}
                 onContext={onReceiptContext(res._id)} />
             ) : <>
             <div className="ts-form-grid">
@@ -2038,7 +2044,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
 }
 
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision, suppliers = [], payableSuppliers = [], documentId, history, receiptContext, onReceiptContext }) {
+function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision, suppliers = [], payableSuppliers = [], documentId, history, receiptContext, onReceiptContext, serverDuplicate }) {
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -2067,7 +2073,8 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   const payableMatch = isExpense && invoice.paySource === 'payable' && supCtx.name ? matchSupplier(supCtx.name, payableSuppliers) : null
   const supplierBlocked = supplierBlockReason(invoice, supCtx, payableMatch)
   const receipt = isReceipt(invoice)
-  const why = blocked || supplierBlocked || receiptBlockReason(invoice, receiptContext)
+  const why = blocked || supplierBlocked || receiptBlockReason(invoice, receiptContext, serverDuplicate)
+  const reopenedNote = receiptHistoryNote(history)
   const payOptions = isExpense
     ? [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : [])]
     : PAY_OPTIONS.filter(o => o.value !== 'payable')
@@ -2081,6 +2088,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
         <Money value={totalDisp} />
       </summary>
       <div className="rp-subinv-body">
+        {reopenedNote && <div data-k={`receipt-reopened-${index}`}><Note tone="warning" icon={CircleAlert} title="عادت هذه الفاتورة للمراجعة">{reopenedNote}</Note></div>}
         {v2 && (
           <div className="ts-form-grid">
             <Field label="نوع الفاتورة">
@@ -2092,7 +2100,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
         )}
         {receipt ? (
           <SupplierReceiptFields invoice={invoice} index={index} documentId={documentId} suppliers={suppliers} payableSuppliers={payableSuppliers}
-            bankAccounts={setup?.bankAccounts || []} readOnly={readOnly} history={history} onPatch={patch => onReplace?.({ ...invoice, ...patch })} onContext={onReceiptContext} />
+            bankAccounts={setup?.bankAccounts || []} readOnly={readOnly} serverDuplicate={serverDuplicate} onPatch={patch => onReplace?.({ ...invoice, ...patch })} onContext={onReceiptContext} />
         ) : <>
         <div className="ts-form-grid">
           <Field label="الوصف" span>

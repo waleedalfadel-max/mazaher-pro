@@ -83,8 +83,11 @@ export function possibleDuplicates(payments = [], inv) {
   return rankPayments(payments, inv).filter(p => p.sameAmount && p.days != null && p.days <= DUPLICATE_WINDOW_DAYS)
 }
 
-/** سبب منع اعتماد الإيصال قبل إرساله، أو null. ctx: { payments } من supplier_payment_context إن حُمّل. */
-export function receiptBlockReason(inv, ctx = null) {
+/**
+ * سبب منع اعتماد الإيصال قبل إرساله، أو null. ctx: { payments } من supplier_payment_context إن حُمّل.
+ * serverDup: رد الخادم payment_possible_duplicate لهذه الفاتورة — يحتاج سبب المسار ولو لم يرَ فحص الشاشة المحدود التشابه.
+ */
+export function receiptBlockReason(inv, ctx = null, serverDup = null) {
   if (!isReceipt(inv)) return null
   if (!inv.supplierKind || !inv.supplierId) return 'اختر المورد من موردي المنشأة لهذا الإيصال.'
   const amt = toHalalas(inv.amount)
@@ -98,12 +101,14 @@ export function receiptBlockReason(inv, ctx = null) {
     if (p && paymentDocuments(p).length && !String(inv.linkReason || '').trim()) {
       return `الدفعة ${p.journal_number} مرفق بها مستند («${paymentDocuments(p).map(x => x.file_name).join('»، «')}»). إن كان هذا مستندًا آخر للدفعة نفسها فاكتب ذلك سببًا.`
     }
+    if (serverDup && !String(inv.linkReason || '').trim()) return 'وجد الخادم مستندًا أو إيصالًا مشابهًا (أدناه): إن كان هذا مستندًا آخر للدفعة نفسها فاكتب ذلك سببًا.'
     return null
   }
   if (!['cash', 'bank'].includes(inv.paySource)) return 'اختر مصدر الدفع: الصندوق أو البنك.'
   if (ctx?.payments && !String(inv.newPaymentReason || '').trim() && possibleDuplicates(ctx.payments, inv).length) {
     return 'للمورد دفعة مسجلة بالمبلغ نفسه قريبة التاريخ: اربط الإيصال بها إن كانت هي، أو اكتب سبب أنها دفعة أخرى.'
   }
+  if (serverDup && !String(inv.newPaymentReason || '').trim()) return 'وجد الخادم عملية مشابهة (أدناه): اكتب سبب أنها دفعة أخرى، أو اربط الإيصال بالدفعة.'
   return null
 }
 

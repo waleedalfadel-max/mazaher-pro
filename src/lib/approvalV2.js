@@ -200,7 +200,7 @@ export function salesCorrectionChanges(previous, corrected) {
 }
 
 /** وصف عملية سابقة مشابهة لإيصال سداد: إيصال معتمد، أو دفعة قائمة، أو مستند مرفق بالدفعة، أو إيصال آخر في الطلب نفسه. */
-const dupCandidate = c => c.kind === 'batch' ? 'إيصال مشابه في الصورة نفسها'
+export const dupCandidate = c => c.kind === 'batch' ? 'إيصال مشابه في الصورة نفسها'
   : `${c.kind === 'receipt' ? (c.same_reference ? 'إيصال معتمد بالمرجع نفسه' : 'إيصال معتمد بالتاريخ والمبلغ نفسيهما') : c.kind === 'payment_document' ? 'مستند مرفق بالدفعة' : 'دفعة مسجلة'}${c.journal_number ? ` ${c.journal_number}` : ''}${c.date ? ` بتاريخ ${c.date}` : ''}${c.amount != null ? ` بمبلغ ${money(c.amount)}` : ''}${c.file_name ? ` («${c.file_name}»)` : ''}`
 
 /** رسالة عربية لرمز الخادم. linked: بيانات المستند المرتبط إن وُجد. */

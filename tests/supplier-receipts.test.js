@@ -96,3 +96,13 @@ test('الرصيد بعد السداد للعرض، وسبب عودة الإيص
   assert.match(receiptHistoryNote([{ event: 'payment_deleted', journal_number: 'QD-1', by_name: 'محاسبة', at: '2026-10-20T10:00:00Z' }]), /QD-1.*محاسبة.*2026-10-20/)
   assert.equal(receiptHistoryNote([]), null)
 })
+
+test('اشتباه من رد الخادم (فحص الشاشة لا يراه: المرجع نفسه بمبلغ وتاريخ آخرين): يُطلب سبب المسار، ويكفي كتابته', () => {
+  const dup = { code: 'payment_possible_duplicate', invoice_id: 'r1', candidates: [{ kind: 'receipt', same_reference: true, journal_number: 'J9', date: '2026-08-01', amount: 30 }] }
+  const ctx = { payments: [{ journal_number: 'J9', amount: 30, date: '2026-08-01' }] }   // مبلغ آخر وتاريخ بعيد: فحص الشاشة لا يرى تشابهًا
+  assert.equal(receiptBlockReason(receipt({ reference: 'T-1' }), ctx), null)
+  assert.match(receiptBlockReason(receipt({ reference: 'T-1' }), ctx, dup), /وجد الخادم عملية مشابهة/)
+  assert.equal(receiptBlockReason(receipt({ reference: 'T-1', newPaymentReason: 'دفعة لفاتورة أخرى بمرجع الحوالة نفسه' }), ctx, dup), null)
+  assert.match(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J1' }), { payments: [{ journal_number: 'J1', amount: 120, date: '2026-09-26' }] }, dup), /مستندًا آخر للدفعة نفسها/)
+  assert.equal(receiptBlockReason(receipt({ paymentMode: 'link', linkJournal: 'J1', linkReason: 'سند قبض' }), { payments: [{ journal_number: 'J1', amount: 120, date: '2026-09-26' }] }, dup), null)
+})
