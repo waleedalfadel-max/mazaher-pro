@@ -10,6 +10,7 @@
 --            والدفعة لا تُربط بأكثر من إيصال.
 -- الدفعة والربط وحالة الفاتورة والمستند في معاملة approval_approve نفسها: كلها أو لا شيء، وإعادة الطلب نفسه لا تكرر شيئًا.
 -- دفعة جديدة بمبلغ دفعة قائمة للمورد نفسه خلال 7 أيام تتوقف حتى يختار المراجع الربط أو يكتب سبب أنها دفعة أخرى.
+-- الإيصال نفسه لا يُعتمد مرتين بأي مسار ولا بسبب: مرجعه مرة واحدة للمورد، وبلا مرجع يُطابَق بالمورد والتاريخ والمبلغ.
 -- حذف دفعة مرتبطة بإيصال (supplier_payment_delete) يعيد فاتورة الإيصال «بانتظار الاعتماد» ومستندها إلى «مستندات جديدة»، مع سجل
 -- في history، فلا يبقى مستند «معتمد» بلا دفعة.
 -- supplier_payment_context: قراءة لشاشة المراجعة و«الموردين» (الرصيد، الدفعات وإيصالاتها، الإيصالات المنتظرة للمورد).
@@ -165,6 +166,15 @@ begin
        and x.invoice_number_norm = v_ref limit 1;
     if found then return approval_private.err('duplicate_receipt', v_inv || jsonb_build_object('linked', to_jsonb(v_link))); end if;
   end if;
+  -- الإيصال نفسه لا يُعتمد مرتين، ولا يتجاوز ذلك سببٌ مكتوب: إيصال معتمد للمورد نفسه بالتاريخ والمبلغ نفسيهما، ومرجعه نفسه أو
+  -- أحدهما بلا مرجع، هو هذا الإيصال (صورة مكررة). سبب «دفعة أخرى» يخص دفعة قائمة بلا هذا التطابق؛ دفعتان مختلفتان فعلًا في اليوم
+  -- نفسه وبالمبلغ نفسه تتميزان بمرجع كل منهما المطبوع.
+  select x.document_id, x.journal_number, x.invoice_date, x.total, dd.file_name into v_link
+    from approval_private.document_invoices x join public.documents dd on dd.id = x.document_id
+   where x.project_id = d.project_id and x.status = 'approved' and x.kind = 'supplier_payment' and x.supplier_key = v_key
+     and x.invoice_date = v_date and x.total = v_amt and (v_ref is null or x.invoice_number_norm is null or x.invoice_number_norm = v_ref)
+   limit 1;
+  if found then return approval_private.err('receipt_already_approved', v_inv || jsonb_build_object('linked', to_jsonb(v_link), 'name', v_name)); end if;
   v_mode := coalesce(nullif(inv ->> 'paymentMode', ''), 'new');
   if v_mode not in ('new', 'link') then return approval_private.err('payment_mode_required', v_inv); end if;
   plan := jsonb_build_object('ok', true, 'id', v_id, 'kind', 'supplier_payment', 'date', v_date, 'total', v_amt,
