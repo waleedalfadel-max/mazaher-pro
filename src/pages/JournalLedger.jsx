@@ -28,7 +28,7 @@ const QUICK_PERIODS = [
   { value: 'year',      label: 'السنة الحالية' },
   { value: 'custom',    label: 'فترة أخرى' },
 ]
-const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url'
+const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url,document_id'
 const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير', superadmin: 'إدارة تحسيب' }
 
 function getRange(type) {
@@ -367,6 +367,9 @@ export default function JournalLedger() {
             {debitOf(deleting) > 0 && <div><dt>مدين</dt><dd className="ts-num">{fmt(debitOf(deleting))}</dd></div>}
             {creditOf(deleting) > 0 && <div><dt>دائن</dt><dd className="ts-num">{fmt(creditOf(deleting))}</dd></div>}
           </dl>
+        )}
+        {deleting && isSupplierPaymentType(deleting.type) && deleting.document_id && (
+          <p className="ts-field-hint" data-k="delete-receipt-note">هذه الدفعة مرتبطة بإيصال في «المستندات». حذفها يعيد الإيصال إلى «مستندات جديدة» بانتظار اعتماده من جديد أو استبعاده، فلا يبقى معتمدًا بلا دفعة.</p>
         )}
         {deleting && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
       </Dialog>

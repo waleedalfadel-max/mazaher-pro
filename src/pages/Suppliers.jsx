@@ -7,6 +7,7 @@ import { fetchEveryRow } from '../lib/fetchAll.js'
 import { Button, DateInput, Dialog, EmptyState, Field, Input, Note, Panel, Select, Status } from '../ui/components.jsx'
 import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup'
+import { possibleDuplicates } from '../lib/supplierReceipts.js'
 
 // تحديث 20261010130000: الدفعة بدالة خادم واحدة (supplier_payment_record) تخفض الالتزام ولا تُحتسب تكلفة ثانية، وقسم لموردي «آجل — باسم المورد».
 // الموردون بالهوية الجديدة. الحسابات والعمليات كما كانت حرفيًا: الموردون النشطون بالاسم، ورصيد كل مورد = الرصيد الافتتاحي + فواتيره
@@ -60,6 +61,9 @@ export default function Suppliers() {
   const [payables, setPayables] = useState([])   // موردو «آجل — باسم المورد»: الرصيد من قيود الدفتر (الالتزام − السداد)
   // الحسابات البنكية (20261014140000): منشأة بحسابات تختار حساب السداد من البنك؛ بلا حسابات كما كانت (لا يُرسل حقل الحساب)
   const [bankAccounts, setBankAccounts] = useState([])
+  // إيصالات السداد (20261020120000): دفعات المورد وإيصالاته المنتظرة في «المستندات»، للتنبيه قبل تسجيل دفعة قد تتكرر
+  const [payCtx, setPayCtx] = useState(null)
+  const payCtxSeq = useRef(0)
 
   useEffect(() => {
     if (!projectId) return
@@ -189,7 +193,14 @@ export default function Suppliers() {
   const listOutstanding = useMemo(() => suppliers.reduce((s, sup) => s + Math.max(0, Math.round(sup.balance * 100)), 0) / 100, [suppliers])
   const payablesOutstanding = useMemo(() => payables.reduce((s, p) => s + Math.max(0, Math.round(p.balance * 100)), 0) / 100, [payables])
   const totalOutstanding = Math.round((listOutstanding + payablesOutstanding) * 100) / 100
-  const openPay = sup => { setFormError(''); setPayModal(sup); setPayForm(blankPay()); setPayDateValid(true); setPaymentIncomplete(false); payRequest.current = crypto.randomUUID() }
+  const openPay = sup => {
+    setFormError(''); setPayModal(sup); setPayForm(blankPay()); setPayDateValid(true); setPaymentIncomplete(false); payRequest.current = crypto.randomUUID()
+    const seq = ++payCtxSeq.current
+    setPayCtx(null)
+    supabase.rpc('supplier_payment_context', { p_kind: sup.kind || 'list', p_supplier: sup.id })
+      .then(({ data }) => { if (seq === payCtxSeq.current && data?.ok) setPayCtx(data) }, () => {})
+  }
+  const payDuplicates = payCtx && payAmount > 0 && payForm.date ? possibleDuplicates(payCtx.payments, { amount: payForm.amount, date: payForm.date }) : []
 
   return (
     <div className="ldg-page sup-page">
@@ -269,6 +280,7 @@ export default function Suppliers() {
                               <li key={t.id} data-id={t.id}>
                                 <span className="sup-txn-main">
                                   <Status tone={t.type === 'invoice' ? 'danger' : 'success'}><span data-k="type">{t.type === 'invoice' ? 'فاتورة' : 'دفعة'}</span></Status>
+                                  {t.type === 'payment' && t.document_id && <Status tone="info"><span data-k="receipt">إيصال مرفق</span></Status>}
                                   {t.notes && <span className="sup-notes" data-k="notes">{t.notes}</span>}
                                   <span className="sup-date" data-k="date" data-iso={t.date || ''}>{t.date ? formatDate(t.date, { year: true }) : '—'}</span>
                                 </span>
@@ -327,6 +339,23 @@ export default function Suppliers() {
             )}
             <Field label="ملاحظات"><Input disabled={saving || paymentIncomplete} value={payForm.notes} placeholder="اختياري" onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} /></Field>
           </div>
+        )}
+        {payModal && payCtx?.pending_receipts?.length > 0 && (
+          <div className="ts-note ts-note--warning" data-k="sup.pendingReceipts" role="status">
+            <Info className="ts-icon" aria-hidden="true" />
+            <div className="ts-note-body">
+              <strong>لهذا المورد إيصال سداد بانتظار الاعتماد في «المستندات»</strong>
+              {payCtx.pending_receipts.map(r => (
+                <div key={`${r.document_id}-${r.invoice_id}`}><Link to={`/pending?doc=${r.document_id}`}>«{r.file_name}»</Link>{r.amount ? <> بمبلغ <span className="ts-num">{fmt(r.amount)}</span></> : null}{r.date ? <> بتاريخ {r.date}</> : null}</div>
+              ))}
+              إن كانت هذه الدفعة نفسها فاعتمد الإيصال من هناك بدل تسجيلها هنا، كي لا تُسجَّل مرتين.
+            </div>
+          </div>
+        )}
+        {payModal && payDuplicates.length > 0 && (
+          <p className="ts-field-hint" data-k="sup.payDuplicates">
+            دفعة مسجلة بالمبلغ نفسه قريبة التاريخ: {payDuplicates.map(p => `${p.journal_number} (${p.date})`).join('، ')}. تأكد أنها ليست الدفعة نفسها.
+          </p>
         )}
         {payModal && formError && <p className="ts-field-error" role="alert" data-k="sup.formError">{formError}</p>}
       </Dialog>
