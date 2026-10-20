@@ -107,6 +107,7 @@ const same = (a, b) => String(a ?? '') === String(b ?? '')
 export function reviewChanges(original, final) {
   if (!original) return ['فاتورة أضافها المراجع (لم تكن في القراءة)']
   const out = []
+  if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
     if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${original[k] ?? '—'}» ← «${final[k] ?? '—'}»`)
   }

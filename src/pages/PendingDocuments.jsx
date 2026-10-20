@@ -15,6 +15,9 @@ import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, money, newRequestId, salesCorrectionChanges, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
+import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
+import { withManualInvoice } from '../lib/manualReview.js'
+import { operatesBusiness } from '../lib/adminAccess.js'
 import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck } from '../lib/salesReport.js'
 import { bankAccountLabel, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
 import { applyRulesToDocument, indexRules } from '../lib/itemRules'
@@ -117,7 +120,8 @@ function docSummary(doc) {
 export default function PendingDocuments() {
   // مدير المنصة داخل منشأة اختارها (20261018120000) يعمل كمحاسبها: منشأة واحدة، وطريقة اعتمادها، والإجراءات كلها، والخادم ينسبها إليه.
   // المسار متعدد المنشآت للقراءة يبقى لمدير المنصة بلا منشأة مختارة فقط.
-  const { projectId, projectName, isSuperAdmin: superAdminAccount } = useAuth()
+  const { projectId, projectName, role, viewState, isSuperAdmin: superAdminAccount } = useAuth()
+  const manualAllowed = operatesBusiness(role, projectId, viewState)
   const isSuperAdmin = superAdminAccount && !projectId
   const [docs, setDocs]               = useState([])
   const [loading, setLoading]         = useState(true)
@@ -1084,6 +1088,11 @@ export default function PendingDocuments() {
             onFocus={e => { if (e.target.matches('input, select, textarea')) setTyping(true) }}
             onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTyping(false) }}>
             <DocCard key={doc.id} doc={doc} embedded readOnly={isSuperAdmin}
+          onManualApprove={manualAllowed ? async (index, invoice) => {
+            if (doc.project_id !== projectId || modeOf(doc) === 'legacy') throw new Error('ادخل المنشأة أولًا وانتظر تجهيز المستند.')
+            const reviewed = withManualInvoice(doc, index, invoice)
+            await approveV2(reviewed, invoice._id)
+          } : null}
           v2={modeOf(doc) !== 'legacy' ? { mode: modeOf(doc), ...(doc._v2 || {}) } : null}
           onDupConfirm={(invId, reason, linked) => {
             const decisions = { ...(doc._dupDecisions || {}), [invId]: { reason, linked_journal: linked?.journal_number || null, linked_document: linked?.document_id || null } }
@@ -1684,7 +1693,8 @@ function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
   )
 }
 
-function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
+function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
+  const [manualIndex, setManualIndex] = useState(null)
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
@@ -1729,6 +1739,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
   const isV2 = !!v2
   const paused = v2?.mode === 'paused'
   const preparing = isV2 && analyzed && v2.version == null
+  const canManual = !!onManualApprove && !readOnly && isV2 && !paused && !preparing && !busy
   const invStatus = id => v2?.invoices?.find(i => i.id === id)
   const exact = isV2 && res?.type === 'expense' ? exactTotals(res) : null
   const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid')
@@ -1776,6 +1787,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
         </Button>
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
           title={canSaveDraft ? 'تُحفظ في هذه النافذة فقط، لا في قاعدة البيانات' : 'تعذّر التعرف على هوية الجلسة'}>حفظ مسودة</Button>
+        {!isMultiInvoice && canManual && <Button onClick={() => setManualIndex(0)}>اعتماد يدوي</Button>}
         <Button variant="quiet" icon={Ban} className="rp-reject" disabled={busy} onClick={onReject}>رفض</Button>
       </div>
     </div>
@@ -1783,6 +1795,9 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
 
   return (
     <div className="rp-form">
+      {manualIndex != null && canManual && <ManualReviewDialog
+        invoice={isMultiInvoice ? rawRes.invoices[manualIndex] : res} categories={categories} setup={setup} branch={doc.branch}
+        onClose={() => setManualIndex(null)} onConfirm={invoice => onManualApprove(manualIndex, invoice)} />}
       {isStub && (
         <Note tone="info" icon={FlaskConical} title="قراءة محاكاة محليًا">
           بيئة الاختبار: نتيجة ثابتة مطابقة للصورة المصطنعة. لا تقيس دقة مزوّد القراءة، ولم يُرسل المستند إلى أي مزوّد.
@@ -1847,6 +1862,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
                 v2={isV2} decision={isV2 ? invStatus(inv._id) : null}
                 onEdit={(f, v) => onEditInvoice(idx, f, v)} onReplace={next => onReplaceInvoice(idx, next)} readOnly={readOnly}
                 onApprove={readOnly ? null : () => onApproveInvoice(idx)}
+                onManualApprove={canManual ? () => setManualIndex(idx) : null}
                 onReject={readOnly ? null : () => onRejectInvoice(idx)}
                 approving={busy}
                 blocked={isV2 ? (decisionPending && (!doc._v2Error?.invoice_id || doc._v2Error.invoice_id === inv._id) ? decisionPending
@@ -1987,7 +2003,7 @@ function DocCard({ readOnly, v2, onDupConfirm, onCorrectSales, onEditCorrection,
 }
 
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onReject, approving, blocked, v2, decision }) {
+function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision }) {
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -2075,6 +2091,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
                 onApprove()
               }}>اعتماد هذه الفاتورة وحدها</Button>
             )}
+            {onManualApprove && <Button size="sm" disabled={approving} onClick={onManualApprove}>اعتماد يدوي لهذه الفاتورة</Button>}
             {onReject && <Button size="sm" variant="quiet" icon={Ban} disabled={approving} onClick={onReject}>استبعادها</Button>}
           </div>
         )}
