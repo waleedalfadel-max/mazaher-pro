@@ -1,3 +1,5 @@
+import { operatingBankFigures, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
+import { getProjectSettings } from '../lib/projectSettings.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchEveryRow } from '../lib/fetchAll.js'
@@ -284,16 +286,20 @@ export default function Dashboard() {
     setLoading(true); setLoadError(''); setStats(null); setChartEntries([]); setBalances(null); setReceivables(null)
     try {
       if (!projectId || !r.from || !r.to || r.from > r.to) throw new Error('invalid_range')
-      const [summary, result] = await Promise.all([
+      const [summary, result, settingsResult, banksResult] = await Promise.all([
         getFinancialSummary(projectId, r.from, r.to),
         fetchEveryRow(() => supabase.from('ledger_entries')
-          .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out')
+          .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,bank_account_id')
           .eq('project_id', projectId).neq('status','cancelled').lte('date', r.to).order('id')),
+        getProjectSettings(projectId),
+        supabase.from('bank_accounts').select('id,name,bank,is_active').eq('project_id',projectId),
       ])
       if (!summary || result.error) throw new Error('load_failed')
       if (request !== mainRequest.current) return
       const rows = result.data
+      const bankByAccount = rows.reduce((m,e)=>{ const k=e.bank_account_id||''; m[k]=(m[k]||0)+Math.round(Number(e.bank_in||0)*100)-Math.round(Number(e.bank_out||0)*100);return m },{})
       setBalances({
+        operating: banksResult.error ? null : operatingBankFigures(banksResult.data,bankByAccount,settingsResult?.settings),
         cash: rows.reduce((s,r) => s + (r.cash_in ||0) - (r.cash_out ||0), 0),
         bank: rows.reduce((s,r) => s + (r.bank_in ||0) - (r.bank_out ||0), 0),
         custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
@@ -744,12 +750,14 @@ export default function Dashboard() {
         {!balances ? [0, 1, 2].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
             <KpiCard label="البنك" value={balances.bank} negative={balances.bank < 0} />
+            {balances.operating && <KpiCard label="أرصدة بنكية موجبة متاحة للتشغيل" value={balances.operating.available} foot="حسب الدفتر؛ يستبعد الحسابات المخصصة للالتزامات"/>}
             <KpiCard label="الصندوق" value={balances.cash} negative={balances.cash < 0} />
             <KpiCard label="العهدة" value={balances.custody} negative={balances.custody < 0} />
           </>
         )}
       </div>
 
+      {balances?.operating && <div className="ts-note ts-note--info">{OPERATING_BALANCE_NOTE}</div>}
       {!loading && stats && (
         <div className="ts-note ts-note--info">
           <Receipt className="ts-icon" aria-hidden="true" />

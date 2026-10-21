@@ -103,8 +103,9 @@ const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'الت
   totalSales: 'إجمالي التقرير المطبوع',
   // إيصال سداد مورد (20261020120000)
   beneficiary: 'المستفيد', reference: 'مرجع العملية', supplierKind: 'قائمة المورد', supplierId: 'المورد', paymentMode: 'طريقة الاعتماد',
-  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي' }
-const same = (a, b) => String(a ?? '') === String(b ?? '')
+  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', bankTransfer: 'حسابا التحويل الداخلي' }
+const fieldText = v => v && typeof v === 'object' ? JSON.stringify(v, Object.keys(v).sort()) : String(v ?? '')
+const same = (a, b) => fieldText(a) === fieldText(b)
 
 /** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
 export function reviewChanges(original, final) {
@@ -112,7 +113,7 @@ export function reviewChanges(original, final) {
   const out = []
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
-    if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${original[k] ?? '—'}» ← «${final[k] ?? '—'}»`)
+    if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${fieldText(original[k] ?? '—')}» ← «${fieldText(final[k] ?? '—')}»`)
   }
   const a = original.items || [], b = final.items || []
   const n = Math.max(a.length, b.length)
@@ -131,7 +132,7 @@ export function reviewChanges(original, final) {
  * الخادم يحسب القيود والضريبة ويرفض الفرق.
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
-  const transType = purchaseCategory || inv.transType || ''
+  const transType = (inv.type === 'expense' ? purchaseCategory : null) || inv.transType || ''
   // التصنيف بمعرّفه الثابت (الخادم يأخذ منه نوع القيد والرمز المالي)؛ الاسم للعرض والتوافق فقط
   const byName = (name, parentId = null) => (categories || []).find(c => (c.parent_id || null) === parentId && normCat(c.name) === normCat(name || ''))
   const items = (inv.items || []).map(it => {
@@ -149,7 +150,7 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // المورد لكل فاتورة (2026-10-20): يُرسل مورد السياق (اختيار المستند للفاتورة المفردة، ومورد الفاتورة نفسها في الصورة متعددة
   // الفواتير — invoiceSupplierContext)، ولا يبقى معرّف مورد على فاتورة ليست آجلة لمورد من القائمة
   if (inv.paySource === 'credit') { if (supplierId) payload.supplier_id = supplierId } else delete payload.supplier_id
-  delete payload._localStub; delete payload._supplierResolution; delete payload._matchedSupplierId
+  delete payload._paymentInitialized; delete payload._paymentSuggested; delete payload._localStub; delete payload._supplierResolution; delete payload._matchedSupplierId
   payload.review_changes = reviewChanges(original, payload)
   return payload
 }
@@ -281,6 +282,9 @@ export function approvalMessage(res) {
     link_required: 'اختر الدفعة المسجلة التي يخصها الإيصال.',
     payment_mode_required: 'اختر: تسجيل دفعة جديدة، أو ربط بدفعة مسجلة.',
     payment_deleted: `الدفعة ${d.journal_number || ''} المسجلة من هذا الإيصال حُذفت من «سجل الدفتر» بعد اعتماده، فعاد الإيصال بانتظار الاعتماد. حُدّثت الصفحة؛ راجعه ثم اعتمده من جديد إن كان صحيحًا.`,
+    bank_transfer_accounts: 'اختر حسابين بنكيين مختلفين: حساب الخروج وحساب الدخول.',
+    bank_transfer_pair_edit: 'عدّل التحويل بين الحسابين من حواره؛ يجب حفظ طرفيه معًا.',
+    bank_transfer_pair_required: 'سجّل التحويل من مستند التحويل ليُنشأ طرفاه معًا.',
     bank_account_invalid: `الحساب البنكي المختار غير متاح${d.branch ? ` لفرع «${d.branch}»` : ''} أو معطّل. اختر حسابًا من القائمة؛ لم يُسجَّل شيء.`,
   }
   return M[d.code] || `تعذّر الإجراء (${d.code || 'غير معروف'}).`
