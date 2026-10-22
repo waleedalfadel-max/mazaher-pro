@@ -5,7 +5,7 @@ import { paymentWorkflow, UPLOADER_ROLES } from '../lib/paymentWorkflow.js'
 import { supabase } from '../lib/supabase'
 import { clearProjectCache } from '../lib/projectSettings.js'
 
-const empty = () => ({ version: 1, uploaders: {}, network_by_branch: {}, apps_collection_account: null, accounts: {} })
+const empty = () => ({ version: 1, uploaders: {}, network_by_branch: {}, transfer_by_branch: {}, apps_collection_account: null, accounts: {} })
 const errors = { forbidden: 'إعداد مهام الحسابات لإدارة تحسيب فقط.', no_session: 'انتهت الجلسة؛ ادخل من جديد.',
   stale: 'تغيّرت الإعدادات في نافذة أخرى. حدّث القائمة قبل التعديل.', invalid: 'راجع الحسابات والفروع المختارة؛ يجب أن تكون نشطة ومن المنشأة نفسها.',
   not_found: 'إعداد المنشأة غير موجود.', network: 'تعذّر تأكيد الحفظ. حدّث القائمة للتحقق قبل إعادة المحاولة.' }
@@ -38,6 +38,11 @@ export default function BankWorkflowSettings({ projectId, settings, banks, onSav
           <Select value={value.network_by_branch?.[branch] || ''} placeholder="بلا اقتراح مخصص"
             options={eligibleBankAccounts(active, branch).map(a => ({ value: a.id, label: bankAccountLabel(a) }))}
             onChange={e => { const id = e.target.value; setValue(v => { const network_by_branch = { ...v.network_by_branch }; if (id) network_by_branch[branch] = id; else delete network_by_branch[branch]; return { ...v, network_by_branch } }) }} />
+        </Field>)}
+        {(settings.branches || []).map(branch => <Field key={`transfer-${branch}`} label={`حساب حوالات المبيعات — ${branch}`}>
+          <Select value={value.transfer_by_branch?.[branch] || ''} placeholder="بلا اقتراح مخصص"
+            options={eligibleBankAccounts(active, branch).map(a => ({ value: a.id, label: bankAccountLabel(a) }))}
+            onChange={e => { const id = e.target.value; setValue(v => { const transfer_by_branch = { ...v.transfer_by_branch }; if (id) transfer_by_branch[branch] = id; else delete transfer_by_branch[branch]; return { ...v, transfer_by_branch } }) }} />
         </Field>)}
         <Field label="حساب استقبال حوالات التطبيقات"><Select value={value.apps_collection_account || ''} placeholder="بلا اقتراح مخصص" options={options}
           onChange={e => setValue(v => ({ ...v, apps_collection_account: e.target.value || null }))} /></Field>

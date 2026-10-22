@@ -6,7 +6,7 @@ import {suggestInvoicePayment,suggestDocumentPayments,reviewedPayment,documentPa
 import {saveDraft,loadDraft} from '../src/lib/reviewDraft.js'
 import {buildInvoicePayload,reviewChanges} from '../src/lib/approvalV2.js'
 const accounts=[{id:'main',name:'Primary',branches:['North']},{id:'purchase',name:'Purchases',branches:[]},{id:'restricted',name:'Restricted',branches:['South']},{id:'old',name:'Closed',is_active:false}]
-const settings={expenses_scope:'project',bank_workflow:{version:1,uploaders:{owner:{source:'bank',account_id:'main'},purchasing:{source:'bank',account_id:'purchase'},cashier:{source:'cash'}},network_by_branch:{North:'main',South:'restricted'},apps_collection_account:'restricted',accounts:{restricted:{operating_available:false,purpose:'Existing obligations'}}}}
+const settings={expenses_scope:'project',bank_workflow:{version:1,uploaders:{owner:{source:'bank',account_id:'main'},purchasing:{source:'bank',account_id:'purchase'},cashier:{source:'cash'}},network_by_branch:{North:'main',South:'restricted'},transfer_by_branch:{North:'purchase'},apps_collection_account:'restricted',accounts:{restricted:{operating_available:false,purpose:'Existing obligations'}}}}
 const expense={_id:'one',type:'expense',paySource:'custody',amount:'12.50'}
 const propose=(role,inv=expense,extra={})=>suggestInvoicePayment(inv,{created_by_role:role,branch:'North',...extra},settings,accounts)
 test('uploader identity determines suggestion, regardless of approver or old role label',()=>{
@@ -43,10 +43,30 @@ test('network defaults are by branch; existing channel accounts always win',()=>
  assert.equal(propose('owner',{type:'sales',networkSales:40,bankAccounts:{network:'purchase'}}).bankAccounts.network,'purchase')
  assert.equal(propose('cashier',{type:'sales',networkSales:40},{branch:'South'}).bankAccounts.network,'restricted')
 })
+test('one sales report proposes separate accounts for network and customer transfers',()=>{
+ const inv={type:'sales',networkSales:40,transferSales:12}
+ const proposed=propose('cashier',inv)
+ assert.deepEqual(proposed.bankAccounts,{network:'main',transfer:'purchase'})
+ assert.deepEqual(propose('owner',{...inv,bankAccounts:{transfer:'main'}}).bankAccounts,{network:'main',transfer:'main'})
+ assert.equal(propose('owner',{...inv,bankAccountId:'purchase'}).bankAccounts,undefined)
+ const old={...settings,bank_workflow:{...settings.bank_workflow}}
+ delete old.bank_workflow.transfer_by_branch
+ assert.deepEqual(suggestInvoicePayment(inv,{branch:'North'},old,accounts).bankAccounts,{network:'main'})
+ assert.equal(propose('cashier',{...inv,transferSales:0}).bankAccounts.transfer,undefined)
+})
 test('app receipts settle receivables across company branches; other transfers never use uploader defaults',()=>{
  const app={type:'transfer',transType:'📥 تحصيل ذمم هنقر',amount:50}
  assert.equal(propose('owner',app).bankAccountId,'restricted');assert.equal(paymentBranch({branch:'North'},app,settings),null)
  for(const transType of ['تحصيل ذمم عميل','صرف عهدة',BANK_TRANSFER_TYPE])assert.equal(propose('owner',{type:'transfer',transType}).bankAccountId,undefined)
+})
+test('loan outflows use uploader proposals but never synthesize principal confirmation',()=>{
+ const inv={type:'transfer',transferPurpose:'loan_repayment',transType:'💳 قرض ١',amount:25,totalAmount:25,vatAmount:0}
+ const next=propose('owner',inv)
+ assert.equal(next.bankAccountId,'main');assert.equal(next.paySource,'bank')
+ assert.equal(next.loanPrincipalConfirmation,undefined)
+ assert.throws(()=>buildInvoicePayload(next,{transTypes:['💳 قرض ١'],categories:[]}),/أصل قرض/)
+ assert.equal(propose('purchasing',inv).bankAccountId,'purchase')
+ assert.equal(propose('cashier',inv).paySource,'cash')
 })
 test('liquidity retains signed restricted balances, excludes them and inactive/unassigned funds from available',()=>{
  const f=operatingBankFigures(accounts,{main:10000,purchase:2500,restricted:-50000,old:3000,'':4000},settings)

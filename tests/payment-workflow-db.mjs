@@ -8,7 +8,7 @@ const {fixture}=await import(pathToFileURL(process.env.PAYMENT_TEST_FIXTURE));co
 const {db,one,rpc,p1,p2,admin,acc,owner}=f;let checks=0
 const check=n=>{checks++;console.log('PASS '+n)}
 const bank=randomUUID(),purchase=randomUUID(),restricted=randomUUID(),foreign=randomUUID()
-const workflow={version:1,uploaders:{owner:{source:'bank',account_id:bank},purchasing:{source:'bank',account_id:purchase},cashier:{source:'cash'}},network_by_branch:{North:bank,South:restricted},apps_collection_account:restricted,accounts:{[restricted]:{purpose:'Existing obligations',operating_available:false},[bank]:{transfer_to:purchase}}}
+const workflow={version:1,uploaders:{owner:{source:'bank',account_id:bank},purchasing:{source:'bank',account_id:purchase},cashier:{source:'cash'}},network_by_branch:{North:bank,South:restricted},transfer_by_branch:{North:purchase},apps_collection_account:restricted,accounts:{[restricted]:{purpose:'Existing obligations',operating_available:false},[bank]:{transfer_to:purchase}}}
 const save=(user,v=workflow,expected=null)=>rpc(user,'admin_bank_workflow_save',[JSON.stringify(v),expected&&JSON.stringify(expected)])
 const transferType='🔄 تحويل داخلي — بين الحسابات البنكية'
 try{
@@ -17,6 +17,10 @@ try{
  for(const user of [acc,owner])assert.equal((await save(user)).code,'forbidden');check('only platform admin can change workflow')
  assert.equal((await save(admin,{...workflow,apps_collection_account:foreign})).code,'invalid');check('cross-tenant bank is rejected')
  assert.equal((await save(admin,{...workflow,network_by_branch:{North:restricted}})).code,'invalid');check('branch network account membership is checked')
+ for(const transfer_by_branch of [{North:foreign},{North:restricted},{Unknown:bank},[],null]) {
+  assert.equal((await save(admin,{...workflow,transfer_by_branch})).code,'invalid')
+ }
+ check('sales-transfer defaults reject foreign banks, wrong branches and malformed settings')
  assert.equal((await save(admin)).ok,true);check('admin can save validated company settings')
  const audit=await one("select actor_name,after_value from admin_private.action_log where project_id=$1 and entity='project_settings' order by id desc limit 1",[p1])
  assert.equal(audit.actor_name,'Synthetic admin');assert.deepEqual(audit.after_value.settings.bank_workflow,workflow);check('audit records real admin and actual workflow')
@@ -52,6 +56,12 @@ try{
  d={id:d.id,prep:reopened,inv:reopened.analysis_result.invoices[0]};assert.equal((await approve(d)).result.ok,true);check('reopened transfer can be approved once again')
  const app=await document({type:'transfer',transType:'📥 تحصيل ذمم هنقر',paySource:'bank',amount:12,date:'2026-10-21',bankAccountId:restricted,description:'Synthetic collection'})
  assert.equal((await approve(app)).result.ok,true);const appRow=await one('select * from ledger_entries where document_id=$1',[app.id]);assert.equal(appRow.bank_account_id,restricted);assert.equal(appRow.branch,null);assert.equal(Number(appRow.receivable_out),12);check('app collection uses company bank and reduces receivable, no new sale')
+ const sale=await document({type:'sales',date:'2026-10-20',cashSales:0,networkSales:40,transferSales:12,totalSales:52,bankAccounts:{network:bank,transfer:purchase}})
+ assert.equal((await approve(sale)).result.ok,true)
+ const saleRows=(await db.query('select bank_account_id,bank_in from ledger_entries where document_id=$1 order by bank_in desc',[sale.id])).rows
+ assert.equal(saleRows.length,2);assert.equal(saleRows[0].bank_account_id,bank);assert.equal(Number(saleRows[0].bank_in),40)
+ assert.equal(saleRows[1].bank_account_id,purchase);assert.equal(Number(saleRows[1].bank_in),12)
+ check('network and transfer sales reach their independently chosen bank accounts')
  const before=(await db.query('select * from ledger_entries order by id')).rows
  await db.exec(await readFile('supabase/rollback/payment-account-workflows.sql','utf8'))
  assert.deepEqual((await db.query('select * from ledger_entries order by id')).rows,before);check('rollback preserves transfer legs and all financial rows')

@@ -12,11 +12,12 @@ const {fixture}=await import(pathToFileURL(process.env.PAYMENT_TEST_FIXTURE));co
 const require=createRequire(import.meta.url);let playwright
 try{playwright=require('playwright')}catch{playwright=createRequire(path.join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES,'../package.json'))('playwright')}
 const dir=await mkdtemp(path.join(tmpdir(),'bank-workflow-ui-')),bundle=path.join(dir,'app.js')
-const main=randomUUID(),purchase=randomUUID(),restricted=randomUUID(),category=randomUUID()
+const main=randomUUID(),purchase=randomUUID(),restricted=randomUUID(),network=randomUUID(),category=randomUUID()
 await f.db.query("insert into bank_accounts(id,project_id,name,branches) values($1,$4,'Primary',array['North']),($2,$4,'Purchases','{}'),($3,$4,'Restricted',array['South'])",[main,purchase,restricted,f.p1])
+await f.db.query("insert into bank_accounts(id,project_id,name,branches) values($1,$2,'Network bank',array['North'])",[network,f.p1])
 await f.db.query("insert into categories(id,project_id,name,type,ledger_type,financial_class) values($1,$2,'Synthetic expense','expense','🛒 مصروفات تشغيلية','opex')",[category,f.p1])
 await f.db.query("insert into approval_private.settings(project_id,mode) values($1,'v2')",[f.p1])
-const settings={branches:['North','South'],expenses_scope:'project',bank_workflow:{version:1,uploaders:{owner:{source:'bank',account_id:main},purchasing:{source:'bank',account_id:purchase},cashier:{source:'cash'}},network_by_branch:{North:main},apps_collection_account:restricted,accounts:{[restricted]:{operating_available:false,purpose:'Obligations'},[main]:{transfer_to:purchase}}}}
+const settings={branches:['North','South'],expenses_scope:'project',bank_workflow:{version:1,uploaders:{owner:{source:'bank',account_id:main},purchasing:{source:'bank',account_id:purchase},cashier:{source:'cash'}},network_by_branch:{North:network},transfer_by_branch:{North:main},apps_collection_account:restricted,accounts:{[restricted]:{operating_available:false,purpose:'Obligations'},[main]:{transfer_to:purchase}}}}
 await f.db.query('update project_settings set settings=$2 where project_id=$1',[f.p1,JSON.stringify(settings)])
 const expense={type:'expense',description:'Synthetic purchase',date:'2026-10-21',totalAmount:'25.00',vatAmount:'0',paySource:'custody',transType:'🛒 مصروفات تشغيلية',category_main:'Synthetic expense',items:[{description:'Synthetic item',amount:'25.00',category_main:'Synthetic expense'}]}
 async function makeDoc(role,inv=expense){
@@ -27,7 +28,7 @@ async function makeDoc(role,inv=expense){
 const doc=await makeDoc('owner'),pdoc=await makeDoc('purchasing'),cdoc=await makeDoc('cashier')
 await build({stdin:{contents:`import React from 'react';import{createRoot}from'react-dom/client';import{MemoryRouter}from'react-router-dom';import Pending from './src/pages/PendingDocuments.jsx';import Controls from './src/pages/AdminBusinessSettings.jsx';import Manage from './src/components/BankTransferManage.jsx';const root=createRoot(document.getElementById('root'));let n=0;window.mount=(doc,kind='pending',props={})=>{root.render(<MemoryRouter key={++n} initialEntries={['/pending?doc='+doc]}>{kind==='admin'?<Controls/>:kind==='manage'?<Manage {...props} onClose={()=>window.closed=true} onSaved={()=>window.saved=true}/>:<Pending/>}</MemoryRouter>)};`,resolveDir:process.cwd(),sourcefile:'bank-workflow-ui.jsx',loader:'jsx'},outfile:bundle,bundle:true,platform:'browser',format:'iife',jsx:'automatic',define:{'import.meta.env':'{}','process.env.NODE_ENV':'"production"'},plugins:[{name:'isolated-transport',setup(b){
  b.onLoad({filter:/[\\/]contexts[\\/]AuthContext\.jsx$/},()=>({contents:'export const useAuth=()=>window.auth',loader:'js'}))
- b.onLoad({filter:/[\\/]lib[\\/]projectSettings\.js$/},()=>({contents:`export const getProjectSettings=async()=>({settings:window.settings});export const getTransactionTypes=async()=>['🛒 مصروفات تشغيلية','📥 تحصيل ذمم هنقر','🔄 تحويل داخلي — بين الحسابات البنكية'];export const clearProjectCache=()=>{};`,loader:'js'}))
+ b.onLoad({filter:/[\\/]lib[\\/]projectSettings\.js$/},()=>({contents:`export const getProjectSettings=async()=>({settings:window.settings});export const getTransactionTypes=async()=>['🛒 مصروفات تشغيلية','📥 تحصيل ذمم هنقر','🔄 تحويل داخلي — بين الحسابات البنكية','💳 قرض ١'];export const clearProjectCache=()=>{};`,loader:'js'}))
  b.onLoad({filter:/[\\/]lib[\\/]supabase\.js$/},()=>({contents:`class Query{constructor(table){this.table=table;this.filters=[]}select(c){this.columns=c;return this}eq(k,v){this.filters.push(['eq',k,v]);return this}in(k,v){this.filters.push(['in',k,v]);return this}order(){return this}limit(){return this}single(){this.singleRow=true;return this}then(resolve,reject){return window.dbSelect(this.table,this.filters,this.columns,this.singleRow).then(resolve,reject)}}export const supabase={from:t=>new Query(t),rpc:async(n,a={})=>{const data=await window.dbRpc(n,a);if(n==='approval_approve')window.lastApproval=data;return {data}},auth:{getSession:async()=>({data:{session:{user:{id:window.auth.userId}}}})}};`,loader:'js'}))
 }}],logLevel:'warning'})
 const browser=await playwright.chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE_PATH,args:['--no-sandbox','--disable-dev-shm-usage',...JSON.parse(process.env.CHROMIUM_ARGS||'[]')]})
@@ -58,6 +59,29 @@ try{
  const leg=await f.one('select bank_account_id,bank_out from ledger_entries where document_id=$1',[doc]);assert.equal(leg.bank_account_id,purchase);assert.equal(Number(leg.bank_out),25);check('visible overridden account reaches actual approval and ledger')
  await mount(pdoc);await page.getByText(/المصدر المقترح لأن الرافع مسؤول المشتريات/).waitFor();assert.equal(await account().inputValue(),purchase);check('purchasing upload suggests purchases account')
  await mount(cdoc);await page.getByText(/المصدر المقترح لأن الرافع الكاشير/).waitFor();assert.equal(await page.getByLabel('مصدر الدفع',{exact:true}).inputValue(),'cash');assert.equal(await account().count(),0);check('cashier upload suggests cash box')
+ const sales=await makeDoc('cashier',{type:'sales',date:'2026-10-20',cashSales:0,networkSales:40,transferSales:12,totalSales:52})
+ await mount(sales);await page.getByText(/حساب كل قناة مقترح للفرع/).waitFor()
+ assert.equal(await page.locator('[data-k="bank-account-network"]').inputValue(),network)
+ assert.equal(await page.locator('[data-k="bank-account-transfer"]').inputValue(),main)
+ check('sales review shows independent network and transfer account proposals')
+ await page.evaluate(()=>window.lastApproval=null);await page.getByRole('button',{name:'اعتماد',exact:true}).click();await page.waitForFunction(()=>window.lastApproval)
+ assert.equal((await page.evaluate(()=>window.lastApproval)).ok,true);await queue
+ const salesRows=(await f.db.query('select bank_account_id,bank_in from ledger_entries where document_id=$1 order by bank_in desc',[sales])).rows
+ assert.equal(salesRows.length,2);assert.equal(salesRows[0].bank_account_id,network);assert.equal(Number(salesRows[0].bank_in),40)
+ assert.equal(salesRows[1].bank_account_id,main);assert.equal(Number(salesRows[1].bank_in),12)
+ check('each visible sales channel reaches its own bank in the actual ledger')
+ const loan=await makeDoc('owner',{type:'transfer',transferPurpose:'loan_repayment',transType:'💳 قرض ١',amount:33,totalAmount:33,vatAmount:0,paySource:'cash',date:'2026-10-19',description:'Synthetic principal',
+   loanPrincipalConfirmation:{version:1,confirmed:true,transType:'💳 قرض ١',amount:'33.00',vatAmount:'0.00'}})
+ await mount(loan);await page.getByText(/المصدر المقترح لأن الرافع المالك/).waitFor()
+ assert.equal(await account().inputValue(),main)
+ assert.equal(await page.locator('[data-k="loan-principal-confirmed"]').isChecked(),false)
+ assert.equal(await page.getByRole('button',{name:'اعتماد',exact:true}).isDisabled(),true)
+ await page.locator('[data-k="loan-principal-confirmed"]').check();await page.evaluate(()=>window.lastApproval=null)
+ await page.getByRole('button',{name:'اعتماد',exact:true}).click();await page.waitForFunction(()=>window.lastApproval)
+ assert.equal((await page.evaluate(()=>window.lastApproval)).ok,true);await queue
+ const loanRow=await f.one('select type,bank_account_id,bank_out from ledger_entries where document_id=$1',[loan])
+ assert.equal(loanRow.type,'💳 قرض ١');assert.equal(loanRow.bank_account_id,main);assert.equal(Number(loanRow.bank_out),33)
+ check('uploader proposal for a loan requires fresh principal confirmation and preserves the chosen account')
  const transfer=await makeDoc('owner',{type:'transfer',transType:'🔄 تحويل داخلي — بين الحسابات البنكية',paySource:'bank',amount:35,date:'2026-10-21',description:'Synthetic bank transfer'})
  await mount(transfer);await page.locator('[data-k="bank-transfer-from"]').selectOption(main);assert.equal(await page.locator('[data-k="bank-transfer-to"]').inputValue(),purchase)
  await page.evaluate(()=>window.lastApproval=null);await page.getByRole('button',{name:'اعتماد',exact:true}).click();await page.waitForFunction(()=>window.lastApproval);assert.equal((await page.evaluate(()=>window.lastApproval)).ok,true);await queue
@@ -65,7 +89,11 @@ try{
  const banks=(await f.db.query('select * from bank_accounts where project_id=$1',[f.p1])).rows
  await mount('', 'superadmin','manage',{invoiceId:pair.invoice_id,action:'update',accounts:banks});await page.getByLabel('مبلغ التحويل',{exact:true}).fill('39.50');await page.getByLabel('سبب الإجراء').fill('Reviewed on screen');await page.getByRole('button',{name:'حفظ طرفي التحويل'}).click();await page.waitForFunction(()=>window.saved)
  const updated=await f.rpc(f.admin,'bank_transfer_manage',[pair.invoice_id]);assert.equal(updated.source.bank_out,39.5);assert.equal(updated.destination.bank_in,39.5);check('bank transfer dialog edits both sides from actual screen')
- await mount('', 'superadmin','admin');await page.getByRole('tab',{name:'الحسابات البنكية',exact:true}).click();await page.getByLabel('المصدر المقترح عند رفع المالك').selectOption(purchase);await page.getByRole('button',{name:'حفظ مهام الحسابات'}).click();await page.getByText('حُفظت مهام الحسابات وسُجّل التعديل باسم إدارة تحسيب.').waitFor();const stored=await f.one('select settings from project_settings where project_id=$1',[f.p1]);assert.equal(stored.settings.bank_workflow.uploaders.owner.account_id,purchase);check('admin workflow screen persists to actual database')
+ await mount('', 'superadmin','admin');await page.getByRole('tab',{name:'الحسابات البنكية',exact:true}).click();await page.getByLabel('المصدر المقترح عند رفع المالك').selectOption(purchase)
+ await page.getByLabel('حساب حوالات المبيعات — North',{exact:true}).selectOption(purchase)
+ await page.getByRole('button',{name:'حفظ مهام الحسابات'}).click();await page.getByText('حُفظت مهام الحسابات وسُجّل التعديل باسم إدارة تحسيب.').waitFor();const stored=await f.one('select settings from project_settings where project_id=$1',[f.p1]);assert.equal(stored.settings.bank_workflow.uploaders.owner.account_id,purchase)
+ assert.equal(stored.settings.bank_workflow.transfer_by_branch.North,purchase);assert.equal(stored.settings.bank_workflow.network_by_branch.North,network)
+ check('admin workflow screen saves uploader and per-channel defaults independently')
  assert.deepEqual(errors,[]);check('no page errors')
  console.log(JSON.stringify({passed:checks}))
 }finally{await queue;await browser.close();await f.db.close();await rm(dir,{recursive:true,force:true})}

@@ -1,9 +1,9 @@
 -- Optional, tenant-scoped bank workflows. No tenant settings or financial rows are changed here.
--- Reviewed against production aa7c6dd. Existing account IDs and balances are retained.
+-- Function baseline rechecked against production f61357e. Existing account IDs and balances are retained.
 set search_path = public;
 create or replace function public.admin_bank_workflow_save(p_workflow jsonb, p_expected jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare a record; ps jsonb; r record; v_id uuid; v_target uuid;
+declare a record; ps jsonb; r record; v_id uuid; v_target uuid; v_channels jsonb;
 begin
  select * into a from approval_private.actor();
  if a.id is null then return approval_private.err('no_session'); end if;
@@ -13,9 +13,10 @@ begin
  if not found then return approval_private.err('not_found'); end if;
  if coalesce(ps->'bank_workflow','null') is distinct from coalesce(p_expected,'null') then return approval_private.err('stale'); end if;
  if jsonb_typeof(p_workflow) is distinct from 'object' or p_workflow->'version' is distinct from '1'::jsonb
-  or exists(select 1 from jsonb_object_keys(p_workflow) k where k not in ('version','uploaders','network_by_branch','apps_collection_account','accounts'))
+  or exists(select 1 from jsonb_object_keys(p_workflow) k where k not in ('version','uploaders','network_by_branch','transfer_by_branch','apps_collection_account','accounts'))
   or jsonb_typeof(p_workflow->'uploaders') is distinct from 'object'
   or jsonb_typeof(p_workflow->'network_by_branch') is distinct from 'object'
+  or (p_workflow ? 'transfer_by_branch' and jsonb_typeof(p_workflow->'transfer_by_branch') is distinct from 'object')
   or jsonb_typeof(p_workflow->'accounts') is distinct from 'object' then return approval_private.err('invalid'); end if;
  for r in select * from jsonb_each(p_workflow->'uploaders') loop
   if r.key not in ('owner','purchasing','cashier') or jsonb_typeof(r.value) <> 'object'
@@ -26,10 +27,12 @@ begin
    if not exists(select 1 from public.bank_accounts where id=v_id and project_id=a.project_id and is_active) then return approval_private.err('invalid'); end if;
   elsif nullif(r.value->>'account_id','') is not null then return approval_private.err('invalid'); end if;
  end loop;
- for r in select * from jsonb_each_text(p_workflow->'network_by_branch') loop
+ for v_channels in select value from jsonb_each(jsonb_build_object('network',p_workflow->'network_by_branch','transfer',coalesce(p_workflow->'transfer_by_branch','{}'))) loop
+ for r in select * from jsonb_each_text(v_channels) loop
   v_id:=r.value::uuid;
   if not coalesce(ps->'branches','[]') ? r.key or not exists(select 1 from public.bank_accounts where id=v_id and project_id=a.project_id and is_active
     and (coalesce(cardinality(branches),0)=0 or r.key=any(branches))) then return approval_private.err('invalid'); end if;
+ end loop;
  end loop;
  v_id:=nullif(p_workflow->>'apps_collection_account','')::uuid;
  if v_id is not null and not exists(select 1 from public.bank_accounts where id=v_id and project_id=a.project_id and is_active) then return approval_private.err('invalid'); end if;

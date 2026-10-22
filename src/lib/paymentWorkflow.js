@@ -1,5 +1,6 @@
 // Company-specific suggestions. They never approve a document or move money.
 import { eligibleBankAccounts, expensesAtProjectLevel, bankAccountLabel } from './branchSetup.js'
+import { isLoanRepayment } from './loanRepayment.js'
 
 export const BANK_TRANSFER_TYPE = '🔄 تحويل داخلي — بين الحسابات البنكية'
 export const UPLOADER_ROLES = { owner: 'المالك', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
@@ -41,12 +42,14 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
 
   if (inv.type === 'sales') {
     // Explicit channel accounts and historical/corrected report accounts always win.
-    const id = policy.network_by_branch?.[inv.branch || doc?.branch || '']
-    if (!inv.bankAccounts?.network && !inv.bankAccountId && valid(id) && Number(inv.networkSales) > 0) {
-      next.bankAccounts = { ...inv.bankAccounts, network: id }
-      next._paymentSuggested = 'حساب الشبكة المقترح للفرع؛ يمكنك تغييره قبل الاعتماد.'
+    for (const [channel, field, rules] of [['network', 'networkSales', policy.network_by_branch], ['transfer', 'transferSales', policy.transfer_by_branch]]) {
+      const id = rules?.[inv.branch || doc?.branch || '']
+      if (!inv.bankAccounts?.[channel] && !inv.bankAccountId && valid(id) && Number(inv[field]) > 0) {
+        next.bankAccounts = { ...next.bankAccounts, [channel]: id }
+        next._paymentSuggested = 'حساب كل قناة مقترح للفرع؛ راجع الشبكة والتحويل قبل الاعتماد.'
+      }
     }
-  } else if (inv.type === 'transfer') {
+  } else if (inv.type === 'transfer' && !isLoanRepayment(inv)) {
     // An app collection is a receivable settlement, not a new sale.
     if (isAppCollection(inv)) next.paySource = 'bank'
     if (isAppCollection(inv) && !inv.bankAccountId && valid(policy.apps_collection_account)) {
@@ -55,7 +58,7 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
     }
     // Bank transfers always require both accounts explicitly; uploader rules do not apply.
   } else if ((inv.type === 'expense' && !['credit', 'payable'].includes(inv.paySource))
-      || (inv.type === 'supplier_payment' && inv.paymentMode !== 'link')) {
+      || (inv.type === 'supplier_payment' && inv.paymentMode !== 'link') || isLoanRepayment(inv)) {
     if (rule?.source === 'cash') {
       next.paySource = 'cash'; next.bankAccountId = ''
       next._paymentSuggested = `المصدر المقترح لأن الرافع ${UPLOADER_ROLES[role] || role}: الصندوق. أكّده أو عدّله.`
