@@ -10,6 +10,17 @@ export const loanAmount = inv => inv?.totalAmount ?? inv?.amount ?? ''
 export const LOAN_NOTE = 'هذا المسار لسداد أصل القرض أو القسط الرأسمالي. راجع كشف الجهة الممولة وافصل أرباح التمويل والرسوم إن وجدت في فاتورة مصروف مستقلة؛ لا يُستنتج توزيعها من إجمالي الخصم.'
 export const LOAN_CONFIRMATION_LABEL = 'راجعت كشف التمويل وأؤكد أن المبلغ المحدد أصل قرض فقط، دون أرباح تمويل أو رسوم.'
 
+/** External readings and restored drafts are data, never evidence of a current reviewer click.
+ * Use only at review-entry boundaries; keep the original reading intact for the audit trail.
+ */
+export function withoutLoanPrincipalConfirmation(reading) {
+  if (!reading || typeof reading !== 'object') return reading
+  const copy = { ...reading }
+  delete copy.loanPrincipalConfirmation
+  if (Array.isArray(copy.invoices)) copy.invoices = copy.invoices.map(withoutLoanPrincipalConfirmation)
+  return copy
+}
+
 /** Clear expense/supplier metadata only in the working copy. The server retains the original OCR. */
 export function toLoanRepayment(inv) {
   return {

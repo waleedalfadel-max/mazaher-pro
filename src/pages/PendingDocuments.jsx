@@ -18,7 +18,7 @@ import { setUnsaved } from '../lib/unsavedChanges'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
 import LoanRepaymentFields from '../components/LoanRepaymentFields.jsx'
-import { LOAN_OPTION, isLoanRepayment, reviewDocumentType, toLoanRepayment, fromLoanRepayment, loanBlockReason } from '../lib/loanRepayment.js'
+import { LOAN_OPTION, isLoanRepayment, reviewDocumentType, toLoanRepayment, fromLoanRepayment, loanBlockReason, withoutLoanPrincipalConfirmation } from '../lib/loanRepayment.js'
 import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, receiptBlockReason, receiptHistoryNote, withSuggestedSuppliers, supplierOptions } from '../lib/supplierReceipts.js'
 import { withManualInvoice } from '../lib/manualReview.js'
 import { operatesBusiness } from '../lib/adminAccess.js'
@@ -264,7 +264,7 @@ export default function PendingDocuments() {
       const extras = ok ? Object.fromEntries(DRAFT_EXTRAS.filter(k => k in saved.extras).map(k => [k, saved.extras[k]])) : {}
       return {
         ...d, ...extras,
-        _state: 'idle', _error: '', _edit: ok ? saved.edit : (d.analysis_result || null),
+        _state: 'idle', _error: '', _edit: withoutLoanPrincipalConfirmation(ok ? saved.edit : (d.analysis_result || null)),
         _dirty: false, _draftSavedAt: ok ? saved.savedAt : null, _draftStale: !!saved?.stale,
         _origBranch: d.branch, _branchEditable: !d.branch,
         _imageData: null, _showImage: false, _isUrl: false,
@@ -290,7 +290,7 @@ export default function PendingDocuments() {
     const store = draftStore()
     if (store) dropDraft(store, scopeOf(doc), doc.id)
     updateDoc(doc.id, {
-      _state: doc._state, _edit: doc.analysis_result || null, _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
+      _state: doc._state, _edit: withoutLoanPrincipalConfirmation(doc.analysis_result || null), _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
       branch: doc._origBranch, _supplierId: undefined, _supplierName: undefined, _supplierResolution: undefined, _matchedSupplierId: undefined,
     })
   }
@@ -375,7 +375,7 @@ export default function PendingDocuments() {
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',
-        analysis_result: result, _edit: result,
+        analysis_result: result, _edit: withoutLoanPrincipalConfirmation(result),
         _aiSuggestedType: true,
         _imageData: signedFileUrl || fileBase64,
         _isUrl: !!signedFileUrl,
@@ -782,8 +782,8 @@ export default function PendingDocuments() {
     setDocs(ds => ds.map(d => {
       if (d.id !== doc.id) return d
       const ar = data.analysis_result
-      const src = d._edit || ar
-      let edit = ar
+      const src = d._edit || withoutLoanPrincipalConfirmation(ar)
+      let edit = src
       if (src && ar?.invoices) {   // معرّفات الفواتير من الخادم تُنقل إلى نسخة المراجعة دون فقد التعديلات
         const list = src.invoices?.length ? src.invoices : [src]
         edit = { ...(ar._localStub ? { _localStub: true } : {}), invoices: list.map((x, i) => ({ ...x, _id: x._id || ar.invoices[i]?._id })) }

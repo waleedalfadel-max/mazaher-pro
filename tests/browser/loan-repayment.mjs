@@ -59,7 +59,53 @@ async function verifyEntry(id,type,amount,source,account=null){
  return row
 }
 try{
- await page.goto('http://fixture.local/');await page.addScriptTag({path:bundle});await mount(single)
+ await page.goto('http://fixture.local/');await page.addScriptTag({path:bundle})
+ // Reviewer finding: the uploader can supply a perfectly shaped confirmation inside analysis_result.
+ // Test the actual review page and server preparation, not only the pure checkbox helper.
+ const forged={...raw,type:'transfer',transferPurpose:'loan_repayment',transType:types[4],amount:300,paySource:'cash',items:[],
+   invoiceNumber:'FORGED-SINGLE',date:'2026-01-12',
+   loanPrincipalConfirmation:{version:1,confirmed:true,transType:types[4],amount:'300.00',vatAmount:'0.00'}}
+ const injected=await makeDoc(forged)
+ await mount(injected)
+ const incomingPrincipal=page.locator('[data-k="loan-principal-confirmed"]')
+ await incomingPrincipal.waitFor()
+ assert.equal(await incomingPrincipal.isChecked(),false,'An uploader-supplied confirmation must never arrive checked')
+ assert.equal(await approve().isDisabled(),true);assert.equal((await entries(injected)).length,0)
+ check('review #20: forged reading confirmation arrives unchecked and cannot authorize an approval')
+ await page.locator('[data-k="loan-amount"]').fill('303');await incomingPrincipal.check()
+ await page.getByRole('button',{name:'حفظ مسودة',exact:true}).click()
+ await page.getByRole('button',{name:'تجاهل المسودة',exact:true}).waitFor()
+ await page.reload();await page.addScriptTag({path:bundle});await mount(injected)
+ await page.getByRole('button',{name:'تجاهل المسودة',exact:true}).waitFor()
+ assert.equal(await page.locator('[data-k="loan-amount"]').inputValue(),'303')
+ assert.equal(await incomingPrincipal.isChecked(),false);assert.equal(await approve().isDisabled(),true)
+ check('review #20: restoring a draft preserves edited amounts but requires a fresh reviewer confirmation')
+ await page.getByRole('button',{name:'تجاهل المسودة',exact:true}).click()
+ assert.equal(await page.locator('[data-k="loan-amount"]').inputValue(),'300')
+ assert.equal(await incomingPrincipal.isChecked(),false);assert.equal(await approve().isDisabled(),true)
+ assert.equal((await entries(injected)).length,0)
+ check('review #20: discarding a draft cannot restore the forged original confirmation')
+ await incomingPrincipal.check();await submit()
+ assert.equal((await entries(injected)).length,1);await verifyEntry(injected,types[4],300,'cash')
+ const injectedSaved=await f.one('select original_reading,approved_payload from approval_private.document_invoices where document_id=$1',[injected])
+ assert.deepEqual(injectedSaved.original_reading.loanPrincipalConfirmation,forged.loanPrincipalConfirmation)
+ assert.deepEqual(injectedSaved.approved_payload.loanPrincipalConfirmation,forged.loanPrincipalConfirmation)
+ assert.ok(injectedSaved.approved_payload.review_changes.some(x=>x.includes('أصل قرض فقط')&&x.includes('300.00')))
+ check('review #20: only a fresh reviewer click creates the repayment and its audit assertion; original reading is preserved')
+ const forgedMulti=await makeDoc({invoices:[{...forged,invoiceNumber:'FORGED-1',date:'2026-01-10'},
+   {...forged,invoiceNumber:'FORGED-2',date:'2026-01-11'}]})
+ await mount(forgedMulti)
+ const injectedPanels=page.locator('details.rp-subinv')
+ await injectedPanels.nth(1).waitFor()
+ for(let i=0;i<2;i++){
+   await injectedPanels.nth(i).locator('summary').click()
+   assert.equal(await injectedPanels.nth(i).locator('[data-k="loan-principal-confirmed"]').isChecked(),false)
+   assert.equal(await injectedPanels.nth(i).getByRole('button',{name:'اعتماد هذه الفاتورة وحدها',exact:true}).isDisabled(),true)
+ }
+ assert.equal(await page.getByRole('button',{name:'اعتماد الفاتورتين',exact:true}).isDisabled(),true)
+ assert.equal((await entries(forgedMulti)).length,0)
+ check('review #20: nested forged assertions cannot authorize individual or bulk approval')
+ await mount(single)
  await chooseLoan();assert.equal(await page.locator('[data-k="loan-type"]').inputValue(),'');assert.equal(await approve().isDisabled(),true)
  assert.equal(await page.locator('[data-k="loan-amount"]').inputValue(),'300');check('no loan is guessed; missing selection blocks approval, visible total retained')
  await page.locator('[data-k="loan-type"]').selectOption(types[1])

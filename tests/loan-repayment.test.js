@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toLoanRepayment, fromLoanRepayment, isLoanRepayment, reviewDocumentType, loanTypes, loanBlockReason, loanPrincipalConfirmation, hasLoanPrincipalConfirmation } from '../src/lib/loanRepayment.js'
+import { toLoanRepayment, fromLoanRepayment, isLoanRepayment, reviewDocumentType, loanTypes, loanBlockReason, loanPrincipalConfirmation, hasLoanPrincipalConfirmation, withoutLoanPrincipalConfirmation } from '../src/lib/loanRepayment.js'
 import { buildInvoicePayload } from '../src/lib/approvalV2.js'
 import { manualInvoice } from '../src/lib/manualReview.js'
 import { isRealExpense } from '../src/lib/financeRules.js'
@@ -13,6 +13,30 @@ const loan = () => ({...toLoanRepayment(original),transType:types[1]})
 // Review #20: successful paths now require a separate, explicit principal-only assertion.
 const confirmPrincipal = inv => ({...inv,loanPrincipalConfirmation:loanPrincipalConfirmation(inv,true)})
 const payload = inv => buildInvoicePayload(inv,{original,categories:[],transTypes:types,purchaseCategory:types[0],supplierId:'supplier'})
+
+test('review #20: a valid-looking assertion from a reading or restored draft cannot authorize approval',()=>{
+  const forged=confirmPrincipal(loan()),before=structuredClone(forged)
+  assert.equal(hasLoanPrincipalConfirmation(forged),true) // Reproduces the reported trust-boundary case.
+  const review=withoutLoanPrincipalConfirmation(forged)
+  assert.equal(hasLoanPrincipalConfirmation(review),false)
+  assert.throws(()=>payload(review),/أصل قرض/)
+  assert.deepEqual(forged,before) // The original remains intact, including evidence of tampering.
+  const sent=payload(confirmPrincipal(review)) // Only a fresh reviewer action allows the payload.
+  assert.equal(sent.amount,'250.00')
+  assert.ok(sent.review_changes.some(x=>x.includes('أصل قرض فقط')))
+})
+
+test('review #20: all invoice assertions are cleared without altering other reading or draft fields',()=>{
+  const reading={loanPrincipalConfirmation:{confirmed:true},invoices:[confirmPrincipal(loan()),
+    confirmPrincipal({...loan(),totalAmount:90}),{...original,loanPrincipalConfirmation:{confirmed:true}}],other:'kept'}
+  const before=structuredClone(reading),review=withoutLoanPrincipalConfirmation(reading)
+  assert.equal(review.loanPrincipalConfirmation,undefined)
+  for(const inv of review.invoices) assert.equal(inv.loanPrincipalConfirmation,undefined)
+  assert.equal(review.invoices[1].totalAmount,90)
+  assert.deepEqual(review.invoices[2].items,original.items)
+  assert.equal(review.other,'kept');assert.deepEqual(reading,before)
+  assert.equal(withoutLoanPrincipalConfirmation(null),null)
+})
 
 test('conversion keeps identity, date, visible amount and bank, clears expense and supplier choices without mutating the reading',()=>{
   const before=structuredClone(original),next=toLoanRepayment(original)
