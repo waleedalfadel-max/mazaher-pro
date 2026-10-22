@@ -1,3 +1,5 @@
+import BankTransferFields from './BankTransferFields.jsx'
+import { isBankTransfer, paymentBranch } from '../lib/paymentWorkflow.js'
 import { useState } from 'react'
 import { isLoanRepayment, LOAN_NOTE, LOAN_CONFIRMATION_LABEL, loanPrincipalConfirmation, hasLoanPrincipalConfirmation } from '../lib/loanRepayment.js'
 import { Button, DateInput, Dialog, Field, Input, Money, Note, Select, Textarea } from '../ui/components.jsx'
@@ -19,7 +21,7 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
   const loan = isLoanRepayment(invoice)
   const parents = categories.filter(c => !c.parent_id && c.is_active !== false)
   const children = categories.filter(c => c.parent_id === fields.categoryId && c.is_active !== false)
-  const accountBranch = expense && expensesAtProjectLevel(setup?.settings) ? null : branch
+  const accountBranch = paymentBranch({ branch }, invoice, setup?.settings)
   const accounts = eligibleBankAccounts(banks, accountBranch)
   const bankChannels = sales ? [['networkSales', 'network', 'الشبكة / مدى'], ['transferSales', 'transfer', 'التحويل']].filter(([k]) => Number(fields[k]) > 0) : []
   const bankNeeded = needsBankAccount(fields)
@@ -30,7 +32,10 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
     let result
     try {
       let values = fields
-      if (bankNeeded && banks.length) {
+      if (isBankTransfer(invoice)) {
+        const pair = fields.bankTransfer || {}
+        if (!pair.from || !pair.to || pair.from === pair.to || ![pair.from, pair.to].every(id => accounts.some(a => a.id === id))) throw new Error('اختر حسابين بنكيين مختلفين للتحويل.')
+      } else if (bankNeeded && banks.length) {
         if (sales) {
           values = { ...fields, bankAccounts: { ...fields.bankAccounts } }
           for (const [, channel, label] of bankChannels) {
@@ -76,7 +81,8 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
           <Field label="التصنيف الفرعي"><Select value={fields.subcategoryId} placeholder="— بدون فرعي —" onChange={e => edit('subcategoryId', e.target.value)}
             options={children.map(c => ({ value: c.id, label: c.name }))} /></Field>
         </>}
-        {bankNeeded && !!banks.length && (sales ? bankChannels.map(([, channel, label]) =>
+        {isBankTransfer(invoice) && <BankTransferFields invoice={fields} accounts={banks} settings={setup?.settings} onEdit={edit}/>}
+        {!isBankTransfer(invoice) && bankNeeded && !!banks.length && (sales ? bankChannels.map(([, channel, label]) =>
           <Field key={channel} label={`حساب ${label}`}><Select
             value={chosenBankAccount(banks, accountBranch, salesChannelAccount(fields, channel))}
             placeholder="— اختر الحساب —" options={accounts.map(a => ({ value: a.id, label: bankAccountLabel(a) }))}

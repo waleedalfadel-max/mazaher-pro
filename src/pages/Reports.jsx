@@ -1,3 +1,4 @@
+import { operatingBankRows, paymentWorkflow, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { CalendarCheck, CalendarDays, ChevronDown, ChevronLeft, FileSpreadsheet, FileText, HandCoins, Info, Landmark, ListTree, Percent, Receipt,
@@ -156,6 +157,8 @@ export default function Reports() {
   const [prevEntries,     setPrevEntries]     = useState([])
   const [filtersOpen, setFiltersOpen] = useState(false)   // على الجوال: الفلاتر مطوية خلف «تغيير»، والاختيار ظاهر في العنوان
   const loadSeq  = useRef(0)
+  const [projectSettings, setProjectSettings] = useState(null)
+  const [banksReady, setBanksReady] = useState(false)
 
   const liveRef = useRef({ from: init.from, to: init.to, branch: init.branch })
   useEffect(() => { liveRef.current = { from, to, branch: selectedBranch } }, [from, to, selectedBranch])
@@ -173,8 +176,9 @@ export default function Reports() {
   useEffect(() => {
     if (projectId) {
       supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
-        .then(({ data }) => setBankAccounts(data || []))
+        .then(({ data, error }) => { setBankAccounts(data || []); setBanksReady(!error) })
       getProjectSettings(projectId).then(async s => {
+        setProjectSettings(s?.settings || null)
         const raw = s?.settings?.branches || []
         const anyCorrupted = raw.length > 0 && raw.some(b => isCorrupted(b))
         if (raw.length > 0 && !anyCorrupted) {
@@ -352,12 +356,13 @@ export default function Reports() {
   // تصدير القسم المختار بالفترة والفرع نفسيهما، من أرقام الشاشة نفسها (src/lib/reportExport.js)
   function currentModel() {
     const ctx = { tab: activeTab, org: projectName, from, to, branch: selectedBranch, branches, generatedAt: new Date(), engineSummary,
-      prevEntriesCount: prevEntries.length, data, balances, bankAccounts }
+      prevEntriesCount: prevEntries.length, data, balances, bankAccounts, projectSettings: banksReady ? projectSettings : null }
     if (activeTab === 'sales') ctx.s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
     if (activeTab === 'purchases') ctx.x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
     return reportModel(ctx)
   }
   async function exportAs(kind) {
+    if (activeTab === 'balance' && paymentWorkflow(projectSettings) && !banksReady) { setExportError('أعد تحميل الحسابات قبل تصدير الأرصدة المتاحة للتشغيل.'); return }
     if (!data || loading || loadError || exporting) return
     setExporting(kind); setExportError('')
     try {
@@ -873,6 +878,9 @@ export default function Reports() {
                 </Panel>
               )}
 
+              {paymentWorkflow(projectSettings) && <Panel title="الأرصدة البنكية المتاحة للتشغيل"><div className="ts-panel-body">
+                {banksReady ? <><CalcRows k="balance.operating" rows={operatingBankRows(bankAccounts, balances.bankByAccount, projectSettings)}/><p>{OPERATING_BALANCE_NOTE}</p></> : <p>لم يكتمل تحميل الحسابات؛ لا يمكن حساب المتاح للتشغيل.</p>}
+              </div></Panel>}
               <Panel title="ملخص الفترة" icon={Landmark} subtitle={`${rangeText}`}>
                 <div className="ts-panel-body">
                   <CalcRows k="balance.calc" rows={[

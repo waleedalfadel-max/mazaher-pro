@@ -20,6 +20,7 @@ export function manualInvoice(invoice, fields, categories) {
   if (!fields.confirmed) throw new Error('أكّد مراجعة الصورة والأرقام التي ستُسجَّل.')
   const next = { ...invoice, _id: invoice._id || newRequestId(), description: String(fields.description || '').trim(), date: fields.date }
   if (fields.bankAccountId !== undefined) next.bankAccountId = fields.bankAccountId
+  if (fields.bankTransfer !== undefined) next.bankTransfer = { ...fields.bankTransfer }
   if (fields.bankAccounts !== undefined) next.bankAccounts = { ...fields.bankAccounts }
   // هوية مورد «آجل — باسم المورد» ثابتة من لحظة فتح المراجعة (fields.supplierName، وهو المعروض في النافذة): تعديل الوصف مستقل
   // عنها، فلا يتحول الاسم المرسل إلى الوصف الجديد ولا يُنشأ مورد جديد بسببه (مراجعة 0e0a5f1). «مورد من القائمة» بمعرّفه كما هو.

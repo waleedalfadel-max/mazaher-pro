@@ -157,6 +157,8 @@ export function balanceAfter(balance, inv) {
 
 /** سجل الإيصال (history من الخادم) بجملة: الدفعة المرتبطة حُذفت فعاد الإيصال للمراجعة. */
 export function receiptHistoryNote(history) {
+  const bank = Array.isArray(history) ? [...history].reverse().find(h => h?.action === 'bank_transfer_deleted') : null
+  if (bank) return `عاد التحويل للمراجعة بعد حذف طرفيه من القيد ${bank.journal_number || ''}. السبب: ${bank.reason || '—'}. البيانات الظاهرة هي التي أكدها المراجع؛ القراءة الأصلية محفوظة.`
   const last = Array.isArray(history) ? [...history].reverse().find(h => h?.event === 'payment_deleted') : null
   if (!last) return null
   const at = last.at ? String(last.at).slice(0, 10) : ''

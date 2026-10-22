@@ -1,3 +1,5 @@
+import BankTransferManage from '../components/BankTransferManage.jsx'
+import { BANK_TRANSFER_TYPE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { BookOpen, CalendarDays, Info, Landmark, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -158,6 +160,7 @@ export default function Ledger() {
   const [loading, setLoading]       = useState(true)
   const [types, setTypes]           = useState([])
   const [editRow, setEditRow]       = useState(null)
+  const [bankTransferEdit, setBankTransferEdit] = useState(null)
   const [activePeriod, setActivePeriod] = useState('month')
   const [filter, setFilter]         = useState({ ...getRange('month'), type: '' })
   const [newRow, setNewRow]           = useState(null)
@@ -332,7 +335,8 @@ export default function Ledger() {
     ? (filter.from === filter.to ? formatDate(filter.from, { year: true }) : `${formatDate(filter.from, { year: filter.from.slice(0, 4) !== filter.to.slice(0, 4) })} – ${formatDate(filter.to, { year: true })}`)
     : 'كل التواريخ'
 
-  const openEdit = r => { setActionError(''); setTried(false); setEditRow({ ...r }) }
+  const openEdit = r => { setActionError(''); setTried(false); if (r.type === BANK_TRANSFER_TYPE) setBankTransferEdit({ id: r.document_invoice_id, action: 'update' }); else setEditRow({ ...r }) }
+  const askDelete = r => r.type === BANK_TRANSFER_TYPE ? setBankTransferEdit({ id: r.document_invoice_id, action: 'delete' }) : setDeleting(r)
   const newCheck = newRow && tried ? validateEntry(newRow) : null
   const editCheck = editRow && tried ? validateEntry(editRow) : null
 
@@ -343,7 +347,7 @@ export default function Ledger() {
     <div className="ldg-actions">
       {linkButton(r)}
       {!isSupplierPaymentType(r.type) && <Button size="sm" variant="quiet" icon={Pencil} onClick={() => openEdit(r)}>تعديل</Button>}
-      <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); setDeleting(r) }}>حذف</Button>
+      <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); askDelete(r) }}>حذف</Button>
     </div>
   )
 
@@ -351,7 +355,7 @@ export default function Ledger() {
     <div className="ldg-actions">
       {linkButton(r, 'icon')}
       {!isSupplierPaymentType(r.type) && <IconButton bare label="تعديل" icon={Pencil} onClick={() => openEdit(r)} />}
-      <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); setDeleting(r) }} />
+      <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); askDelete(r) }} />
     </div>
   )
 
@@ -467,6 +471,7 @@ export default function Ledger() {
       )}
 
       {/* إضافة حركة */}
+      {bankTransferEdit && <BankTransferManage invoiceId={bankTransferEdit.id} action={bankTransferEdit.action} accounts={bankAccounts} onClose={()=>setBankTransferEdit(null)} onSaved={()=>load(projectId)}/>}
       <Dialog open={!!newRow} onClose={() => !saving && setNewRow(null)} title="إضافة حركة جديدة"
         description="تُسجَّل الحركة معتمدة برقم قيد جديد. أدخل المبلغ في خانة الحساب الذي تحرك."
         footer={<>

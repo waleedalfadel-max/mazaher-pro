@@ -1,3 +1,5 @@
+import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices } from '../lib/paymentWorkflow.js'
+import BankTransferFields from '../components/BankTransferFields.jsx'
 import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Ban, Check, CircleAlert, FileSearch, FileText, FlaskConical, Inbox, Info, Layers, ListChecks, LoaderCircle, Maximize2, Plus, RefreshCw, Save, ScanText, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
@@ -140,6 +142,17 @@ export default function PendingDocuments() {
   // إعداد المنشأة حسب الفرع (20261014140000): القنوات المفعلة، والحسابات البنكية، وقاموس الأصناف. منشأة بلا إعداد: كما كانت
   const [projectSettings, setProjectSettings] = useState(null)
   const [bankAccounts, setBankAccounts] = useState([])
+  const [bankAccountsReady, setBankAccountsReady] = useState(false)
+  const [setupError, setSetupError] = useState('')
+  async function loadPaymentSetup(pid) {
+    setSetupError(''); setBankAccountsReady(false)
+    try {
+      const [s,b] = await Promise.all([getProjectSettings(pid),supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id',pid).order('sort_order')])
+      if (pidRef.current !== pid) return
+      if (!s?.settings || b.error) throw new Error('setup')
+      setBranches(s.settings.branches || []);setProjectSettings(s.settings);setBankAccounts(b.data || []);setBankAccountsReady(true)
+    } catch { if(pidRef.current===pid)setSetupError('تعذّر تحميل الحسابات واقتراحاتها. أعد المحاولة قبل الاعتماد.') }
+  }
   const [ruleIndex, setRuleIndex] = useState(() => new Map())
   const [projects,   setProjects]     = useState([])
   const [projMap,    setProjMap]      = useState({})
@@ -173,9 +186,7 @@ export default function PendingDocuments() {
     } else if (projectId) {
       getTransactionTypes(projectId).then(setTransTypes)
       supabase.rpc('approval_mode', { p_project_id: projectId }).then(({ data }) => setModes(m => ({ ...m, [projectId]: data || 'legacy' })))
-      getProjectSettings(projectId).then(s => { setBranches(s?.settings?.branches || []); setProjectSettings(s?.settings || null) })
-      supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
-        .then(({ data }) => setBankAccounts(data || []))
+      loadPaymentSetup(projectId)
       supabase.from('item_category_rules').select('description_norm,category_id,subcategory_id,status,note').eq('project_id', projectId)
         .then(({ data }) => setRuleIndex(indexRules(data || [])))
       loadDocs(projectId).then(() => setLoading(false))
@@ -251,7 +262,7 @@ export default function PendingDocuments() {
 
   async function loadDocs(pid) {
     let q = supabase.from('documents')
-      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,file_url,branch,purchase_category,category_main,category_sub,project_id')
+      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,created_by_role,file_url,branch,purchase_category,category_main,category_sub,project_id')
       .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
     if (pid) q = q.eq('project_id', pid)
@@ -275,7 +286,20 @@ export default function PendingDocuments() {
   function updateDoc(id, patch) {
     // تعديل من المستخدم (لا نتيجة قراءة جديدة ولا حالة بعد اعتماد جزئي): «تعديلات لم تُحفظ» حتى «حفظ مسودة» أو الاعتماد
     if (patch._edit && patch._state === undefined) patch = { _v2Error: null, ...patch, _dirty: true }
-    setDocs(ds => ds.map(d => d.id === id ? { ...d, ...patch } : d))
+    setDocs(ds => ds.map(d => {
+      if (d.id !== id) return d
+      const next = { ...d, ...patch }
+      // Preserve confirmed/cleared payment choices across reload in this user's existing isolated browser draft.
+      if (paymentWorkflow(projectSettings) && patch._edit && patch._state === undefined
+          && JSON.stringify(documentPaymentChoices(d._edit)) !== JSON.stringify(documentPaymentChoices(patch._edit))) {
+        const store = draftStore(), at = Date.now()
+        const extras = Object.fromEntries(DRAFT_EXTRAS.filter(k => next[k] !== undefined).map(k => [k, next[k]]))
+        if (store && storeDraft(store, scopeOf(next), next, next._edit, extras, at)) {
+          next._dirty = false; next._draftSavedAt = at
+        } else next._error = 'تغيّر الاختيار، لكن تعذّر حفظ المسودة في هذا المتصفح. لا تغادر الصفحة قبل الاعتماد أو حفظ المسودة.'
+      }
+      return next
+    }))
   }
   // يعيد true إذا حُفظت المسودة فعلًا، وfalse إن فشل التخزين (ممتلئ أو معطّل) فيبقى المستند «معدّلًا غير محفوظ»
   function saveDraftFor(doc) {
@@ -788,6 +812,10 @@ export default function PendingDocuments() {
         const list = src.invoices?.length ? src.invoices : [src]
         edit = { ...(ar._localStub ? { _localStub: true } : {}), invoices: list.map((x, i) => ({ ...x, _id: x._id || ar.invoices[i]?._id })) }
       }
+      if (d._draftSavedAt || data.invoices?.some(x => x.history?.length)) {
+        const mark = x => ({ ...x, _paymentInitialized: true })
+        edit = edit?.invoices ? { ...edit, invoices: edit.invoices.map(mark) } : mark(edit)
+      }
       const next = { ...d, status: data.status, analysis_result: ar, _edit: edit, _v2: { version: data.version, invoices: data.invoices, mode: data.mode } }
       if (d._draftSavedAt) { const store = draftStore(); if (store) storeDraft(store, scopeOf(next), next, next._edit, {}, d._draftSavedAt) }
       return next
@@ -795,6 +823,7 @@ export default function PendingDocuments() {
   }
 
   async function approveV2(doc, target = 'all') {
+    if (!bankAccountsReady || !projectSettings) { updateDoc(doc.id,{_state:doc._state,_error:'لم يكتمل تحميل الحسابات. أعد المحاولة قبل الاعتماد.'});return }
     if (modeOf(doc) === 'paused') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'paused' } }); return }
     if (!doc._v2) { await prepareV2(doc); return }
     const pid = doc.project_id || pidRef.current
@@ -965,6 +994,14 @@ export default function PendingDocuments() {
   const opened = docs.find(d => d.id === openId)
   useEffect(() => { if (opened && !opened._showImage && !opened._loadingImg && (opened.file_url || opened.file_type)) loadImage(opened) }, [openId, !!opened])
   useEffect(() => { if (opened && modeOf(opened) !== 'legacy' && opened.status === 'analyzed' && !opened._v2) prepareV2(opened) }, [openId, !!opened, opened?.status, modes])
+  // Suggestions wait for the real uploader, account list and stable invoice IDs; never modify the original reading.
+  useLayoutEffect(() => {
+    if (!opened?._v2 || !bankAccountsReady || !projectSettings) return
+    const pending = new Set(opened._v2.invoices.filter(x => x.status === 'pending').map(x => x.id))
+    const before = opened._edit || opened.analysis_result
+    const next = suggestDocumentPayments(before, opened, projectSettings, bankAccounts, {}, pending)
+    if (JSON.stringify(next) !== JSON.stringify(before)) updateDoc(opened.id, { _edit: next, _state: opened._state })
+  }, [opened?._v2, opened?._edit, opened?.branch, bankAccountsReady, projectSettings, bankAccounts])
   // قاموس الأصناف: مرة لكل قراءة، للبنود التي بلا تصنيف فقط (الاعتماد الجديد). صنف «للمراجعة» لا يُصنَّف، يُعلَّم فقط
   useEffect(() => {
     if (!opened || isSuperAdmin || modeOf(opened) === 'legacy' || !ruleIndex.size || !categories.length) return
@@ -1075,6 +1112,7 @@ export default function PendingDocuments() {
             <p>{sum.kind} · رفعه {ROLE_AR[opened.uploaded_by] || opened.uploaded_by || '—'} منذ {timeAgo(opened.uploaded_at)}{opened.branch ? ` · ${opened.branch}` : ''}{isSuperAdmin && projMap[opened.project_id] ? ` · ${projMap[opened.project_id]}` : ''}</p>
           </div>
         </div>
+        {!bankAccountsReady && !isSuperAdmin && <Note tone={setupError ? 'error' : 'info'} action={setupError && <Button onClick={()=>loadPaymentSetup(projectId)}>إعادة تحميل الحسابات</Button>}>{setupError || 'جارٍ تحميل الحسابات واقتراحاتها…'}</Note>}
         {opened._draftStale && (
           <Note tone="warning" icon={CircleAlert} title="لم تُطبَّق مسودة سابقة">
             تغيّرت حالة المستند أو نتيجة قراءته بعد حفظها، فحُذفت. الحقول أدناه من القراءة الحالية.
@@ -1100,7 +1138,7 @@ export default function PendingDocuments() {
           <div className="rp-review-fields"
             onFocus={e => { if (e.target.matches('input, select, textarea')) setTyping(true) }}
             onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setTyping(false) }}>
-            <DocCard key={doc.id} doc={doc} embedded readOnly={isSuperAdmin}
+            <DocCard key={doc.id} doc={doc} embedded readOnly={isSuperAdmin || !bankAccountsReady}
           onManualApprove={manualAllowed ? async (index, invoice) => {
             if (doc.project_id !== projectId || modeOf(doc) === 'legacy') throw new Error('ادخل المنشأة أولًا وانتظر تجهيز المستند.')
             const reviewed = withManualInvoice(doc, index, invoice)
@@ -1116,7 +1154,7 @@ export default function PendingDocuments() {
           onEditCorrection={(f, v) => {
             // لوحة حسابات التصحيح (R2): التعديل يبقي تنبيه «يوجد تقرير» ومربع السبب
             const cur = doc._edit || doc.analysis_result || {}
-            const _edit = cur.invoices?.length === 1 ? { ...cur, invoices: [{ ...cur.invoices[0], [f]: v }] } : { ...cur, [f]: v }
+            const _edit = cur.invoices?.length === 1 ? { ...cur, invoices: [reviewedPayment(cur.invoices[0], { [f]: v })] } : { ...cur, [f]: v }
             updateDoc(doc.id, { _edit, _v2Error: doc._v2Error })
           }}
           onSaveDraft={() => saveDraftFor(doc)}
@@ -1135,19 +1173,21 @@ export default function PendingDocuments() {
             const extra = f === 'transType' ? { _aiSuggestedType: false } : {}
             // إذا wrapped في invoices[0] — عدّل داخل المصفوفة مباشرة
             if (cur.invoices?.length === 1) {
-              updateDoc(doc.id, { ...extra, _edit: { ...cur, invoices: [{ ...cur.invoices[0], [f]: v }] } })
+              updateDoc(doc.id, { ...extra, _edit: { ...cur, invoices: [reviewedPayment(cur.invoices[0], { [f]: v })] } })
             } else {
-              updateDoc(doc.id, { ...extra, _edit: { ...cur, [f]: v } })
+              updateDoc(doc.id, { ...extra, _edit: reviewedPayment(cur, { [f]: v }) })
             }
           }}
           onEditInvoice={(invIdx, f, v) => {
             const cur = doc._edit || doc.analysis_result || {}
-            const invoices = (cur.invoices || []).map((inv, i) => i === invIdx ? { ...inv, [f]: v } : inv)
+            const invoices = (cur.invoices || []).map((inv, i) => i === invIdx ? reviewedPayment(inv, { [f]: v }) : inv)
             updateDoc(doc.id, { _edit: { ...cur, invoices } })
           }}
           // استبدال فاتورة كاملة بتعديل واحد (عدة حقول معًا، مثل نسبة وسيلة دفع غير معروفة إلى قناة): invIdx null = الفاتورة الوحيدة
           onReplaceInvoice={(invIdx, next) => {
             const cur = doc._edit || doc.analysis_result || {}
+            const old = invIdx != null ? cur.invoices?.[invIdx] : cur.invoices?.[0] || cur
+            next = reviewedPayment(old, next)
             if (invIdx != null) updateDoc(doc.id, { _edit: { ...cur, invoices: (cur.invoices || []).map((inv, i) => i === invIdx ? next : inv) } })
             else if (cur.invoices?.length === 1) updateDoc(doc.id, { _edit: { ...cur, invoices: [next] } })
             else updateDoc(doc.id, { _edit: next })
@@ -1387,6 +1427,8 @@ function catOptions(list, current) {
 const BANK_CHANNELS = [{ k: 'network', field: 'networkSales', label: 'الشبكة' }, { k: 'transfer', field: 'transferSales', label: 'التحويل' }]
 function BankAccountField({ invoice, branch, setup, onEdit }) {
   const accounts = setup?.bankAccounts || []
+  if (isBankTransfer(invoice)) return <BankTransferFields invoice={invoice} accounts={accounts} settings={setup?.settings} onEdit={onEdit}/>
+  branch = paymentBranch({ branch }, invoice, setup?.settings)
   if (!accounts.length || !needsBankAccount(invoice)) return null
   const list = eligibleBankAccounts(accounts, branch)
   const opts = list.map(a => ({ value: a.id, label: bankAccountLabel(a) }))
@@ -1416,13 +1458,14 @@ function BankAccountField({ invoice, branch, setup, onEdit }) {
     )
   }
   const value = chosenBankAccount(accounts, branch, invoice?.bankAccountId)
+  const accountNote = bankOperationalNote(setup?.settings, value)
   const stale = invoice?.bankAccountId && invoice.bankAccountId !== value
   // مصروف على مستوى المنشأة: حسابات المنشأة كلها، بلا ذكر فرع
   const projectWide = !branch && invoice?.type === 'expense' && expensesAtProjectLevel(setup?.settings)
   return (
     <Field label="الحساب البنكي" error={!list.length ? (projectWide ? 'لا حساب بنكي نشط للمنشأة.' : `لا حساب بنكي مربوط بفرع «${branch || ''}».`) : stale ? staleMsg : undefined}
-      hint={projectWide ? (list.length === 1 ? 'الحساب الوحيد للمنشأة.' : 'حسابات المنشأة (المصروف على مستوى المنشأة، لا فرع).')
-        : list.length === 1 ? 'الحساب الوحيد المتاح لهذا الفرع.' : branch ? `الحسابات المربوطة بفرع «${branch}».` : 'اختر الفرع أولًا لتظهر حساباته.'}>
+      hint={accountNote || (projectWide ? (list.length === 1 ? 'الحساب الوحيد للمنشأة.' : 'حسابات المنشأة (المصروف على مستوى المنشأة، لا فرع).')
+        : list.length === 1 ? 'الحساب الوحيد المتاح لهذا الفرع.' : branch ? `الحسابات المربوطة بفرع «${branch}».` : 'اختر الفرع أولًا لتظهر حساباته.')} >
       <Select value={value} placeholder="— اختر الحساب —" data-k="bank-account" onChange={e => onEdit('bankAccountId', e.target.value)} options={opts} />
     </Field>
   )
@@ -1733,7 +1776,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
   // "نوع المستند = تحويل" مخصص فقط للتحويلات الداخلية الحقيقية — قصر خيارات "التصنيف الأساسي"
   // على الأنواع التحويلية فقط، مع الحفاظ على أي قيمة محفوظة سابقاً حتى لو لم تعد ضمن الفلتر
   const isTransferDoc      = res?.type === 'transfer'
-  const filteredTransTypes = isTransferDoc ? transTypes.filter(TRANSFER_KINDS) : transTypes
+  const filteredTransTypes = isTransferDoc ? [...new Set([...transTypes.filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : transTypes
 
   // مقارنة على الأساس نفسه (src/lib/documentTotals.js): البنود شاملة الضريبة مع الإجمالي الشامل،
   // والبنود المقروءة قبل الضريبة تُميَّز عن البند الناقص بدل أن تُعرض نقصًا بقيمة الضريبة
@@ -1805,7 +1848,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
     : isMultiInvoice ? `يسجّل ${plural(pendingCount, 'قيدًا واحدًا للفاتورة المتبقية', 'قيدين للفاتورتين المتبقيتين', 'قيود مستقلة للفواتير المتبقية', 'قيدًا مستقلًا للفواتير المتبقية')}.`
     : isSales ? 'يسجّل المبيعات وقيودها حسب طريقة الدفع.'
     : isExpenseItems ? `يسجّل ${plural(entryCount, 'قيدًا واحدًا', 'قيدين', 'قيود', 'قيدًا')} في الدفتر، وعدد البنود ${itemCount}.`
-    : 'يسجّل قيدًا واحدًا في الدفتر.'
+    : isBankTransfer(res) ? 'يسجّل طرفي التحويل معًا: خروجًا من حساب ودخولًا إلى الآخر، دون مصروف أو مبيعات.' : 'يسجّل قيدًا واحدًا في الدفتر.'
   const approveLabel = n => (n === 1 ? 'اعتماد الفاتورة المتبقية' : n === 2 ? 'اعتماد الفاتورتين' : n <= 10 ? `اعتماد ${n} فواتير` : `اعتماد ${n} فاتورة`)
   // مدير المنصة يعرض المنشأة للقراءة فقط: لا اعتماد ولا رفض ولا قراءة (20261009150000)
   const actionBar = (approveCount) => readOnly ? (
@@ -1931,6 +1974,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
           <div className="rp-section">
             <Segment full label="نوع المستند" value={isV2 ? reviewDocumentType(res) : res.type || ''} options={isV2 ? [...TYPE_OPTIONS, RECEIPT_OPTION, LOAN_OPTION] : TYPE_OPTIONS}
               onChange={v => { if (readOnly) return; const next = typeChange(res, v); if (next === undefined) onEdit('type', v); else if (next) onReplaceInvoice(null, next) }} />
+            {res._paymentSuggested && <Note>{res._paymentSuggested}</Note>}
             {isReceipt(res) ? (
               <SupplierReceiptFields invoice={res} documentId={doc.id} suppliers={suppliers} payableSuppliers={payableSuppliers || []} readOnly={readOnly}
                 bankAccounts={setup?.bankAccounts || []} serverDuplicate={serverDup(res._id)} onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })}
@@ -1954,7 +1998,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
                     options={branches.map(b => ({ value: b, label: b }))} />
                 </Field>
               )}
-              {!isSales && (
+              {!isSales && !isBankTransfer(res) && (
                 <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
                   <Select value={res.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
                     options={isLoan ? PAY_OPTIONS.filter(o => o.value !== 'payable') : [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
@@ -2081,7 +2125,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   const isMultiItem  = (invoice.items?.length || 0) > 1
   const isFutureDate = invoice.date && invoice.date > fmtDate(new Date())
   const isTransferDoc      = invoice.type === 'transfer'
-  const filteredTransTypes = isTransferDoc ? transTypes.filter(TRANSFER_KINDS) : transTypes
+  const filteredTransTypes = isTransferDoc ? [...new Set([...transTypes.filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : transTypes
   const totalDisp = isSales
     ? SALES_CHANNELS.reduce((t, c) => t + (Number(invoice[c.key]) || 0), 0)
     : Number(invoice.totalAmount || invoice.amount) || 0
@@ -2117,6 +2161,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
             </Field>
           </div>
         )}
+        {invoice._paymentSuggested && <Note>{invoice._paymentSuggested}</Note>}
         {receipt ? (
           <SupplierReceiptFields invoice={invoice} index={index} documentId={documentId} suppliers={suppliers} payableSuppliers={payableSuppliers}
             bankAccounts={setup?.bankAccounts || []} readOnly={readOnly} serverDuplicate={serverDuplicate} onPatch={patch => onReplace?.({ ...invoice, ...patch })} onContext={onReceiptContext} />
@@ -2131,7 +2176,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           {v2 && !isSales && (
             <Field label="رقم الفاتورة"><Input value={invoice.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} /></Field>
           )}
-          {!isSales && (
+          {!isSales && !isBankTransfer(invoice) && (
             <Field label="مصدر الدفع" error={payError ? 'مطلوب' : undefined}>
               <Select value={invoice.paySource || ''} placeholder="— اختر —" data-k={`pay-source-${index}`} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
                 options={payOptions} />

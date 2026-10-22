@@ -1,3 +1,4 @@
+import { operatingBankRows, OPERATING_BALANCE_NOTE } from './paymentWorkflow.js'
 // تصدير صفحة التقارير — وحدة خالصة (تُختبر في Node).
 // reportModel يبني وصف القسم المختار (المؤشرات والجداول وصفوف الحساب والملاحظات) من أرقام الشاشة نفسها
 // (salesFigures وexpenseFigures في reportFigures.js، وvatFigures في vatTreatment.js، والأرصدة)، فيُبنى منه ملف PDF (reportPdf.js)
@@ -193,6 +194,8 @@ export function reportModel(ctx) {
     // رصيد كل حساب بنكي (منشأة بحسابات فقط) بالصفوف نفسها التي تعرضها الشاشة (bankAccountRows)
     const byAccount = bankAccountRows(ctx.bankAccounts, b.bankByAccount, b.bank)
     if (byAccount.length) blocks.push({ kind: 'calc', id: 'balance.byAccount', title: 'رصيد البنك حسب الحساب', rows: byAccount.map(({ label, value, strong }) => ({ label, value, strong })) })
+    const operating = operatingBankRows(ctx.bankAccounts, b.bankByAccount, ctx.projectSettings)
+    if (operating.length) blocks.push({ kind: 'calc', id: 'balance.operating', title: 'الأرصدة البنكية المتاحة للتشغيل', rows: operating }, { kind: 'note', id: 'balance.operatingNote', text: OPERATING_BALANCE_NOTE })
     blocks.push({ kind: 'calc', id: 'balance.calc', title: 'ملخص الفترة', rows: [
       { label: 'إجمالي المدين (الدخل)', value: d.totalIn, strong: true },
       { label: 'إجمالي الدائن (الخروج)', value: d.totalOut, strong: true },
