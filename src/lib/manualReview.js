@@ -1,4 +1,5 @@
 import { fromHalalas, toHalalas, newRequestId } from './approvalV2.js'
+import { isLoanRepayment } from './loanRepayment.js'
 
 export const MANUAL_CHANNELS = [
   ['cashSales', 'النقدي'], ['networkSales', 'الشبكة / مدى'], ['transferSales', 'التحويل'],
@@ -47,6 +48,7 @@ export function manualInvoice(invoice, fields, categories) {
     const vat = amount(fields.vatAmount, 'الضريبة', true)
     if (total <= 0) throw new Error('إجمالي المستند يجب أن يكون أكبر من صفر.')
     if (vat > total) throw new Error('الضريبة لا تتجاوز إجمالي المستند.')
+    if (isLoanRepayment(invoice) && vat !== 0) throw new Error('افصل الرسوم وضريبتها عن مبلغ سداد أصل القرض قبل اعتماده.')
     next.totalAmount = fromHalalas(total); next.amount = fromHalalas(total); next.vatAmount = fromHalalas(vat)
     if (invoice.type === 'expense') {
       const main = categories.find(c => c.id === fields.categoryId && !c.parent_id && c.is_active !== false)

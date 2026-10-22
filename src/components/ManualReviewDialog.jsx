@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isLoanRepayment, LOAN_NOTE } from '../lib/loanRepayment.js'
 import { Button, DateInput, Dialog, Field, Input, Money, Note, Select, Textarea } from '../ui/components.jsx'
 import { MANUAL_CHANNELS, manualInvoice } from '../lib/manualReview.js'
 import { toHalalas } from '../lib/approvalV2.js'
@@ -14,6 +15,7 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
   const [sending, setSending] = useState(false)
   const edit = (key, value) => { setFields(f => ({ ...f, [key]: value, confirmed: false })); setError('') }
   const sales = invoice.type === 'sales', expense = invoice.type === 'expense'
+  const loan = isLoanRepayment(invoice)
   const parents = categories.filter(c => !c.parent_id && c.is_active !== false)
   const children = categories.filter(c => c.parent_id === fields.categoryId && c.is_active !== false)
   const accountBranch = expense && expensesAtProjectLevel(setup?.settings) ? null : branch
@@ -53,7 +55,7 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
     <Note tone="warning" title="الأرقام أدناه هي التي ستُسجَّل">
       {sales ? 'أدخل صافي كل قناة بعد المرتجعات. الإجمالي المعتمد هو مجموع هذه القنوات بدل إجمالي القراءة، ولا تُخصم المرتجعات مرة ثانية.'
         : expense ? 'سيُسجَّل الإجمالي شامل الضريبة وبعد الخصم على تصنيف واحد تختاره هنا، بدل تفاصيل البنود المقروءة. لتوزيعه على عدة تصنيفات، ارجع وصحّح البنود من المستند.'
-          : 'سيُسجَّل المبلغ الذي تؤكده بدل مبلغ القراءة.'}
+          : loan ? LOAN_NOTE : 'سيُسجَّل المبلغ الذي تؤكده بدل مبلغ القراءة.'}
     </Note>
     <fieldset disabled={sending} style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="ts-form-grid">
@@ -62,7 +64,8 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
         {sales ? MANUAL_CHANNELS.map(([key, label]) => <Field key={key} label={`صافي ${label}`}>
           <Input inputMode="decimal" dir="ltr" value={fields[key] ?? ''} onChange={e => edit(key, e.target.value)} />
         </Field>) : <>
-          <Field label="الإجمالي المعتمد شامل الضريبة"><Input inputMode="decimal" dir="ltr" value={fields.totalAmount} onChange={e => edit('totalAmount', e.target.value)} /></Field>
+          {loan && <Field label="القرض / القسط"><strong data-k="manual-loan-type">{invoice.transType || 'غير محدد — اختره في المستند'}</strong></Field>}
+          <Field label={loan ? 'مبلغ سداد أصل القرض المعتمد' : 'الإجمالي المعتمد شامل الضريبة'}><Input inputMode="decimal" dir="ltr" value={fields.totalAmount} onChange={e => edit('totalAmount', e.target.value)} /></Field>
           <Field label="الضريبة ضمن الإجمالي"><Input inputMode="decimal" dir="ltr" value={fields.vatAmount} onChange={e => edit('vatAmount', e.target.value)} /></Field>
         </>}
         {expense && <>
