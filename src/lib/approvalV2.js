@@ -3,6 +3,7 @@
 // الفحص هنا للعرض فقط؛ الخادم يعيد الفحص نفسه ويرفض ما يخالفه.
 import { STALE_MESSAGE } from './appVersion.js'
 import { isLoanRepayment, loanAmount, loanBlockReason, hasLoanPrincipalConfirmation } from './loanRepayment.js'
+import { bankTransferPayment } from './paymentWorkflow.js'
 
 /** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
 export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : 'network' })
@@ -134,6 +135,7 @@ export function reviewChanges(original, final) {
  * الخادم يحسب القيود والضريبة ويرفض الفرق.
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
+  inv = bankTransferPayment(inv)
   const loan = isLoanRepayment(inv)
   if (loan) {
     const reason = loanBlockReason(inv, transTypes)

@@ -50,8 +50,96 @@ await page.exposeFunction('dbRpc',(name,args)=>serial(async()=>{
 }))
 async function mount(id,role='accountant',kind='pending',props={}){await page.evaluate(({id,role,kind,props,settings,projectId,userId})=>{window.settings=settings;window.auth={projectId,userId,role,isSuperAdmin:role==='superadmin',viewState:'ok',canEdit:true,projectName:'Synthetic A'};window.mount(id,kind,props)},{id,role,kind,props,settings,projectId:f.p1,userId:role==='superadmin'?f.admin:f.acc})}
 const account=()=>page.locator('[data-k="bank-account"]')
+async function reviewRegressions(){
+ const policy=settings.bank_workflow
+ const setPolicy=async enabled=>{
+  if(enabled)settings.bank_workflow=policy;else delete settings.bank_workflow
+  await f.db.query('update project_settings set settings=$2 where project_id=$1',[f.p1,JSON.stringify(settings)])
+ }
+ const approveButton=async button=>{
+  await page.evaluate(()=>window.lastApproval=null);await button.click()
+  await page.waitForFunction(()=>window.lastApproval)
+  assert.equal((await page.evaluate(()=>window.lastApproval)).ok,true,JSON.stringify(await page.evaluate(()=>window.lastApproval)))
+  await queue
+ }
+ const savedPayment=async(id,expected)=>{
+  await page.waitForFunction(({id,expected})=>Object.keys(sessionStorage).some(k=>{
+   if(!k.endsWith(':'+id))return false
+   const e=JSON.parse(sessionStorage.getItem(k)).edit,inv=e?.invoices?.[0]||e
+   return inv&&Object.entries(expected).every(([key,value])=>JSON.stringify(inv[key])===JSON.stringify(value))
+  }),{id,expected})
+ }
+ if(process.env.PAYMENT_REVIEW_ONLY!=='bank') {
+  for(const enabled of [false,true]) {
+   await setPolicy(enabled)
+   const id=await makeDoc('accountant',{type:'transfer',transType:'📥 تحصيل ذمم جاهز',amount:17,date:'2026-10-18',description:'Collection without a source'})
+   await mount(id);const source=page.getByLabel('مصدر الدفع',{exact:true});await source.waitFor()
+   assert.equal(await source.inputValue(),enabled?'bank':'')
+   await source.selectOption('bank');await account().selectOption(purchase)
+   if(!enabled)await page.getByRole('button',{name:'حفظ مسودة',exact:true}).click()
+   await savedPayment(id,{paySource:'bank',bankAccountId:purchase})
+   await mount(id);await source.waitFor();assert.equal(await source.inputValue(),'bank');assert.equal(await account().inputValue(),purchase)
+   await approveButton(page.getByRole('button',{name:'اعتماد',exact:true}))
+   const row=await f.one('select bank_account_id,bank_in,receivable_out,branch from ledger_entries where document_id=$1',[id])
+   assert.equal(row.bank_account_id,purchase);assert.equal(Number(row.bank_in),17);assert.equal(Number(row.receivable_out),17)
+   assert.equal(row.branch,enabled?null:'North')
+   check('app source is editable and survives reload, then approves to the visible bank: workflow '+enabled)
+  }
+  await setPolicy(false)
+  const multi=await makeDoc('accountant',{invoices:[
+   {type:'transfer',transType:'📥 تحصيل ذمم هنقر',amount:18,date:'2026-10-18',description:'First app'},
+   {type:'transfer',transType:'📥 تحصيل ذمم جاهز',amount:19,date:'2026-10-18',description:'Second app'}]})
+  await mount(multi);await page.locator('.rp-subinv').first().waitFor()
+  for(let n=0;n<2;n++){
+   const panel=page.locator('.rp-subinv').nth(n);await panel.locator('summary').click()
+   await panel.locator(`[data-k="pay-source-${n}"]`).selectOption('bank')
+   await panel.locator('[data-k="bank-account"]').selectOption(n===0?main:purchase)
+  }
+  await approveButton(page.getByRole('button',{name:'اعتماد هذه الفاتورة وحدها',exact:true}).first())
+  await approveButton(page.getByRole('button',{name:'اعتماد الفاتورة المتبقية',exact:true}))
+  const rows=(await f.db.query('select bank_account_id,bank_in from ledger_entries where document_id=$1 order by bank_in',[multi])).rows
+  assert.equal(rows.length,2);assert.equal(rows[0].bank_account_id,main);assert.equal(rows[1].bank_account_id,purchase)
+  check('multi-invoice app collections without workflow approve individually and as the remaining batch')
+ }
+ if(process.env.PAYMENT_REVIEW_ONLY!=='app'){
+  for(const enabled of [true,false]){
+   await setPolicy(enabled)
+   const id=await makeDoc('accountant',{type:'transfer',transType:'🔄 تحويل داخلي — بين الحسابات البنكية',amount:21,date:'2026-10-18',description:'Preclassified bank pair without source'})
+   await mount(id);await page.locator('[data-k="bank-transfer-from"]').selectOption(main)
+   await page.locator('[data-k="bank-transfer-to"]').selectOption(purchase)
+   if(!enabled)await page.getByRole('button',{name:'حفظ مسودة',exact:true}).click()
+   await savedPayment(id,{bankTransfer:{from:main,to:purchase}})
+   await mount(id);await page.locator('[data-k="bank-transfer-from"]').waitFor()
+   assert.equal(await page.locator('[data-k="bank-transfer-from"]').inputValue(),main)
+   await approveButton(page.getByRole('button',{name:'اعتماد',exact:true}))
+   const rows=(await f.db.query('select bank_in,bank_out from ledger_entries where document_id=$1 order by bank_out desc',[id])).rows
+   assert.equal(rows.length,2);assert.equal(Number(rows[0].bank_out),21);assert.equal(Number(rows[1].bank_in),21)
+   const reading=await f.one('select original_reading,approved_payload from approval_private.document_invoices where document_id=$1',[id])
+   assert.equal(reading.original_reading.paySource,undefined);assert.equal(reading.approved_payload.paySource,'bank')
+   check('preclassified bank pair without source approves after draft reload, original preserved: workflow '+enabled)
+  }
+  await setPolicy(true)
+  const multi=await makeDoc('accountant',{invoices:[22,23].map(amount=>({type:'transfer',transType:'🔄 تحويل داخلي — بين الحسابات البنكية',amount,date:'2026-10-18',description:'Preclassified pair '+amount}))})
+  await mount(multi);await page.locator('.rp-subinv').first().waitFor()
+  for(let n=0;n<2;n++){
+   const panel=page.locator('.rp-subinv').nth(n);await panel.locator('summary').click()
+   await panel.locator('[data-k="bank-transfer-from"]').selectOption(main)
+   await panel.locator('[data-k="bank-transfer-to"]').selectOption(purchase)
+  }
+  await approveButton(page.getByRole('button',{name:'اعتماد هذه الفاتورة وحدها',exact:true}).first())
+  await approveButton(page.getByRole('button',{name:'اعتماد الفاتورة المتبقية',exact:true}))
+  const rows=(await f.db.query('select bank_in,bank_out from ledger_entries where document_id=$1',[multi])).rows
+  assert.equal(rows.length,4);assert.equal(rows.reduce((sum,r)=>sum+Number(r.bank_in),0),45)
+  assert.equal(rows.reduce((sum,r)=>sum+Number(r.bank_out),0),45)
+  check('two preclassified bank pairs without source approve individually and in the remaining batch')
+ }
+ await setPolicy(true)
+}
 try{
- await page.goto('http://fixture.local/');await page.addScriptTag({path:bundle});await mount(doc)
+ await page.goto('http://fixture.local/');await page.addScriptTag({path:bundle})
+ await reviewRegressions()
+ if(!process.env.PAYMENT_REVIEW_ONLY){
+ await mount(doc)
  await page.getByText(/المصدر المقترح لأن الرافع المالك/).waitFor();assert.equal(await account().inputValue(),main);check('real review page suggests owner main account')
  await account().selectOption(purchase);await page.getByText(/مسودة محفوظة في هذه النافذة فقط/).first().waitFor();await mount(doc);await account().waitFor();assert.equal(await account().inputValue(),purchase);check('manual account survives page remount with real browser draft')
  await account().selectOption('');await mount(doc);await account().waitFor();assert.equal(await account().inputValue(),'');check('explicitly cleared choice is not replaced on reload')
@@ -85,7 +173,7 @@ try{
  const transfer=await makeDoc('owner',{type:'transfer',transType:'🔄 تحويل داخلي — بين الحسابات البنكية',paySource:'bank',amount:35,date:'2026-10-21',description:'Synthetic bank transfer'})
  await mount(transfer);await page.locator('[data-k="bank-transfer-from"]').selectOption(main);assert.equal(await page.locator('[data-k="bank-transfer-to"]').inputValue(),purchase)
  await page.evaluate(()=>window.lastApproval=null);await page.getByRole('button',{name:'اعتماد',exact:true}).click();await page.waitForFunction(()=>window.lastApproval);assert.equal((await page.evaluate(()=>window.lastApproval)).ok,true);await queue
- const pair=await f.one('select * from approval_private.bank_transfers where project_id=$1',[f.p1]);assert(pair);check('bank transfer shows suggested destination and approves both ledger legs')
+ const pair=await f.one('select p.* from approval_private.bank_transfers p join approval_private.document_invoices i on i.id=p.invoice_id where i.document_id=$1',[transfer]);assert(pair);check('bank transfer shows suggested destination and approves both ledger legs')
  const banks=(await f.db.query('select * from bank_accounts where project_id=$1',[f.p1])).rows
  await mount('', 'superadmin','manage',{invoiceId:pair.invoice_id,action:'update',accounts:banks});await page.getByLabel('مبلغ التحويل',{exact:true}).fill('39.50');await page.getByLabel('سبب الإجراء').fill('Reviewed on screen');await page.getByRole('button',{name:'حفظ طرفي التحويل'}).click();await page.waitForFunction(()=>window.saved)
  const updated=await f.rpc(f.admin,'bank_transfer_manage',[pair.invoice_id]);assert.equal(updated.source.bank_out,39.5);assert.equal(updated.destination.bank_in,39.5);check('bank transfer dialog edits both sides from actual screen')
@@ -94,6 +182,7 @@ try{
  await page.getByRole('button',{name:'حفظ مهام الحسابات'}).click();await page.getByText('حُفظت مهام الحسابات وسُجّل التعديل باسم إدارة تحسيب.').waitFor();const stored=await f.one('select settings from project_settings where project_id=$1',[f.p1]);assert.equal(stored.settings.bank_workflow.uploaders.owner.account_id,purchase)
  assert.equal(stored.settings.bank_workflow.transfer_by_branch.North,purchase);assert.equal(stored.settings.bank_workflow.network_by_branch.North,network)
  check('admin workflow screen saves uploader and per-channel defaults independently')
+ }
  assert.deepEqual(errors,[]);check('no page errors')
  console.log(JSON.stringify({passed:checks}))
 }finally{await queue;await browser.close();await f.db.close();await rm(dir,{recursive:true,force:true})}

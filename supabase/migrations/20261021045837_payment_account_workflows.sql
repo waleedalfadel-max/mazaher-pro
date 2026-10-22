@@ -180,6 +180,7 @@ revoke all on approval_private.bank_transfers from public,anon,authenticated;
 create or replace function approval_private.check_bank_transfer_pair()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare p approval_private.bank_transfers; s public.ledger_entries; t public.ledger_entries; eid uuid;
+ i approval_private.document_invoices;
 begin
  eid:=case when tg_op='DELETE' then old.id else new.id end;
  select * into p from approval_private.bank_transfers where source_entry=eid or destination_entry=eid;
@@ -203,6 +204,19 @@ begin
   or exists(select 1 from (values (s),(t)) r(e) where coalesce((r.e).cash_in,0)<>0 or coalesce((r.e).cash_out,0)<>0
    or coalesce((r.e).custody_in,0)<>0 or coalesce((r.e).custody_out,0)<>0 or coalesce((r.e).receivable_in,0)<>0
    or coalesce((r.e).receivable_out,0)<>0 or coalesce((r.e).payable_in,0)<>0 or coalesce((r.e).payable_out,0)<>0 or coalesce((r.e).vat_amount,0)<>0)
+ then raise exception 'APPROVAL:bank_transfer_pair_edit'; end if;
+ -- Balance alone does not authorize an edit. The private approval record must agree too;
+ -- only approval/manage can update it, with the real actor and a reason in its history.
+ -- Deferred until commit so the two legs and the private record can change atomically.
+ select * into i from approval_private.document_invoices where id=p.invoice_id;
+ if i.id is null or i.status is distinct from 'approved' or i.kind is distinct from 'transfer'
+  or i.project_id is distinct from p.project_id or i.document_id is distinct from s.document_id
+  or i.journal_number is distinct from s.journal_number or i.total is distinct from s.bank_out
+  or i.invoice_date is distinct from s.date
+  or nullif(i.approved_payload->'bankTransfer'->>'from','')::uuid is distinct from s.bank_account_id
+  or nullif(i.approved_payload->'bankTransfer'->>'to','')::uuid is distinct from t.bank_account_id
+  or coalesce(nullif(btrim(i.approved_payload->>'description'),''),
+       (select file_name from public.documents where id=i.document_id)) is distinct from s.description
  then raise exception 'APPROVAL:bank_transfer_pair_edit'; end if;
  return null;
 end $$;

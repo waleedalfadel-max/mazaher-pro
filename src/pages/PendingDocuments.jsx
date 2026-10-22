@@ -1,4 +1,4 @@
-import { BANK_TRANSFER_TYPE, isBankTransfer, isAppCollection, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices } from '../lib/paymentWorkflow.js'
+import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices } from '../lib/paymentWorkflow.js'
 import BankTransferFields from '../components/BankTransferFields.jsx'
 import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -996,7 +996,7 @@ export default function PendingDocuments() {
   useEffect(() => { if (opened && modeOf(opened) !== 'legacy' && opened.status === 'analyzed' && !opened._v2) prepareV2(opened) }, [openId, !!opened, opened?.status, modes])
   // Suggestions wait for the real uploader, account list and stable invoice IDs; never modify the original reading.
   useLayoutEffect(() => {
-    if (!opened?._v2 || !bankAccountsReady || !paymentWorkflow(projectSettings)) return
+    if (!opened?._v2 || !bankAccountsReady || !projectSettings) return
     const pending = new Set(opened._v2.invoices.filter(x => x.status === 'pending').map(x => x.id))
     const before = opened._edit || opened.analysis_result
     const next = suggestDocumentPayments(before, opened, projectSettings, bankAccounts, {}, pending)
@@ -1998,7 +1998,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
                     options={branches.map(b => ({ value: b, label: b }))} />
                 </Field>
               )}
-              {!isSales && !isBankTransfer(res) && !isAppCollection(res) && (
+              {!isSales && !isBankTransfer(res) && (
                 <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
                   <Select value={res.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
                     options={isLoan ? PAY_OPTIONS.filter(o => o.value !== 'payable') : [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
@@ -2176,7 +2176,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           {v2 && !isSales && (
             <Field label="رقم الفاتورة"><Input value={invoice.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} /></Field>
           )}
-          {!isSales && !isBankTransfer(invoice) && !isAppCollection(invoice) && (
+          {!isSales && !isBankTransfer(invoice) && (
             <Field label="مصدر الدفع" error={payError ? 'مطلوب' : undefined}>
               <Select value={invoice.paySource || ''} placeholder="— اختر —" data-k={`pay-source-${index}`} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
                 options={payOptions} />

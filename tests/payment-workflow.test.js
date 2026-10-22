@@ -57,7 +57,9 @@ test('one sales report proposes separate accounts for network and customer trans
 test('app receipts settle receivables across company branches; other transfers never use uploader defaults',()=>{
  const app={type:'transfer',transType:'📥 تحصيل ذمم هنقر',amount:50}
  assert.equal(propose('owner',app).bankAccountId,'restricted');assert.equal(paymentBranch({branch:'North'},app,settings),null)
- for(const transType of ['تحصيل ذمم عميل','صرف عهدة',BANK_TRANSFER_TYPE])assert.equal(propose('owner',{type:'transfer',transType}).bankAccountId,undefined)
+ for(const transType of ['تحصيل ذمم عميل','صرف عهدة'])assert.equal(propose('owner',{type:'transfer',transType}).bankAccountId,undefined)
+ // Bank-pair normalization deliberately clears the unused single-account field.
+ assert.equal(propose('owner',{type:'transfer',transType:BANK_TRANSFER_TYPE}).bankAccountId,'')
 })
 test('loan outflows use uploader proposals but never synthesize principal confirmation',()=>{
  const inv={type:'transfer',transferPurpose:'loan_repayment',transType:'💳 قرض ١',amount:25,totalAmount:25,vatAmount:0}
@@ -78,6 +80,27 @@ test('internal transfer payload preserves both accounts even on an old expense-c
  const inv=reviewedPayment({...expense,type:'transfer'},{transType:BANK_TRANSFER_TYPE,bankTransfer:{from:'main',to:'purchase'}})
  const p=buildInvoicePayload(inv,{categories:[],transTypes:[],purchaseCategory:'Old expense',original:expense})
  assert.equal(p.transType,BANK_TRANSFER_TYPE);assert.equal(p.paySource,'bank');assert.deepEqual(p.bankTransfer,{from:'main',to:'purchase'})
+})
+
+test('pre-classified bank transfers derive their bank source on load, draft restore and payload preparation',()=>{
+ const inv={type:'transfer',transType:BANK_TRANSFER_TYPE,amount:25,bankTransfer:{from:'main',to:'purchase'}}
+ for(const policy of [settings,{}])for(const paySource of [undefined,'','cash']) {
+  const read={...inv,paySource,_paymentInitialized:true,bankAccountId:'old'}
+  const next=suggestInvoicePayment(read,{},policy,accounts)
+  assert.equal(next.paySource,'bank');assert.equal(next.bankAccountId,'')
+  assert.deepEqual(next.bankTransfer,inv.bankTransfer)
+  const draft=suggestInvoicePayment(read,{},policy,accounts,{type:'transfer',transType:BANK_TRANSFER_TYPE,paySource:''})
+  assert.equal(draft.paySource,'bank')
+  assert.equal(buildInvoicePayload(read,{categories:[],transTypes:[]}).paySource,'bank')
+  assert.equal(read.paySource,paySource)
+ }
+})
+
+test('app collections without workflow retain their missing or chosen source for review',()=>{
+ const inv={type:'transfer',transType:'📥 تحصيل ذمم جاهز',amount:20}
+ assert.equal(suggestInvoicePayment(inv,{}, {},accounts).paySource,undefined)
+ const reviewed=reviewedPayment(propose('owner',inv),{paySource:'cash'})
+ assert.equal(propose('owner',reviewed).paySource,'cash')
 })
 
 test('audit records changes to each nested bank choice, not an opaque object string',()=>{

@@ -7,6 +7,9 @@ export const UPLOADER_ROLES = { owner: 'المالك', purchasing: 'مسؤول �
 export const paymentWorkflow = settings => settings?.bank_workflow?.version === 1 ? settings.bank_workflow : null
 export const isBankTransfer = inv => inv?.type === 'transfer' && inv.transType === BANK_TRANSFER_TYPE
 export const isAppCollection = inv => inv?.type === 'transfer' && /تحصيل ذمم/.test(inv.transType || '') && /هنقر|جاهز|مرسول|كيتا|نينجا/.test(inv.transType || '')
+// A bank-to-bank transfer has two explicit bank accounts, never a separate cash/custody source.
+// Apply on every review path (including restored drafts), not just when its type is selected manually.
+export const bankTransferPayment = inv => isBankTransfer(inv) ? { ...inv, paySource: 'bank', bankAccountId: '' } : inv
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k)
 const PAYMENT_FIELDS = ['paySource', 'bankAccountId', 'bankAccounts', 'bankTransfer']
 
@@ -29,8 +32,9 @@ export function documentPaymentChoices(result, pendingIds = null) {
 export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null) {
   if (!inv) return inv
   if (saved && saved.type === inv.type && (saved.paymentMode || null) === (inv.paymentMode || null) && (inv.type !== 'transfer' || saved.transType === inv.transType)) {
-    return { ...inv, ...Object.fromEntries(PAYMENT_FIELDS.filter(k => own(saved, k)).map(k => [k, saved[k]])), _paymentSuggested: false }
+    return bankTransferPayment({ ...inv, ...Object.fromEntries(PAYMENT_FIELDS.filter(k => own(saved, k)).map(k => [k, saved[k]])), _paymentSuggested: false })
   }
+  if (isBankTransfer(inv)) return bankTransferPayment(inv)
   const policy = paymentWorkflow(settings)
   if (!policy || inv._paymentInitialized) return inv
   if (inv.type === 'sales' && !inv.branch && !doc?.branch) return inv

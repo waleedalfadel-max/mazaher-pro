@@ -44,12 +44,32 @@ try{
  assert.equal((await one('select sum(bank_in-bank_out) as n,sum(cash_in+cash_out+vat_amount+payable_in) as x from ledger_entries where document_id=$1',[d.id])).n,'0.00');check('transfer changes no net company bank/cash/VAT amounts')
  await assert.rejects(db.query('update ledger_entries set bank_out=48 where id=$1',[entries[0].id]),/bank_transfer_pair_edit/);check('direct single-leg edit rejected')
  await assert.rejects(db.query('delete from ledger_entries where id=$1',[entries[0].id]),/bank_transfer_pair_edit|foreign key/);check('direct single-leg delete rejected')
+ for(const user of [acc,admin]) {
+  await f.claims(user);await db.exec('set role authenticated')
+  try {
+   for(const assignment of [
+    'bank_out=case when bank_out>0 then 99 else 0 end,bank_in=case when bank_in>0 then 99 else 0 end,total_amount=99',
+    "date='2026-10-20'", "description='Changed without review'", "journal_number='UNREVIEWED'",
+   ])await assert.rejects(db.query('update ledger_entries set '+assignment+' where document_id=$1',[d.id]),/bank_transfer_pair_edit/)
+   await assert.rejects(db.query('update ledger_entries set bank_account_id=case when bank_account_id=$2 then $3::uuid else $2::uuid end where document_id=$1',[d.id,bank,purchase]),/bank_transfer_pair_edit/)
+  }finally{await db.exec('reset role')}
+  check('balanced direct edits are rejected without the private approval record for '+(user===acc?'accountant':'admin'))
+ }
+ assert.deepEqual((await db.query('select * from ledger_entries where document_id=$1 order by bank_out desc',[d.id])).rows,entries)
+ check('rejected direct pair edits leave both original ledger rows intact')
  let pair=await rpc(admin,'bank_transfer_manage',[d.inv._id]);assert.equal(pair.ok,true)
  assert.equal((await rpc(owner,'bank_transfer_manage',[d.inv._id])).code,'forbidden');assert.equal((await rpc(admin,'bank_transfer_manage',[d.inv._id],p2)).code,'not_found');check('pair management enforces role and selected business')
  const update={amount:'55.10',date:'2026-10-22',description:'Confirmed transfer',from:bank,to:purchase,reason:'Synthetic correction'}
+ assert.equal((await rpc(admin,'bank_transfer_manage',[d.inv._id,'update',pair.version,JSON.stringify({...update,reason:''})])).code,'reason_required');check('paired edit cannot omit its reason')
  assert.equal((await rpc(admin,'bank_transfer_manage',[d.inv._id,'update','old',JSON.stringify(update)])).code,'stale');check('stale edit rejected')
  assert.equal((await rpc(admin,'bank_transfer_manage',[d.inv._id,'update',pair.version,JSON.stringify(update)])).ok,true)
  pair=await rpc(admin,'bank_transfer_manage',[d.inv._id]);assert.equal(pair.source.bank_out,55.1);assert.equal(pair.destination.bank_in,55.1);check('pair edit updates both legs consistently')
+ const reviewed=await one('select approved_payload,history from approval_private.document_invoices where id=$1',[d.inv._id])
+ const actor=await one('select id from app_users where auth_id=$1',[admin])
+ assert.equal(reviewed.approved_payload.amount,55.1);assert.equal(reviewed.approved_payload.description,update.description)
+ assert.equal(reviewed.history.at(-1).reason,update.reason);assert.equal(reviewed.history.at(-1).by,actor.id)
+ assert.equal(reviewed.history.at(-1).by_name,'Synthetic admin');assert(reviewed.history.at(-1).at)
+ check('approved record and history match the new amount, real actor and correction reason')
  assert.equal((await rpc(admin,'bank_transfer_manage',[d.inv._id,'delete',pair.version,JSON.stringify({reason:'Synthetic removal'})])).ok,true)
  assert.equal((await one('select count(*)::int as n from ledger_entries where document_id=$1',[d.id])).n,0)
  const reopened=await rpc(acc,'approval_prepare',[d.id]);assert.equal(reopened.analysis_result.invoices[0].amount,55.1);assert.equal(reopened.invoices[0].original_reading.amount,'47.25');check('delete removes both legs and reopens confirmed values, preserves original reading')
@@ -66,6 +86,7 @@ try{
  await db.exec(await readFile('supabase/rollback/payment-account-workflows.sql','utf8'))
  assert.deepEqual((await db.query('select * from ledger_entries order by id')).rows,before);check('rollback preserves transfer legs and all financial rows')
  const retainedPair=await rpc(admin,'bank_transfer_manage',[d.inv._id]);await assert.rejects(db.query('update ledger_entries set bank_out=1 where id=$1',[retainedPair.source.id]),/bank_transfer_pair_edit/);check('rollback retains paired-transfer integrity guard')
+ await assert.rejects(db.query("update ledger_entries set description='Bypass after rollback' where document_id=$1",[d.id]),/bank_transfer_pair_edit/);check('rollback also retains protection against balanced unaudited edits')
  await db.exec(await readFile('supabase/migrations/20261021045837_payment_account_workflows.sql','utf8'))
  assert.deepEqual((await db.query('select * from ledger_entries order by id')).rows,before);check('reapply preserves all rows and existing pair links')
  console.log(JSON.stringify({passed:checks}))
