@@ -17,6 +17,8 @@ import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggesti
 import { setUnsaved } from '../lib/unsavedChanges'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
+import LoanRepaymentFields from '../components/LoanRepaymentFields.jsx'
+import { LOAN_OPTION, isLoanRepayment, reviewDocumentType, toLoanRepayment, fromLoanRepayment, loanBlockReason, withoutLoanPrincipalConfirmation } from '../lib/loanRepayment.js'
 import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, receiptBlockReason, receiptHistoryNote, withSuggestedSuppliers, supplierOptions } from '../lib/supplierReceipts.js'
 import { withManualInvoice } from '../lib/manualReview.js'
 import { operatesBusiness } from '../lib/adminAccess.js'
@@ -262,7 +264,7 @@ export default function PendingDocuments() {
       const extras = ok ? Object.fromEntries(DRAFT_EXTRAS.filter(k => k in saved.extras).map(k => [k, saved.extras[k]])) : {}
       return {
         ...d, ...extras,
-        _state: 'idle', _error: '', _edit: ok ? saved.edit : (d.analysis_result || null),
+        _state: 'idle', _error: '', _edit: withoutLoanPrincipalConfirmation(ok ? saved.edit : (d.analysis_result || null)),
         _dirty: false, _draftSavedAt: ok ? saved.savedAt : null, _draftStale: !!saved?.stale,
         _origBranch: d.branch, _branchEditable: !d.branch,
         _imageData: null, _showImage: false, _isUrl: false,
@@ -288,7 +290,7 @@ export default function PendingDocuments() {
     const store = draftStore()
     if (store) dropDraft(store, scopeOf(doc), doc.id)
     updateDoc(doc.id, {
-      _state: doc._state, _edit: doc.analysis_result || null, _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
+      _state: doc._state, _edit: withoutLoanPrincipalConfirmation(doc.analysis_result || null), _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
       branch: doc._origBranch, _supplierId: undefined, _supplierName: undefined, _supplierResolution: undefined, _matchedSupplierId: undefined,
     })
   }
@@ -373,7 +375,7 @@ export default function PendingDocuments() {
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',
-        analysis_result: result, _edit: result,
+        analysis_result: result, _edit: withoutLoanPrincipalConfirmation(result),
         _aiSuggestedType: true,
         _imageData: signedFileUrl || fileBase64,
         _isUrl: !!signedFileUrl,
@@ -780,8 +782,8 @@ export default function PendingDocuments() {
     setDocs(ds => ds.map(d => {
       if (d.id !== doc.id) return d
       const ar = data.analysis_result
-      const src = d._edit || ar
-      let edit = ar
+      const src = d._edit || withoutLoanPrincipalConfirmation(ar)
+      let edit = src
       if (src && ar?.invoices) {   // معرّفات الفواتير من الخادم تُنقل إلى نسخة المراجعة دون فقد التعديلات
         const list = src.invoices?.length ? src.invoices : [src]
         edit = { ...(ar._localStub ? { _localStub: true } : {}), invoices: list.map((x, i) => ({ ...x, _id: x._id || ar.invoices[i]?._id })) }
@@ -807,6 +809,8 @@ export default function PendingDocuments() {
     if (target !== 'all') invs = invs.filter(x => x._id === target)
     if (!invs.length) return
     for (const inv of invs) {
+      const loanReason = loanBlockReason(inv, docTransTypes)
+      if (loanReason) { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'loan_incomplete', reason: loanReason, invoice_id: inv._id } }); return }
       if (inv.type === 'expense' && inv.items?.length) {
         const t = exactTotals(inv)
         if (t.status !== 'match') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: t.status === 'invalid' ? 'invalid_amount' : 'amounts_mismatch', difference: t.diff / 100, invoice_id: inv._id } }); return }
@@ -1342,8 +1346,13 @@ const TYPE_OPTIONS = [
 ]
 // «سداد مورد» (2026-10-20): في الاعتماد الجديد وحده؛ يخفض مستحق المورد مع القيد، أو يُرفق بدفعة مسجلة
 const RECEIPT_OPTION = { value: RECEIPT_TYPE, label: 'سداد مورد' }
-/** تغيير نوع الفاتورة: إلى «سداد مورد» أو منه يعيد بناء حقولها (فاتورة جديدة)؛ undefined ⇒ تعديل حقل النوع وحده؛ null ⇒ لا تغيير. */
-const typeChange = (inv, v) => (v === RECEIPT_TYPE ? (isReceipt(inv) ? null : toReceipt(inv)) : isReceipt(inv) ? fromReceipt(inv, v) : undefined)
+/** تغيير نوع الفاتورة إلى سداد أو منه يعيد حقول المراجعة مع بقاء المعرّف؛ undefined ⇒ تعديل النوع وحده؛ null ⇒ لا تغيير. */
+const typeChange = (inv, v) => {
+  if (v === LOAN_OPTION.value) return isLoanRepayment(inv) ? null : toLoanRepayment(inv)
+  if (v === RECEIPT_TYPE) return isReceipt(inv) ? null : toReceipt(inv)
+  if (isLoanRepayment(inv)) return fromLoanRepayment(inv, v)
+  return isReceipt(inv) ? fromReceipt(inv, v) : undefined
+}
 const PAY_OPTIONS = [
   { value: 'cash',    label: 'الصندوق' },
   { value: 'bank',    label: 'البنك / مدى' },
@@ -1716,6 +1725,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
 
   const parentCats     = categories.filter(c => !c.parent_id)
   const isSales        = res?.type === 'sales'
+  const isLoan         = !!v2 && isLoanRepayment(res)
   const isExpenseItems = res?.type === 'expense' && res.items?.length > 0
   const itemCount       = isExpenseItems ? res.items.length : 0
   const isFutureDate    = res?.date && res.date > fmtDate(new Date())
@@ -1771,6 +1781,9 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
   const receiptBlocked = isMultiInvoice
     ? rawRes.invoices.find(x => (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && receiptBlockReason(x, receiptCtx[x._id], serverDup(x._id))) ? 'في الصورة إيصال سداد غير مكتمل أو مشتبه بتكراره: افتحه وأكمل المورد وطريقة الاعتماد أو سبب الاشتباه.' : null
     : receiptBlockReason(res, receiptCtx[res?._id], serverDup(res?._id))
+  const loanBlocked = isV2 && (isMultiInvoice
+    ? rawRes.invoices.filter(x => (invStatus(x._id)?.status ?? 'pending') === 'pending').map(x => loanBlockReason(x, transTypes)).find(Boolean)
+    : loanBlockReason(res, transTypes))
   // سبب عودة المستند للمراجعة (حُذفت دفعته بعد اعتماده)، ظاهر مهما كان النوع المعروض
   const reopenedNote = !isMultiInvoice ? receiptHistoryNote(invStatus(res?._id)?.history) : null
   // تقرير المبيعات (src/lib/salesReport.js): وسيلة دفع غير معروفة أو فرق مع الإجمالي المطبوع أو مرتجع أكبر من قناته يمنع الاعتماد
@@ -1806,13 +1819,14 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
         : supplierBlocked ? <div className="rp-action-why" data-k="supplier-blocked"><Info className="ts-icon--sm" aria-hidden="true" />في الصورة فاتورة آجلة بلا مورد محدد أو باسم يشبه موردًا مسجلًا: أكمل المورد في فاتورتها.</div>
         : amountsBlocked ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />البنود لا تطابق الإجمالي بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.</div>
         : receiptBlocked ? <div className="rp-action-why" data-k="receipt-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{receiptBlocked}</div>
+        : loanBlocked ? <div className="rp-action-why" data-k="loan-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{loanBlocked}</div>
         : salesBlocked ? <div className="rp-action-why" data-k="sales-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{salesCheck?.reasons?.[0] || 'تقرير مبيعات في الصورة فيه وسيلة دفع غير معروفة أو فرق مع إجماليه. راجعه في فاتورته.'}</div>
         : needsSupplierConfirm
         ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />أكّد هوية المورد أولًا (أعلاه).</div>
         : <div className="rp-action-hint">{(exact ? amountsBlocked : totalsCheck.status === 'mismatch') ? <strong>البنود لا تطابق الإجمالي — راجعها قبل الاعتماد. </strong> : null}{approveHint}</div>}
       <div className="rp-action-buttons">
         <Button variant="primary" icon={doc._state === 'approving' ? LoaderCircle : Check} className="rp-approve"
-          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || supplierBlocked || !!receiptBlocked || preparing || !!decisionPending} onClick={onApprove}>
+          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || supplierBlocked || !!receiptBlocked || !!loanBlocked || preparing || !!decisionPending} onClick={onApprove}>
           {doc._state === 'approving' ? 'جارٍ الاعتماد…' : approveCount ? approveLabel(approveCount) : 'اعتماد'}
         </Button>
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
@@ -1915,7 +1929,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
       {analyzed && res && (
         <Panel title="بيانات المستند" icon={ListChecks} subtitle="طابق الحقول مع الصورة">
           <div className="rp-section">
-            <Segment full label="نوع المستند" value={res.type || ''} options={isV2 ? [...TYPE_OPTIONS, RECEIPT_OPTION] : TYPE_OPTIONS}
+            <Segment full label="نوع المستند" value={isV2 ? reviewDocumentType(res) : res.type || ''} options={isV2 ? [...TYPE_OPTIONS, RECEIPT_OPTION, LOAN_OPTION] : TYPE_OPTIONS}
               onChange={v => { if (readOnly) return; const next = typeChange(res, v); if (next === undefined) onEdit('type', v); else if (next) onReplaceInvoice(null, next) }} />
             {isReceipt(res) ? (
               <SupplierReceiptFields invoice={res} documentId={doc.id} suppliers={suppliers} payableSuppliers={payableSuppliers || []} readOnly={readOnly}
@@ -1941,9 +1955,9 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
                 </Field>
               )}
               {!isSales && (
-                <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint="يحدد الرصيد الذي ينقص، أو دينًا على المورد.">
+                <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
                   <Select value={res.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
-                    options={[...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
+                    options={isLoan ? PAY_OPTIONS.filter(o => o.value !== 'payable') : [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
                       ...(res.paySource && ![...PAY_OPTIONS.map(o => o.value), 'credit'].includes(res.paySource) ? [{ value: res.paySource, label: res.paySource }] : [])]} />
                 </Field>
               )}
@@ -1960,14 +1974,14 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
               )}
               {!isSales && <BankAccountField invoice={res} branch={res?.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : doc.branch} setup={setup} onEdit={onEdit} />}
               {/* الاعتماد الجديد: التصنيف على البند نفسه (من قائمة التصنيفات)، ولو كان بندًا واحدًا؛ نوع القيد ومعالجته منه */}
-              {!isSales && !(isExpenseItems && (itemCount > 1 || isV2)) && (
+              {!isSales && !isLoan && !(isExpenseItems && (itemCount > 1 || isV2)) && (
                 <Field label={<>التصنيف الأساسي{doc._aiSuggestedType && res.transType ? <span className="rp-ai-tag">اقتراح القراءة</span> : null}</>}
                   error={vErr.missingType ? 'مطلوب' : undefined}>
                   <Select value={res.transType || ''} placeholder="— اختر —" onChange={e => { onEdit('transType', e.target.value); onClearValidation() }}
                     options={catOptions(filteredTransTypes, res.transType)} />
                 </Field>
               )}
-              {!isSales && !isExpenseItems && (
+              {!isSales && !isLoan && !isExpenseItems && (
                 <Field label="التصنيف الفرعي">
                   {subCats.length > 0
                     ? <Select value={resolvedSub} placeholder="— اختر الفئة الفرعية —" onChange={e => onEdit('category_sub', e.target.value)}
@@ -2000,7 +2014,9 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
             </div>
           )}
 
-          {res.type === 'transfer' && (
+          {isLoan && <div className="rp-section"><LoanRepaymentFields invoice={res} transTypes={transTypes} readOnly={readOnly}
+            onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })} /></div>}
+          {res.type === 'transfer' && !isLoan && (
             <div className="rp-section">
               <div className="ts-form-grid">
                 <Field label="المبلغ">
@@ -2061,6 +2077,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   )
   const [payError, setPayError] = useState(false)
   const isSales      = invoice.type === 'sales'
+  const isLoan       = !!v2 && isLoanRepayment(invoice)
   const isMultiItem  = (invoice.items?.length || 0) > 1
   const isFutureDate = invoice.date && invoice.date > fmtDate(new Date())
   const isTransferDoc      = invoice.type === 'transfer'
@@ -2075,7 +2092,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   const payableMatch = isExpense && invoice.paySource === 'payable' && supCtx.name ? matchSupplier(supCtx.name, payableSuppliers) : null
   const supplierBlocked = supplierBlockReason(invoice, supCtx, payableMatch)
   const receipt = isReceipt(invoice)
-  const why = blocked || supplierBlocked || receiptBlockReason(invoice, receiptContext, serverDuplicate)
+  const why = blocked || supplierBlocked || receiptBlockReason(invoice, receiptContext, serverDuplicate) || (v2 && loanBlockReason(invoice, transTypes))
   const reopenedNote = receiptHistoryNote(history)
   const payOptions = isExpense
     ? [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : [])]
@@ -2094,9 +2111,9 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
         {v2 && (
           <div className="ts-form-grid">
             <Field label="نوع الفاتورة">
-              <Select value={invoice.type || ''} disabled={readOnly} data-k={`type-${index}`}
+              <Select value={reviewDocumentType(invoice)} disabled={readOnly} data-k={`type-${index}`}
                 onChange={e => { const v = e.target.value, next = typeChange(invoice, v); if (next === undefined) onEdit('type', v); else if (next) onReplace?.(next) }}
-                options={[...TYPE_OPTIONS, RECEIPT_OPTION]} />
+                options={[...TYPE_OPTIONS, RECEIPT_OPTION, LOAN_OPTION]} />
             </Field>
           </div>
         )}
@@ -2139,12 +2156,12 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
                 options={[{ value: 'existing', label: `نعم، «${payableMatch.supplier.name}»` }, { value: 'new', label: 'لا، مورد جديد' }]} />
             </Field>
           )}
-          {!isSales && !(v2 && invoice.type === 'expense') && (
+          {!isSales && !isLoan && !(v2 && invoice.type === 'expense') && (
             <Field label="المبلغ">
               <Num value={invoice.totalAmount ?? invoice.amount ?? ''} onChange={e => onEdit(invoice.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)} />
             </Field>
           )}
-          {!isSales && !isMultiItem && (
+          {!isSales && !isLoan && !isMultiItem && (
             <Field label="التصنيف الأساسي">
               <Select value={invoice.transType || ''} placeholder="— اختر —" onChange={e => onEdit('transType', e.target.value)}
                 options={catOptions(filteredTransTypes, isTransferDoc ? invoice.transType : '')} />
@@ -2155,8 +2172,10 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           ))}
           {(v2 || !isSales) && <BankAccountField invoice={invoice} branch={invoice.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : branch} setup={setup} onEdit={onEdit} />}
         </div>
+        {isLoan && <LoanRepaymentFields invoice={invoice} transTypes={transTypes} readOnly={readOnly}
+          onPatch={patch => onReplace?.({ ...invoice, ...patch })} />}
         {isSales && <SalesReading invoice={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} />}
-        {!isSales && (
+        {!isSales && !isLoan && (
           <div className="rp-subinv-items">
             <h4>البنود <span className="ts-num">{items.length}</span></h4>
             {v2 && invoice.type === 'expense' && <ExpenseBasis invoice={invoice} onEdit={onEdit} readOnly={readOnly} />}

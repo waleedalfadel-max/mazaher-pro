@@ -2,6 +2,7 @@
 // هذه الوحدة تبني البيانات المرسلة وتفحص المبالغ بالهللة قبل الإرسال وتترجم رموز الخادم إلى رسائل.
 // الفحص هنا للعرض فقط؛ الخادم يعيد الفحص نفسه ويرفض ما يخالفه.
 import { STALE_MESSAGE } from './appVersion.js'
+import { isLoanRepayment, loanAmount, loanBlockReason, hasLoanPrincipalConfirmation } from './loanRepayment.js'
 
 /** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
 export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : 'network' })
@@ -108,8 +109,9 @@ const same = (a, b) => String(a ?? '') === String(b ?? '')
 
 /** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
 export function reviewChanges(original, final) {
-  if (!original) return ['فاتورة أضافها المراجع (لم تكن في القراءة)']
-  const out = []
+  const out = original ? [] : ['فاتورة أضافها المراجع (لم تكن في القراءة)']
+  if (hasLoanPrincipalConfirmation(final)) out.push(`أكد المراجع بعد مراجعة كشف التمويل أن مبلغ ${final.loanPrincipalConfirmation.amount} لـ«${final.transType}» أصل قرض فقط، دون أرباح تمويل أو رسوم.`)
+  if (!original) return out
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
     if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${original[k] ?? '—'}» ← «${final[k] ?? '—'}»`)
@@ -131,7 +133,13 @@ export function reviewChanges(original, final) {
  * الخادم يحسب القيود والضريبة ويرفض الفرق.
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
-  const transType = purchaseCategory || inv.transType || ''
+  const loan = isLoanRepayment(inv)
+  if (loan) {
+    const reason = loanBlockReason(inv, transTypes)
+    if (reason) throw new Error(reason)
+  }
+  // An expense's document-level choice must never replace a transfer/loan selected by the reviewer.
+  const transType = (inv.type === 'expense' ? purchaseCategory : '') || inv.transType || ''
   // التصنيف بمعرّفه الثابت (الخادم يأخذ منه نوع القيد والرمز المالي)؛ الاسم للعرض والتوافق فقط
   const byName = (name, parentId = null) => (categories || []).find(c => (c.parent_id || null) === parentId && normCat(c.name) === normCat(name || ''))
   const items = (inv.items || []).map(it => {
@@ -146,6 +154,15 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
   const payload = { ...inv, transType: effectiveType, items, category_main: inv.category_main || normCat(transType) || null, category_id: invCat?.id || inv.category_id || null }
+  if (loan) {
+    // The server's transfer path reads amount first: send exactly the visible amount, even for an older saved draft.
+    payload.amount = fromHalalas(toHalalas(loanAmount(inv)))
+    payload.totalAmount = payload.amount
+    payload.vatAmount = 0
+    payload.items = []
+    payload.category_id = null; payload.category_main = null
+    delete payload.subcategory_id; delete payload.category_sub
+  }
   // المورد لكل فاتورة (2026-10-20): يُرسل مورد السياق (اختيار المستند للفاتورة المفردة، ومورد الفاتورة نفسها في الصورة متعددة
   // الفواتير — invoiceSupplierContext)، ولا يبقى معرّف مورد على فاتورة ليست آجلة لمورد من القائمة
   if (inv.paySource === 'credit') { if (supplierId) payload.supplier_id = supplierId } else delete payload.supplier_id
@@ -207,6 +224,7 @@ export const dupCandidate = c => c.kind === 'batch' ? 'إيصال مشابه ف�
 export function approvalMessage(res) {
   const d = res || {}
   const M = {
+    loan_incomplete: d.reason || 'أكمل بيانات سداد القرض قبل الاعتماد.',
     no_session: 'انتهت الجلسة. سجّل الدخول من جديد ثم أعد المحاولة.',
     not_found: 'المستند غير موجود أو لا يخص منشأتك.',
     forbidden: 'الاعتماد للمحاسب في المنشأة فقط.',
