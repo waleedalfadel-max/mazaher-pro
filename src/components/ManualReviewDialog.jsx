@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { isLoanRepayment, LOAN_NOTE } from '../lib/loanRepayment.js'
+import { isLoanRepayment, LOAN_NOTE, LOAN_CONFIRMATION_LABEL, loanPrincipalConfirmation, hasLoanPrincipalConfirmation } from '../lib/loanRepayment.js'
 import { Button, DateInput, Dialog, Field, Input, Money, Note, Select, Textarea } from '../ui/components.jsx'
 import { MANUAL_CHANNELS, manualInvoice } from '../lib/manualReview.js'
 import { toHalalas } from '../lib/approvalV2.js'
@@ -10,10 +10,11 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
   const banks = setup?.bankAccounts || setup?.banks || []
   // supplierName: هوية المورد كما عُرضت عند فتح النافذة؛ ثابتة ولا تتبع تعديل الوصف (manualInvoice يرسلها اسمًا للمورد الآجل)
   const [fields, setFields] = useState(() => ({ ...invoice, totalAmount: invoice.totalAmount ?? invoice.amount ?? '',
-    vatAmount: invoice.vatAmount ?? '', categoryId: '', subcategoryId: '', reason: '', confirmed: false, supplierName }))
+    vatAmount: invoice.vatAmount ?? '', categoryId: '', subcategoryId: '', reason: '', confirmed: false, loanPrincipalConfirmation: null, supplierName }))
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
-  const edit = (key, value) => { setFields(f => ({ ...f, [key]: value, confirmed: false })); setError('') }
+  const edit = (key, value) => { setFields(f => ({ ...f, [key]: value, confirmed: false,
+    ...(['totalAmount', 'vatAmount'].includes(key) ? { loanPrincipalConfirmation: null } : {}) })); setError('') }
   const sales = invoice.type === 'sales', expense = invoice.type === 'expense'
   const loan = isLoanRepayment(invoice)
   const parents = categories.filter(c => !c.parent_id && c.is_active !== false)
@@ -51,7 +52,7 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
   return <Dialog open title="اعتماد يدوي — إدارة تحسيب" onClose={sending ? () => {} : onClose}
     description="قرار الاعتماد لك بعد مراجعة الصورة. تُحفظ القراءة الأصلية وملاحظتك، ويُنسب الاعتماد إلى حسابك."
     footer={<><Button variant="quiet" disabled={sending} onClick={onClose}>رجوع دون تغيير</Button>
-      <Button variant="primary" disabled={sending || !fields.confirmed} onClick={confirm}>تأكيد واعتماد الأرقام اليدوية</Button></>}>
+      <Button variant="primary" disabled={sending || !fields.confirmed || (loan && !hasLoanPrincipalConfirmation(fields))} onClick={confirm}>تأكيد واعتماد الأرقام اليدوية</Button></>}>
     <Note tone="warning" title="الأرقام أدناه هي التي ستُسجَّل">
       {sales ? 'أدخل صافي كل قناة بعد المرتجعات. الإجمالي المعتمد هو مجموع هذه القنوات بدل إجمالي القراءة، ولا تُخصم المرتجعات مرة ثانية.'
         : expense ? 'سيُسجَّل الإجمالي شامل الضريبة وبعد الخصم على تصنيف واحد تختاره هنا، بدل تفاصيل البنود المقروءة. لتوزيعه على عدة تصنيفات، ارجع وصحّح البنود من المستند.'
@@ -86,7 +87,11 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
         <Field label="ملاحظة المراجعة اليدوية" span><Textarea rows={2} value={fields.reason} onChange={e => edit('reason', e.target.value)} placeholder="مثال: راجعت الصورة، والقراءة كررت تفاصيل الصنف." /></Field>
       </div>
       {sales ? <p>الإجمالي الذي سيُعتمد: <Money value={sum} /></p> : <p data-k="manual-pay">مصدر الدفع: {pay[invoice.paySource] || 'يُحدد في المستند'}{['credit', 'payable'].includes(invoice.paySource) ? <> — المورد: <strong>{supplierName || 'غير محدد'}</strong></> : null}. المورد ومصدر الدفع كما اخترتهما في الفاتورة؛ لتغييرهما ارجع إلى حقولها.</p>}
-      <label className="ts-check"><input type="checkbox" checked={fields.confirmed} onChange={e => setFields(f => ({ ...f, confirmed: e.target.checked }))} />
+      {loan && <label className="ts-check"><input type="checkbox" data-k="manual-loan-principal-confirmed" checked={hasLoanPrincipalConfirmation(fields)}
+        onChange={e => { const checked = e.target.checked; setFields(f => ({ ...f, loanPrincipalConfirmation: loanPrincipalConfirmation(f, checked), confirmed: false })) }} />
+        {LOAN_CONFIRMATION_LABEL}
+      </label>}
+      <label className="ts-check"><input type="checkbox" data-k="manual-review-confirmed" checked={fields.confirmed} onChange={e => setFields(f => ({ ...f, confirmed: e.target.checked }))} />
         راجعت صورة المستند وأؤكد الأرقام والتصنيف ومصدر الدفع أعلاه، وأعتمدها بدل قراءة البرنامج.
       </label>
     </fieldset>

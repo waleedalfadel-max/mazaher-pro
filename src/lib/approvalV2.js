@@ -2,7 +2,7 @@
 // هذه الوحدة تبني البيانات المرسلة وتفحص المبالغ بالهللة قبل الإرسال وتترجم رموز الخادم إلى رسائل.
 // الفحص هنا للعرض فقط؛ الخادم يعيد الفحص نفسه ويرفض ما يخالفه.
 import { STALE_MESSAGE } from './appVersion.js'
-import { isLoanRepayment, loanAmount, loanBlockReason } from './loanRepayment.js'
+import { isLoanRepayment, loanAmount, loanBlockReason, hasLoanPrincipalConfirmation } from './loanRepayment.js'
 
 /** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
 export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : 'network' })
@@ -109,8 +109,9 @@ const same = (a, b) => String(a ?? '') === String(b ?? '')
 
 /** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
 export function reviewChanges(original, final) {
-  if (!original) return ['فاتورة أضافها المراجع (لم تكن في القراءة)']
-  const out = []
+  const out = original ? [] : ['فاتورة أضافها المراجع (لم تكن في القراءة)']
+  if (hasLoanPrincipalConfirmation(final)) out.push(`أكد المراجع بعد مراجعة كشف التمويل أن مبلغ ${final.loanPrincipalConfirmation.amount} لـ«${final.transType}» أصل قرض فقط، دون أرباح تمويل أو رسوم.`)
+  if (!original) return out
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
     if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${original[k] ?? '—'}» ← «${final[k] ?? '—'}»`)

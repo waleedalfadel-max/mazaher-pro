@@ -8,6 +8,7 @@ export const isLoanRepayment = inv => inv?.type === 'transfer' && (inv.transferP
 export const reviewDocumentType = inv => isLoanRepayment(inv) ? LOAN_OPTION.value : inv?.type || ''
 export const loanAmount = inv => inv?.totalAmount ?? inv?.amount ?? ''
 export const LOAN_NOTE = 'هذا المسار لسداد أصل القرض أو القسط الرأسمالي. راجع كشف الجهة الممولة وافصل أرباح التمويل والرسوم إن وجدت في فاتورة مصروف مستقلة؛ لا يُستنتج توزيعها من إجمالي الخصم.'
+export const LOAN_CONFIRMATION_LABEL = 'راجعت كشف التمويل وأؤكد أن المبلغ المحدد أصل قرض فقط، دون أرباح تمويل أو رسوم.'
 
 /** Clear expense/supplier metadata only in the working copy. The server retains the original OCR. */
 export function toLoanRepayment(inv) {
@@ -26,10 +27,24 @@ export function fromLoanRepayment(inv, type) {
   const next = { ...inv, type, transType: '', items: type === 'expense'
     ? [{ description: inv.description || '', amount: loanAmount(inv), category_main: '', category_sub: '' }] : [] }
   delete next.transferPurpose
+  delete next.loanPrincipalConfirmation
   return next
 }
 
 const validMoney = v => /^\d+(?:\.\d{1,2})?$/.test(toLatinNumber(v)) && Number.isFinite(Number(toLatinNumber(v)))
+/** Explicit reviewer assertion, bound to the visible loan, amount and tax; never inferred from OCR. */
+export function loanPrincipalConfirmation(inv, checked) {
+  if (!checked || !isLoanRepayment(inv) || !isDebt(inv.transType) || !validMoney(loanAmount(inv))
+    || Number(toLatinNumber(loanAmount(inv))) <= 0 || Number(toLatinNumber(inv.vatAmount ?? 0)) !== 0) return null
+  return { version: 1, confirmed: true, transType: inv.transType,
+    amount: Number(toLatinNumber(loanAmount(inv))).toFixed(2), vatAmount: '0.00' }
+}
+
+export function hasLoanPrincipalConfirmation(inv) {
+  const expected = loanPrincipalConfirmation(inv, true), saved = inv?.loanPrincipalConfirmation
+  return !!expected && !!saved && Object.keys(expected).every(k => saved[k] === expected[k])
+}
+
 /** Display/payload validation; the existing server validates permissions, source, account and amount. */
 export function loanBlockReason(inv, types) {
   if (!isLoanRepayment(inv)) return null
@@ -37,5 +52,6 @@ export function loanBlockReason(inv, types) {
   if (!['cash', 'bank', 'custody'].includes(inv.paySource)) return 'اختر مصدر سداد القرض: الصندوق أو البنك أو العهدة.'
   if (!validMoney(loanAmount(inv)) || Number(toLatinNumber(loanAmount(inv))) <= 0) return 'راجع مبلغ سداد أصل القرض؛ يجب أن يكون أكبر من صفر وبمنزلتين عشريتين كحد أقصى.'
   if (inv.vatAmount != null && inv.vatAmount !== '' && (!validMoney(inv.vatAmount) || Number(toLatinNumber(inv.vatAmount)) !== 0)) return 'القراءة تحمل ضريبة: افصل أي رسوم وضريبتها عن أصل القرض، ثم صحح هذا الحقل إلى صفر بعد مراجعة المستند.'
+  if (!hasLoanPrincipalConfirmation(inv)) return 'أكّد بعد مراجعة كشف التمويل أن المبلغ المحدد أصل قرض فقط، دون أرباح تمويل أو رسوم.'
   return null
 }
