@@ -33,6 +33,9 @@ const MODIFIERS = new Set(['توصيل', 'delivery', 'بنكي', 'بنكيه', '
 // كلمات المرتجع: وصف مقبول في أسطر المرتجعات وحدها؛ في أسطر وسائل الدفع تجعل السطر للمراجعة (لا يُحسب مرتجعٌ بيعًا)
 const RETURN_WORDS = new Set(['مرتجع', 'مرتجعات', 'استرجاع', 'مسترجع', 'refund', 'refunds', 'return', 'returns'])
 const LOOKUP = new Map(Object.entries(WORDS).flatMap(([ch, ws]) => ws.map(w => [normLabel(w), ch])))
+// In a POS payment summary, «بنك - Bank» names the card channel. Keep an explicit
+// «Bank Transfer» in transfer, and do not guess when Bank accompanies cash/apps.
+const BANK_WORDS = new Set(['bank', 'بنك', 'البنك', 'بالبنك'])
 
 function tokenChannel(t) {
   if (LOOKUP.has(t)) return LOOKUP.get(t)
@@ -48,12 +51,18 @@ function tokenChannel(t) {
 export function classifyPaymentLabel(label, { returns = false } = {}) {
   const tokens = normLabel(label).split(' ').filter(Boolean)
   const found = new Set()
+  let hasBank = false
   for (const t of tokens) {
+    if (BANK_WORDS.has(t)) { hasBank = true; continue }
     const ch = tokenChannel(t)
     if (ch) { found.add(ch); continue }
     if (MODIFIERS.has(t) || (t.startsWith('ال') && MODIFIERS.has(t.slice(2)))) continue
     if (returns && (RETURN_WORDS.has(t) || (t.startsWith('ال') && RETURN_WORDS.has(t.slice(2))))) continue
     return null
+  }
+  if (hasBank) {
+    if (found.size === 0) return 'network'
+    if ([...found].some(ch => ch !== 'network' && ch !== 'transfer')) return null
   }
   return found.size === 1 ? [...found][0] : null
 }
