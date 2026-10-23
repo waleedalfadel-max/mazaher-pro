@@ -65,23 +65,26 @@ export default function AppStatementPanel({ app, onApp, apps, statement, compari
               <p data-k="cmp-text">{comparisonText(comparison)}</p>
             </> : <p data-k="cmp-none">لم يُدخل رصيد من كشف {label} حتى {formatDate(to, { year: true })}؛ الرصيد المعروض دفتري فقط ولم يُقارن بكشف التطبيق.</p>}
             {saved && <p data-k="cmp-saved" role="status">{saved}</p>}
-            {canRecord && !form && <Button size="sm" data-k="cmp-add" onClick={() => { setForm({ app, date: to && to < todayIso() ? to : todayIso(), balance: '', reference: '', note: '' }); setFormError(''); setSaved('') }}>إدخال رصيد من كشف {label}</Button>}
+            {canRecord && !form && <Button size="sm" data-k="cmp-add" onClick={() => { setForm({ app, date: to && to < todayIso() ? to : todayIso(), dateValid: true, balance: '', reference: '', note: '' }); setFormError(''); setSaved('') }}>إدخال رصيد من كشف {label}</Button>}
             {form && <fieldset disabled={busy} style={{ border: 0, padding: 0 }} data-k="cmp-form" data-app={form.app}>
               <h3 data-k="cmp-form-title">رصيد من كشف {labelOf(form.app)}</h3>
               {formMismatch && <div data-k="cmp-form-mismatch"><Note tone="warning" action={<Button size="sm" onClick={() => onApp(form.app)}>العودة إلى {labelOf(form.app)}</Button>}>
                 هذا النموذج لرصيد كشف {labelOf(form.app)}، والكشف المعروض الآن لـ{label}. لا يُحفظ لتطبيق غير الذي فُتح له؛ ارجع إلى {labelOf(form.app)} لحفظه، أو ألغِ النموذج.</Note></div>}
               <div className="ts-form-grid">
-                <Field label="تاريخ الرصيد في كشف التطبيق"><DateInput value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} /></Field>
+                {/* DateInput يحتفظ بآخر تاريخ صحيح عند المسح أو الإدخال غير الصالح؛ الصلاحية الظاهرة (dateValid) هي التي تحكم الحفظ */}
+                <Field label="تاريخ الرصيد في كشف التطبيق" error={form.dateValid ? undefined : 'التاريخ فارغ أو غير صحيح؛ اكتبه كاملًا (يوم/شهر/سنة) أو اختره من التقويم. لا يُحفظ الرصيد قبل تصحيحه.'}>
+                  <DateInput data-k="cmp-date" value={form.date} onValidityChange={ok => setForm(f => (f.dateValid === ok ? f : { ...f, dateValid: ok }))}
+                    onChange={v => setForm(f => ({ ...f, date: v, dateValid: true }))} /></Field>
                 <Field label="الرصيد المستحق للمنشأة حسب الكشف" error={form.balance.trim() !== '' && formBalance === null ? 'اكتب رقمًا بمنزلتين عشريتين كحد أقصى (الصفر والسالب مقبولان).' : undefined}>
                   <Input data-k="cmp-balance" numeric dir="ltr" value={form.balance} onChange={e => setForm(f => ({ ...f, balance: e.target.value }))} /></Field>
                 <Field label="مصدر الرصيد (رقم كشف التطبيق أو فترته)"><Input data-k="cmp-reference" value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))} /></Field>
                 <Field label="ملاحظة" span><Textarea rows={2} value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></Field>
               </div>
-              <Button size="sm" variant="primary" data-k="cmp-save" disabled={busy || formMismatch || !form.date || formBalance === null || !form.reference.trim()}
+              <Button size="sm" variant="primary" data-k="cmp-save" disabled={busy || formMismatch || !form.date || !form.dateValid || formBalance === null || !form.reference.trim()}
                 onClick={async () => {
                   // القيم كما فُتح النموذج وكُتبت وقت الضغط؛ لا تتغير بتغيير التطبيق أثناء انتظار الرد
                   const target = form.app, values = { p_app: target, p_date: form.date, p_balance: formBalance, p_reference: form.reference.trim(), p_note: form.note.trim() || null }
-                  if (target !== app || values.p_balance === null) return
+                  if (target !== app || values.p_balance === null || !form.dateValid || !values.p_date) return
                   if (await call('app_statement_checkpoint_save', values)) { setForm(null); setSaved(`حُفظ رصيد كشف ${labelOf(target)}.`) }
                 }}>حفظ رصيد {labelOf(form.app)}</Button>
               <Button size="sm" variant="quiet" data-k="cmp-cancel" onClick={() => setForm(null)}>إلغاء</Button>
