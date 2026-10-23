@@ -1,5 +1,6 @@
 import { operatingBankFigures, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
+import { APPS, receivableBalances } from '../lib/appStatement.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchEveryRow } from '../lib/fetchAll.js'
@@ -289,7 +290,7 @@ export default function Dashboard() {
       const [summary, result, settingsResult, banksResult] = await Promise.all([
         getFinancialSummary(projectId, r.from, r.to),
         fetchEveryRow(() => supabase.from('ledger_entries')
-          .select('type,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,bank_account_id')
+          .select('type,description,date,status,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,bank_account_id')
           .eq('project_id', projectId).neq('status','cancelled').lte('date', r.to).order('id')),
         getProjectSettings(projectId),
         supabase.from('bank_accounts').select('id,name,bank,is_active').eq('project_id',projectId),
@@ -304,11 +305,9 @@ export default function Dashboard() {
         bank: rows.reduce((s,r) => s + (r.bank_in ||0) - (r.bank_out ||0), 0),
         custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
       })
-      const sumRcvIn = t => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_in||0), 0)
-      const sumRcvOut = t => rows.filter(r => (r.type||'').includes(t)).reduce((s,r) => s+(r.receivable_out||0), 0)
-      const rcv = { hunger:sumRcvIn('هنقر')-sumRcvOut('هنقر'), jahez:sumRcvIn('جاهز')-sumRcvOut('جاهز'),
-        keeta:sumRcvIn('كيتا')-sumRcvOut('كيتا'), mrsool:sumRcvIn('مرسول')-sumRcvOut('مرسول'), ninja:sumRcvIn('نينجا')-sumRcvOut('نينجا') }
-      setReceivables(Object.values(rcv).some(v => v > 0) ? rcv : null)
+      // ذمم التطبيقات بإشارتها (src/lib/appStatement.js، القاعدة نفسها في «كشف حساب التطبيقات»): الرصيد السالب يظهر ولا يُخفى
+      const rcv = receivableBalances(rows)
+      setReceivables(rcv.active.length || rcv.unassigned ? rcv : null)
       setStats({ totalSales:summary.totalSales, totalExpenses:summary.totalExpenses, profit:summary.netProfit,
         grossProfit:summary.grossProfit, cogs:summary.cogs||0, operatingExpenses:summary.operatingExpenses||0,
         grossSales:summary.grossSales||0, outputVat:summary.outputVat||0, uncounted: uncountedText(summary.uncounted) })
@@ -768,34 +767,36 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* بطاقة الذمم المستحقة — تظهر فقط عند وجود ذمم */}
-      {receivables && (
-        <div className="rounded-2xl p-4 shadow-sm" style={{ background: '#fff', border: '2px solid #fde68a' }}>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-lg">⏳</span>
-            <span className="font-bold text-sm" style={{ color: '#92400e' }}>ذمم مستحقة من تطبيقات التوصيل</span>
+      {/* ذمم تطبيقات التوصيل: كل تطبيق له حركة يظهر برصيده الدفتري وإشارته؛ السالب يعني تحصيلًا أكبر من المبيعات المسجلة */}
+      {receivables && (() => {
+        const shown = APPS.filter(a => receivables.active.includes(a.key))
+        const total = shown.reduce((t, a) => t + Math.round((receivables.balances[a.key] || 0) * 100), 0) / 100
+        const fmt2 = v => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        return (
+          <div className="rounded-2xl p-4 shadow-sm" data-k="app-receivables" style={{ background: '#fff', border: '2px solid #fde68a' }}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="font-bold text-sm" style={{ color: '#92400e' }}>ذمم تطبيقات التوصيل (الرصيد الدفتري)</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {shown.map(({ key, label }) => {
+                const val = receivables.balances[key] || 0
+                return (
+                  <Link key={key} to={`/reports?tab=apps&app=${key}`} data-k={`app-receivable-${key}`} className="rounded-xl p-3 text-center" style={{ background: val < 0 ? '#fef2f2' : '#fffbeb', border: `1px solid ${val < 0 ? '#fecaca' : '#fde68a'}` }}>
+                    <div className="text-xs font-semibold mb-1" style={{ color: '#92400e' }}>{label}</div>
+                    <div className="text-base font-bold font-mono tabular-nums" dir="ltr" style={{ color: val < 0 ? '#b91c1c' : '#92400e' }}>{fmt2(val)}</div>
+                    {val < 0 && <div className="text-xs mt-1" style={{ color: '#b91c1c' }}>تحصيل أكبر من المبيعات المسجلة</div>}
+                  </Link>
+                )
+              })}
+            </div>
+            <div className="mt-2 text-xs text-right" style={{ color: '#a78a50' }} data-k="app-receivables-total">
+              الصافي: <span dir="ltr">{fmt2(total)}</span> ر.س — رصيد دفتري من قيود تحسيب، يُطابَق مع كشف كل تطبيق من «التقارير ← ذمم التطبيقات».
+              {total < 0 || shown.some(a => (receivables.balances[a.key] || 0) < 0) ? ' الرصيد السالب: تحصيل أكبر من المبيعات المسجلة؛ قد يخص مبيعات قبل بدء التسجيل أو لم تُسجَّل، ويُحدَّد من كشف التطبيق.' : ''}
+              {receivables.unassigned ? <> ذمم غير منسوبة لتطبيق: <span dir="ltr">{fmt2(receivables.unassigned)}</span>.</> : null}
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: 'هنقر',   val: receivables.hunger,  color: '#dc2626' },
-              { label: 'جاهز',   val: receivables.jahez,   color: '#ea580c' },
-              { label: 'كيتا',   val: receivables.keeta,   color: '#7c3aed' },
-              { label: 'مرسول',  val: receivables.mrsool,  color: '#059669' },
-              { label: 'نينجا',  val: receivables.ninja,   color: '#0ea5e9' },
-            ].filter(x => (x.val||0) > 0).map(({ label, val, color }) => (
-              <div key={label} className="rounded-xl p-3 text-center" style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
-                <div className="text-xs font-semibold mb-1" style={{ color: '#92400e' }}>{label}</div>
-                <div className="text-base font-bold font-mono tabular-nums" style={{ color }}>
-                  {(val || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-2 text-xs text-right" style={{ color: '#a78a50' }}>
-            الإجمالي: {((receivables.hunger||0)+(receivables.jahez||0)+(receivables.keeta||0)+(receivables.mrsool||0)+(receivables.ninja||0)).toLocaleString('en-US',{minimumFractionDigits:2})} ر.س — يُحصَّل عند ورود التحويل البنكي
-          </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* ── الرسوم البيانية ── */}
 
