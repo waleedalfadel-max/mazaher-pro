@@ -9,6 +9,8 @@ import { APPS, balanceNote, comparisonText, parseStatementBalance, preSystemNote
 const ERR = { forbidden: 'تسجيل رصيد كشف التطبيق للمحاسب وإدارة تحسيب.', no_session: 'انتهت الجلسة؛ ادخل من جديد.', invalid: 'راجع التاريخ والرصيد (منزلتان عشريتان) والمصدر.',
   reason_required: 'اكتب سبب الإلغاء.', not_found: 'السجل غير موجود. حدّث الصفحة.', already_voided: 'أُلغي هذا السجل من قبل.' }
 const amount = v => (v === null || v === undefined ? '—' : <Money value={v} />)
+// تاريخ الرصيد الافتراضي: نهاية الفترة إن لم تتجاوز اليوم، وإلا اليوم (الخادم يرفض تاريخًا مستقبليًا)
+const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
 export default function AppStatementPanel({ app, onApp, apps, statement, comparison, checkpoints, unassigned, branchFiltered, canRecord, onChanged, loading, error, onRetry, to }) {
   // النموذج مربوط بالتطبيق الذي فُتح له (form.app)، لا بالتطبيق المعروض: تغيير التطبيق أثناء التحرير لا ينقل البيانات إليه
@@ -34,7 +36,7 @@ export default function AppStatementPanel({ app, onApp, apps, statement, compari
         <div className="ts-panel-body">
           {branchFiltered && <div data-k="app-branch-note"><Note tone="info">اختيار الفرع في أعلى الصفحة لا يُطبَّق على هذا الكشف: مبيعات فرع وحده لا تُقابَل بتحصيلات المنشأة كلها. توزيع التحصيلات على الفروع غير متاح بعد.</Note></div>}
           <Field label="التطبيق" hint={busy ? 'جارٍ الحفظ؛ يُتاح تغيير التطبيق بعد انتهائه.' : undefined}>
-            <Select data-k="app-select" value={app} options={appOptions} disabled={busy} onChange={e => { setSaved(''); onApp(e.target.value) }} /></Field>
+            <Select data-k="app-select" value={app} options={appOptions} disabled={busy} onChange={e => { if (busy) return; setSaved(''); onApp(e.target.value) }} /></Field>
           {error && <Note tone="error" action={<Button size="sm" onClick={onRetry}>إعادة المحاولة</Button>}>{error}</Note>}
           {loading && <p className="ts-muted">جارٍ تحميل الكشف…</p>}
           {ready && <>
@@ -63,7 +65,7 @@ export default function AppStatementPanel({ app, onApp, apps, statement, compari
               <p data-k="cmp-text">{comparisonText(comparison)}</p>
             </> : <p data-k="cmp-none">لم يُدخل رصيد من كشف {label} حتى {formatDate(to, { year: true })}؛ الرصيد المعروض دفتري فقط ولم يُقارن بكشف التطبيق.</p>}
             {saved && <p data-k="cmp-saved" role="status">{saved}</p>}
-            {canRecord && !form && <Button size="sm" data-k="cmp-add" onClick={() => { setForm({ app, date: to, balance: '', reference: '', note: '' }); setFormError(''); setSaved('') }}>إدخال رصيد من كشف {label}</Button>}
+            {canRecord && !form && <Button size="sm" data-k="cmp-add" onClick={() => { setForm({ app, date: to && to < todayIso() ? to : todayIso(), balance: '', reference: '', note: '' }); setFormError(''); setSaved('') }}>إدخال رصيد من كشف {label}</Button>}
             {form && <fieldset disabled={busy} style={{ border: 0, padding: 0 }} data-k="cmp-form" data-app={form.app}>
               <h3 data-k="cmp-form-title">رصيد من كشف {labelOf(form.app)}</h3>
               {formMismatch && <div data-k="cmp-form-mismatch"><Note tone="warning" action={<Button size="sm" onClick={() => onApp(form.app)}>العودة إلى {labelOf(form.app)}</Button>}>
