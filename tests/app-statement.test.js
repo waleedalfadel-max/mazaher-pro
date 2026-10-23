@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { attribution, appOf, kindOf, receivableBalances, unassignedEntries, buildAppStatement, statementComparison, comparisonText, balanceNote, preSystemNote } from '../src/lib/appStatement.js'
+import { attribution, appOf, kindOf, receivableBalances, unassignedEntries, buildAppStatement, statementComparison, comparisonText, balanceNote, preSystemNote, parseStatementBalance } from '../src/lib/appStatement.js'
 import { reportModel, sheetRows } from '../src/lib/reportExport.js'
 
 // بيانات مصطنعة بالكامل
@@ -107,4 +107,39 @@ test('التصدير: الملف يحوي الملخص للمنشأة كاملة
   assert.deepEqual(model.blocks.find(b => b.id === 'apps.unassigned').rows.map(r => r[5]), [-30])
   const flat = JSON.stringify(sheetRows(model))
   assert.ok(flat.includes('-7500') && flat.includes('10500') && flat.includes('الرصيد بعد الحركة') && flat.includes('الوصف يذكر أكثر من تطبيق'))
+})
+
+test('الحالات المحتسبة كالمحرك والتقارير (approved وauto): المعلّق والمرفوض والملغى وبلا حالة لا تدخل الرصيد ولا الحركات ولا المقارنة ولا التصدير', () => {
+  const st = (id, date, status, amt) => E(id, date, '🍔 مبيعات هنقر ستيشن', amt, 0, { status })
+  const mixed = [st('s1', '2026-10-05', 'approved', 100), st('s2', '2026-10-05', 'pending', 300), st('s3', '2026-10-05', 'rejected', 400),
+    st('s4', '2026-10-06', 'auto', 50), st('s5', '2026-10-06', 'cancelled', 70), st('s6', '2026-10-06', null, 90),
+    st('s7', '2026-09-20', 'approved', 10), st('s8', '2026-09-20', 'pending', 1000),
+    E('s9', '2026-10-07', '🛒 مصروفات تشغيلية', 0, 500, { status: 'pending', description: 'عمولات هنقر ستيشن' }), E('s10', '2026-10-07', 'تسوية يدوية', 0, 60, { status: 'rejected' })]
+  assert.equal(receivableBalances(mixed).balances.hunger, 160)
+  assert.equal(receivableBalances(mixed).unassigned, 0)
+  assert.deepEqual(unassignedEntries(mixed), [])
+  const s = buildAppStatement(mixed, 'hunger', { from: '2026-10-01', to: '2026-10-31' })
+  assert.equal(s.opening, 10)
+  assert.deepEqual(s.rows.map(r => r.id), ['s1', 's4'])
+  assert.deepEqual(s.totals, { sales: 150, collections: 0, settlements: 0 })
+  assert.equal(s.closing, 160)
+  assert.equal(s.firstRecorded, '2026-09-20')
+  const c = statementComparison(mixed, [{ id: 'c', app: 'hunger', statement_date: '2026-10-31', statement_balance: '160.00', reference: 'كشف', created_by_name: 'محاسب', created_at: '2026-11-01' }], 'hunger', '2026-10-31')
+  assert.deepEqual([c.bookBalance, c.difference, c.noDifference], [160, 0, true])
+  const model = reportModel({ tab: 'apps', org: 'م', from: '2026-10-01', to: '2026-10-31', branch: 'all', branches: [], generatedAt: new Date('2026-11-01T00:00:00Z'),
+    a: { app: 'hunger', label: 'هنقر ستيشن', statement: s, comparison: c, note: balanceNote(s.closing), preSystem: preSystemNote(s.firstRecorded), comparisonText: comparisonText(c), unassigned: [] } })
+  const mv = model.blocks.find(b => b.id === 'apps.movements')
+  assert.deepEqual(mv.rows.map(r => r[8]), [10, 110, 160])
+  assert.deepEqual(mv.foot[0].slice(5), [150, null, null, 160])
+})
+
+test('رصيد كشف التطبيق: الفارغ والمسافات وغير الرقمي وأكثر من منزلتين مرفوضة؛ الصفر الصريح والسالب والأرقام العربية مقبولة', () => {
+  for (const v of ['', '   ', 'abc', '12a', '1.234', '--1', '.5', '5.', null, undefined]) assert.equal(parseStatementBalance(v), null, JSON.stringify(v))
+  assert.equal(parseStatementBalance('0'), 0)
+  assert.equal(Object.is(parseStatementBalance('-0'), 0), true)
+  assert.equal(parseStatementBalance('0.00'), 0)
+  assert.equal(parseStatementBalance('-250.5'), -250.5)
+  assert.equal(parseStatementBalance(' 240 '), 240)
+  assert.equal(parseStatementBalance('١٬٢٣٤٫٥'), 1234.5)
+  assert.equal(parseStatementBalance('1,500.00'), 1500)
 })

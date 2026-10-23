@@ -3,12 +3,15 @@
 // لا رصيد افتتاحي مقدَّر: رصيد بداية الفترة هو مجموع قيود التطبيق المسجلة قبلها في تحسيب، لا غير؛
 // وما قبل أول قيد مسجل للتطبيق (قبل بدء الاستخدام) غير معروف ولا يُفترض صفرًا.
 import { APPS } from './appReconciliation.js'
+import { isCounted } from './financeRules.js'
+import { toLatinNumber } from './amountInput.js'
 
 export { APPS }
 const cents = v => Math.round((Number(v) || 0) * 100)
 const money = c => c / 100
 const hasReceivable = e => cents(e.receivable_in) !== 0 || cents(e.receivable_out) !== 0
-const counted = e => (e.status || 'approved') !== 'cancelled'
+// الحالات المحتسبة نفسها في المحرك والتقارير واللوحة (financeRules.isCounted: approved وauto)؛ المعلّق والمرفوض والملغى وبلا حالة لا تدخل الكشف
+const counted = isCounted
 const order = (a, b) => String(a.date).localeCompare(String(b.date)) || String(a.journal_number || '').localeCompare(String(b.journal_number || '')) || String(a.id).localeCompare(String(b.id))
 
 /**
@@ -116,4 +119,12 @@ export function preSystemNote(firstRecorded) {
   return firstRecorded
     ? `أول قيد مسجل لهذا التطبيق في تحسيب بتاريخ ${firstRecorded}. أي رصيد للتطبيق قبل ذلك غير مسجل وغير معروف من الدفتر، ولا يُفترض صفرًا؛ يُعرف من كشف التطبيق.`
     : 'لا قيود مسجلة لهذا التطبيق في تحسيب.'
+}
+
+/** رصيد كشف التطبيق كما كُتب في الحقل: رقم بمنزلتين عشريتين كحد أقصى، والصفر الصريح والسالب مقبولان؛ الفارغ والمسافات وغير الرقمي null. */
+export function parseStatementBalance(raw) {
+  const t = toLatinNumber(raw)   // يحذف المسافات وفواصل الآلاف ويحوّل الأرقام العربية والهندية
+  if (!/^-?\d+(\.\d{1,2})?$/.test(t)) return null
+  const n = Number(t)
+  return Number.isFinite(n) && Math.abs(n) < 1e12 ? (n === 0 ? 0 : n) : null
 }

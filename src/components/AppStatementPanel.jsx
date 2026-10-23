@@ -4,15 +4,19 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Button, DateInput, EmptyState, Field, Input, Money, Note, Panel, Select, Textarea } from '../ui/components.jsx'
 import { formatDate } from '../ui/format.js'
-import { APPS, balanceNote, comparisonText, preSystemNote } from '../lib/appStatement.js'
+import { APPS, balanceNote, comparisonText, parseStatementBalance, preSystemNote } from '../lib/appStatement.js'
 
 const ERR = { forbidden: 'تسجيل رصيد كشف التطبيق للمحاسب وإدارة تحسيب.', no_session: 'انتهت الجلسة؛ ادخل من جديد.', invalid: 'راجع التاريخ والرصيد (منزلتان عشريتان) والمصدر.',
   reason_required: 'اكتب سبب الإلغاء.', not_found: 'السجل غير موجود. حدّث الصفحة.', already_voided: 'أُلغي هذا السجل من قبل.' }
 const amount = v => (v === null || v === undefined ? '—' : <Money value={v} />)
 
 export default function AppStatementPanel({ app, onApp, apps, statement, comparison, checkpoints, unassigned, branchFiltered, canRecord, onChanged, loading, error, onRetry, to }) {
-  const [form, setForm] = useState(null), [busy, setBusy] = useState(false), [formError, setFormError] = useState(''), [voiding, setVoiding] = useState(null)
-  const label = APPS.find(a => a.key === app)?.label || app
+  // النموذج مربوط بالتطبيق الذي فُتح له (form.app)، لا بالتطبيق المعروض: تغيير التطبيق أثناء التحرير لا ينقل البيانات إليه
+  const [form, setForm] = useState(null), [busy, setBusy] = useState(false), [formError, setFormError] = useState(''), [voiding, setVoiding] = useState(null), [saved, setSaved] = useState('')
+  const labelOf = k => APPS.find(a => a.key === k)?.label || k
+  const label = labelOf(app)
+  const formBalance = form ? parseStatementBalance(form.balance) : null
+  const formMismatch = !!form && form.app !== app
   const appOptions = APPS.map(a => ({ value: a.key, label: a.label + (apps.includes(a.key) ? '' : ' (بلا حركة)') }))
   async function call(fn, args) {
     setBusy(true); setFormError('')
@@ -29,7 +33,8 @@ export default function AppStatementPanel({ app, onApp, apps, statement, compari
       <Panel title="كشف حساب التطبيق — المنشأة كاملة" subtitle="تحصيل التطبيقات يُسجَّل على مستوى المنشأة، فالكشف للمنشأة كلها ولا يُعرض كشفًا لفرع. عمود الفرع للبيان فقط.">
         <div className="ts-panel-body">
           {branchFiltered && <div data-k="app-branch-note"><Note tone="info">اختيار الفرع في أعلى الصفحة لا يُطبَّق على هذا الكشف: مبيعات فرع وحده لا تُقابَل بتحصيلات المنشأة كلها. توزيع التحصيلات على الفروع غير متاح بعد.</Note></div>}
-          <Field label="التطبيق"><Select data-k="app-select" value={app} options={appOptions} onChange={e => onApp(e.target.value)} /></Field>
+          <Field label="التطبيق" hint={busy ? 'جارٍ الحفظ؛ يُتاح تغيير التطبيق بعد انتهائه.' : undefined}>
+            <Select data-k="app-select" value={app} options={appOptions} disabled={busy} onChange={e => { setSaved(''); onApp(e.target.value) }} /></Field>
           {error && <Note tone="error" action={<Button size="sm" onClick={onRetry}>إعادة المحاولة</Button>}>{error}</Note>}
           {loading && <p className="ts-muted">جارٍ تحميل الكشف…</p>}
           {ready && <>
@@ -57,17 +62,27 @@ export default function AppStatementPanel({ app, onApp, apps, statement, compari
               </div>
               <p data-k="cmp-text">{comparisonText(comparison)}</p>
             </> : <p data-k="cmp-none">لم يُدخل رصيد من كشف {label} حتى {formatDate(to, { year: true })}؛ الرصيد المعروض دفتري فقط ولم يُقارن بكشف التطبيق.</p>}
-            {canRecord && !form && <Button size="sm" data-k="cmp-add" onClick={() => { setForm({ date: to, balance: '', reference: '', note: '' }); setFormError('') }}>إدخال رصيد من كشف {label}</Button>}
-            {form && <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
+            {saved && <p data-k="cmp-saved" role="status">{saved}</p>}
+            {canRecord && !form && <Button size="sm" data-k="cmp-add" onClick={() => { setForm({ app, date: to, balance: '', reference: '', note: '' }); setFormError(''); setSaved('') }}>إدخال رصيد من كشف {label}</Button>}
+            {form && <fieldset disabled={busy} style={{ border: 0, padding: 0 }} data-k="cmp-form" data-app={form.app}>
+              <h3 data-k="cmp-form-title">رصيد من كشف {labelOf(form.app)}</h3>
+              {formMismatch && <div data-k="cmp-form-mismatch"><Note tone="warning" action={<Button size="sm" onClick={() => onApp(form.app)}>العودة إلى {labelOf(form.app)}</Button>}>
+                هذا النموذج لرصيد كشف {labelOf(form.app)}، والكشف المعروض الآن لـ{label}. لا يُحفظ لتطبيق غير الذي فُتح له؛ ارجع إلى {labelOf(form.app)} لحفظه، أو ألغِ النموذج.</Note></div>}
               <div className="ts-form-grid">
                 <Field label="تاريخ الرصيد في كشف التطبيق"><DateInput value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} /></Field>
-                <Field label="الرصيد المستحق للمنشأة حسب الكشف"><Input data-k="cmp-balance" numeric dir="ltr" value={form.balance} onChange={e => setForm(f => ({ ...f, balance: e.target.value }))} /></Field>
+                <Field label="الرصيد المستحق للمنشأة حسب الكشف" error={form.balance.trim() !== '' && formBalance === null ? 'اكتب رقمًا بمنزلتين عشريتين كحد أقصى (الصفر والسالب مقبولان).' : undefined}>
+                  <Input data-k="cmp-balance" numeric dir="ltr" value={form.balance} onChange={e => setForm(f => ({ ...f, balance: e.target.value }))} /></Field>
                 <Field label="مصدر الرصيد (رقم كشف التطبيق أو فترته)"><Input data-k="cmp-reference" value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))} /></Field>
                 <Field label="ملاحظة" span><Textarea rows={2} value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></Field>
               </div>
-              <Button size="sm" variant="primary" data-k="cmp-save" disabled={!form.date || form.balance === '' || !form.reference.trim()}
-                onClick={async () => { if (await call('app_statement_checkpoint_save', { p_app: app, p_date: form.date, p_balance: Number(form.balance), p_reference: form.reference, p_note: form.note || null })) setForm(null) }}>حفظ الرصيد</Button>
-              <Button size="sm" variant="quiet" onClick={() => setForm(null)}>إلغاء</Button>
+              <Button size="sm" variant="primary" data-k="cmp-save" disabled={busy || formMismatch || !form.date || formBalance === null || !form.reference.trim()}
+                onClick={async () => {
+                  // القيم كما فُتح النموذج وكُتبت وقت الضغط؛ لا تتغير بتغيير التطبيق أثناء انتظار الرد
+                  const target = form.app, values = { p_app: target, p_date: form.date, p_balance: formBalance, p_reference: form.reference.trim(), p_note: form.note.trim() || null }
+                  if (target !== app || values.p_balance === null) return
+                  if (await call('app_statement_checkpoint_save', values)) { setForm(null); setSaved(`حُفظ رصيد كشف ${labelOf(target)}.`) }
+                }}>حفظ رصيد {labelOf(form.app)}</Button>
+              <Button size="sm" variant="quiet" data-k="cmp-cancel" onClick={() => setForm(null)}>إلغاء</Button>
             </fieldset>}
             {formError && <p className="ts-field-error" role="alert">{formError}</p>}
             {mine.length > 0 && <table className="rpt-table" data-k="cmp-history">
