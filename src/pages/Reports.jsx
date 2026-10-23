@@ -16,6 +16,8 @@ import { downloadBlob } from '../lib/reportPdf.js'
 import { Button, DateInput, EmptyState, Field, Metric, Money, Panel, Segment, Select, Tabs } from '../ui/components.jsx'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
 import { bankAccountRows } from '../lib/branchSetup'
+import AppStatementPanel from '../components/AppStatementPanel.jsx'
+import { APPS, buildAppStatement, receivableBalances, statementComparison, balanceNote, comparisonText, preSystemNote, unassignedEntries } from '../lib/appStatement.js'
 
 // صفحة التقارير بالهوية الجديدة. الحسابات منقولة كما هي من الصفحة السابقة (الدوال salesFigures وexpenseFigures
 // وload)، والتغيير في العرض: الفترة والفرع ظاهران، والاختيار في العنوان (يبقى مع التحديث والرجوع)، والجداول تتمرر على الجوال.
@@ -36,6 +38,7 @@ const TABS = [
   { value: 'purchases', label: 'المصروفات' },
   { value: 'vat',       label: 'الضريبة' },
   { value: 'balance',   label: 'الأرصدة' },
+  { value: 'apps',      label: 'ذمم التطبيقات' },
 ]
 
 const MONTHS_AR = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر']
@@ -127,7 +130,7 @@ function TreeRow({ level, label, sub, amount, pct, pctText, open, onToggle, bar,
 // ── الصفحة ──────────────────────────────────────────────────────────────────
 
 export default function Reports() {
-  const { projectId, projectName, sessionEpoch } = useAuth()
+  const { projectId, projectName, sessionEpoch, role } = useAuth()
   const [params, setParams] = useSearchParams()
   const init = useRef(initialFilters(params)).current
   const [from, setFrom]                 = useState(init.from)
@@ -158,6 +161,11 @@ export default function Reports() {
   const [filtersOpen, setFiltersOpen] = useState(false)   // على الجوال: الفلاتر مطوية خلف «تغيير»، والاختيار ظاهر في العنوان
   const loadSeq  = useRef(0)
   const [projectSettings, setProjectSettings] = useState(null)
+  // كشف حساب التطبيقات (20261023120000): قيود الذمم كلها حتى نهاية الفترة (للرصيد الافتتاحي) وسجلات رصيد كشف التطبيق
+  const [appKey, setAppKey] = useState(() => APPS.some(a => a.key === params.get('app')) ? params.get('app') : 'hunger')
+  const [appData, setAppData] = useState(null)   // { entries, checkpoints, to }
+  const [appLoading, setAppLoading] = useState(false), [appError, setAppError] = useState('')
+  const appSeq = useRef(0)
   const [banksReady, setBanksReady] = useState(false)
 
   const liveRef = useRef({ from: init.from, to: init.to, branch: init.branch })
@@ -170,8 +178,30 @@ export default function Reports() {
     if (activePeriod !== 'month') next.set('period', activePeriod)
     if (!PRESETS.includes(activePeriod)) { next.set('from', from); next.set('to', to) }
     if (selectedBranch !== 'all') next.set('branch', selectedBranch)
+    if (activeTab === 'apps') next.set('app', appKey)
     if (next.toString() !== params.toString()) setParams(next, { replace: true })
-  }, [activeTab, activePeriod, from, to, selectedBranch])
+  }, [activeTab, activePeriod, from, to, selectedBranch, appKey])
+
+  async function loadApps() {
+    const seq = ++appSeq.current, upTo = to
+    setAppLoading(true); setAppError('')
+    try {
+      const [led, cps] = await Promise.all([
+        fetchEveryRow(() => supabase.from('ledger_entries').select('id,date,type,description,status,journal_number,branch,receivable_in,receivable_out')
+          .eq('project_id', projectId).neq('status', 'cancelled').lte('date', upTo).or('receivable_in.neq.0,receivable_out.neq.0').order('date').order('id')),
+        supabase.rpc('app_statement_checkpoints', { p_app: null }),
+      ])
+      if (seq !== appSeq.current) return
+      if (led.error || cps.error || !cps.data?.ok) throw new Error('load')
+      setAppData({ entries: led.data || [], checkpoints: cps.data.checkpoints || [], to: upTo })
+    } catch { if (seq === appSeq.current) { setAppData(null); setAppError('تعذّر تحميل كشف حساب التطبيقات. أعد المحاولة.') } }
+    finally { if (seq === appSeq.current) setAppLoading(false) }
+  }
+  useEffect(() => { if (projectId && activeTab === 'apps') loadApps() }, [projectId, activeTab, to, sessionEpoch])
+  const appStatement = appData ? buildAppStatement(appData.entries, appKey, { from, to }) : null
+  const appComparison = appData ? statementComparison(appData.entries, appData.checkpoints, appKey, to) : null
+  const appActive = appData ? receivableBalances(appData.entries).active : []
+  const appUnassigned = appData ? unassignedEntries(appData.entries, to) : []
 
   useEffect(() => {
     if (projectId) {
@@ -359,11 +389,13 @@ export default function Reports() {
       prevEntriesCount: prevEntries.length, data, balances, bankAccounts, projectSettings: banksReady ? projectSettings : null }
     if (activeTab === 'sales') ctx.s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
     if (activeTab === 'purchases') ctx.x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
+    if (activeTab === 'apps') Object.assign(ctx, { branch: 'all', a: { app: appKey, label: APPS.find(a => a.key === appKey)?.label || appKey, statement: appStatement, comparison: appComparison,
+      note: balanceNote(appStatement.closing), preSystem: preSystemNote(appStatement.firstRecorded), comparisonText: comparisonText(appComparison), unassigned: appUnassigned } })
     return reportModel(ctx)
   }
   async function exportAs(kind) {
     if (activeTab === 'balance' && paymentWorkflow(projectSettings) && !banksReady) { setExportError('أعد تحميل الحسابات قبل تصدير الأرصدة المتاحة للتشغيل.'); return }
-    if (!data || loading || loadError || exporting) return
+    if (activeTab === 'apps' ? (!appStatement || appLoading || appError || exporting) : (!data || loading || loadError || exporting)) return
     setExporting(kind); setExportError('')
     try {
       const model = currentModel()
@@ -458,8 +490,8 @@ export default function Reports() {
         <Tabs label="التقارير" tabs={TABS} value={activeTab} onChange={setActiveTab} />
         <div className="rpt-export" role="group" aria-label="تصدير هذا القسم">
           <span className="ts-muted">تصدير {TITLES[activeTab].replace('تقرير ', '')} بالفترة والفرع المعروضين:</span>
-          <Button size="sm" icon={FileText} disabled={!data || loading || !!loadError || !!exporting} onClick={() => exportAs('pdf')}>{exporting === 'pdf' ? 'جارٍ إنشاء PDF…' : 'PDF'}</Button>
-          <Button size="sm" icon={FileSpreadsheet} disabled={!data || loading || !!loadError || !!exporting} onClick={() => exportAs('xlsx')}>{exporting === 'xlsx' ? 'جارٍ إنشاء Excel…' : 'Excel'}</Button>
+          <Button size="sm" icon={FileText} disabled={(activeTab === 'apps' ? !appStatement || appLoading : !data || loading || !!loadError) || !!exporting} onClick={() => exportAs('pdf')}>{exporting === 'pdf' ? 'جارٍ إنشاء PDF…' : 'PDF'}</Button>
+          <Button size="sm" icon={FileSpreadsheet} disabled={(activeTab === 'apps' ? !appStatement || appLoading : !data || loading || !!loadError) || !!exporting} onClick={() => exportAs('xlsx')}>{exporting === 'xlsx' ? 'جارٍ إنشاء Excel…' : 'Excel'}</Button>
         </div>
       </div>
       {exportError && <p className="ts-field-error" role="alert">{exportError}</p>}
@@ -855,6 +887,11 @@ export default function Reports() {
           })()}
 
           {/* ══════════ الأرصدة ══════════ */}
+          {activeTab === 'apps' && (
+            <AppStatementPanel app={appKey} onApp={setAppKey} apps={appActive} statement={appStatement} comparison={appComparison} checkpoints={appData?.checkpoints}
+              unassigned={appUnassigned} branchFiltered={selectedBranch !== 'all'}
+              canRecord={role === 'accountant' || role === 'superadmin'} onChanged={loadApps} loading={appLoading && !appData} error={appError} onRetry={loadApps} to={to} />
+          )}
           {activeTab === 'balance' && balances && (
             <>
               <div className="ts-metrics" data-k="balance.cards">

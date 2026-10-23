@@ -7,7 +7,7 @@ import { uncountedText } from './financeRules.js'
 import { bankAccountRows } from './branchSetup.js'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
 
-export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقرير المصروفات', vat: 'تقرير ضريبة القيمة المضافة', balance: 'تقرير الأرصدة' }
+export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقرير المصروفات', vat: 'تقرير ضريبة القيمة المضافة', balance: 'تقرير الأرصدة', apps: 'كشف حساب التطبيقات' }
 
 // وصف الأرقام لكل قسم — يُعرض في الشاشة («ما الذي تشمله هذه الأرقام؟») وفي الملفين بالنص نفسه
 export const SCOPE = {
@@ -34,6 +34,15 @@ export const SCOPE = {
     ['الأرصدة', 'تراكمية من أول قيد حتى نهاية الفترة، وتشمل التحويلات الداخلية.'],
     ['ملخص الفترة', 'الداخل والخارج من الصندوق والبنك والعهدة خلال الفترة وحدها.'],
   ],
+  apps: [
+    ['الرصيد الدفتري', 'من قيود تحسيب وحدها: مبيعات التطبيق (مدين) ناقص تحصيلاته وتسوياته (دائن)، تراكميًا حتى نهاية الفترة. لا رصيد افتتاحي تقديري.'],
+    ['الرصيد الافتتاحي', 'مجموع قيود التطبيق المسجلة قبل بداية الفترة، لا غير.'],
+    ['التسويات', 'قيود تخفض ذمة التطبيق غير التحصيل، مثل العمولات المسجلة من «مطابقة التطبيقات» والتصحيحات.'],
+    ['ما قبل بدء التسجيل', 'رصيد التطبيق قبل أول قيد مسجل له في تحسيب غير معروف من الدفتر ولا يُفترض صفرًا.'],
+    ['رصيد كشف التطبيق', 'كما يظهر في كشف التطبيق نفسه ويُدخله المحاسب للمقارنة بمصدره؛ لا يُنشئ قيدًا ولا يغيّر الذمم. الفرق = رصيد الكشف − الرصيد الدفتري حتى التاريخ نفسه.'],
+    ['قيود للمراجعة', 'قيود ذمم لا يُحدَّد تطبيقها بثقة من نوعها أو وصفها: تظهر منفصلة ولا تُوزَّع.'],
+    ['الفروع', 'الكشف للمنشأة كاملة: تحصيل التطبيقات يُسجَّل على مستوى المنشأة.'],
+  ],
 }
 
 const INTRO = {
@@ -41,6 +50,7 @@ const INTRO = {
   purchases: 'المبالغ بالريال السعودي وقبل ضريبة القيمة المضافة؛ النسبة من المبيعات قبل الضريبة.',
   vat: 'المبالغ بالريال السعودي. حساب للمتابعة الداخلية يراجعه المحاسب قبل الإقرار والسداد.',
   balance: 'المبالغ بالريال السعودي. الأرصدة تراكمية حتى نهاية الفترة.',
+  apps: 'المبالغ بالريال السعودي. الرصيد بعد كل حركة تراكمي من أول قيد للتطبيق. الكشف للمنشأة كاملة.',
 }
 
 export const VAT_NOTICE = (net) => `حساب للمتابعة الداخلية، يراجعه المحاسب قبل الإقرار والسداد. صافي ضريبة الفترة قبل السداد ${formatNumber(Math.abs(net), 2)} ${net >= 0 ? '(مستحق عن الفترة)' : '(فائض لصالح المنشأة)'}. مدفوعات الضريبة المسجلة خلال الفترة لا تُطرح منه، لأن السداد قد يخص فترة سابقة ولا يحدد القيد الفترة التي يخصها.`
@@ -64,6 +74,28 @@ export function reportModel(ctx) {
   const branchText = branch === 'all' ? (branches.length > 1 ? 'كل الفروع' : 'المنشأة كاملة') : branch
   const blocks = []
   const T = (id, title, columns, rows, extra = {}) => blocks.push({ kind: 'table', id, title, columns, rows, ...extra })
+  if (tab === 'apps') {
+    const { label, statement: st, comparison: cmp, note, preSystem, comparisonText, unassigned = [] } = ctx.a
+    blocks.push({ kind: 'calc', id: 'apps.summary', title: `ملخص ${label} — المنشأة كاملة`, rows: [
+      { label: 'رصيد بداية الفترة (من قيود تحسيب السابقة)', value: st.opening },
+      { label: 'مبيعات الفترة', value: st.totals.sales },
+      { label: 'تحصيلات الفترة', value: st.totals.collections },
+      { label: 'تسويات الفترة (عمولات وتصحيحات)', value: st.totals.settlements },
+      { label: 'الرصيد الدفتري في نهاية الفترة', value: st.closing, strong: true },
+    ] }, { kind: 'note', id: 'apps.note', text: note }, { kind: 'note', id: 'apps.presystem', text: preSystem })
+    if (cmp) blocks.push({ kind: 'calc', id: 'apps.match', title: 'المقارنة مع كشف التطبيق الخارجي', rows: [
+      { label: `رصيد كشف التطبيق في ${formatDate(cmp.date, { year: true })}`, value: cmp.statementBalance },
+      { label: `الرصيد الدفتري حتى ${formatDate(cmp.date, { year: true })}`, value: cmp.bookBalance },
+      { label: 'الفرق (كشف التطبيق − الدفتري)', value: cmp.difference, strong: true },
+    ] }, { kind: 'note', id: 'apps.matchText', text: comparisonText })
+    else blocks.push({ kind: 'note', id: 'apps.match', text: 'لم يُدخل رصيد من كشف التطبيق حتى نهاية الفترة؛ الرصيد المعروض دفتري فقط ولم يُقارن بكشف التطبيق.' })
+    T('apps.movements', `حركات ${label}`, [{ label: 'التاريخ', type: 'date' }, { label: 'القيد' }, { label: 'الحركة' }, { label: 'البيان' }, { label: 'الفرع' },
+      { label: 'مبيعات', type: 'money' }, { label: 'تحصيل', type: 'money' }, { label: 'تسوية', type: 'money' }, { label: 'الرصيد بعد الحركة', type: 'money' }],
+      [['رصيد بداية الفترة', null, null, null, null, null, null, null, st.opening], ...st.rows.map(r => [r.date, r.journal, r.kindLabel, r.description || r.type, r.branch || 'المنشأة', r.sale, r.collection, r.settlement, r.balance])],
+      { foot: [['الرصيد الدفتري', null, null, null, null, st.totals.sales || null, st.totals.collections || null, st.totals.settlements || null, st.closing]] })
+    if (unassigned.length) T('apps.unassigned', 'قيود ذمم تحتاج مراجعة (لم تُنسب لتطبيق)', [{ label: 'التاريخ', type: 'date' }, { label: 'القيد' }, { label: 'النوع' }, { label: 'البيان' }, { label: 'السبب' }, { label: 'الأثر على الذمم', type: 'money' }],
+      unassigned.map(u => [u.date, u.journal, u.type, u.description, u.reason, u.amount]))
+  }
 
   if (tab === 'sales') {
     const s = ctx.s
