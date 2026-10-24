@@ -667,3 +667,11 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 .rp-receipt-suggest { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
 .rp-receipt-link .sup-txns label { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rp-receipt-balance { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--ts-surface-2, #F3F6F6); font-size: 13.5px; }
+
+/* Account overview: three compact cards per row, including narrow phones. */
+.account-overview{display:grid;gap:10px;margin:12px 0}.account-card-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.account-card{display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px 10px;border:1px solid var(--ts-line,#dbe4e6);border-radius:14px;background:white;text-decoration:none;color:inherit}
+.account-card-label{font-size:13px;font-weight:700}.account-card-value{font-size:clamp(14px,3.3vw,26px);font-variant-numeric:tabular-nums;line-height:1.4;overflow-wrap:anywhere}
+.account-card small{font-size:11px;color:#526975;line-height:1.5}.account-card-more{margin-top:auto;font-size:11px;color:#087f8c}.account-card-negative .account-card-value{color:#b42318}.account-card:focus-visible{outline:3px solid #087f8c;outline-offset:2px}
+.account-card-value .ts-money{max-width:100%;flex-wrap:wrap;row-gap:0}.account-card-value .ts-num{max-width:100%;white-space:normal;overflow-wrap:anywhere}.account-card-value-long{font-size:clamp(10px,2.7vw,22px)}
+@media(max-width:480px){.account-card{padding:11px 7px;gap:6px}.account-card-label{font-size:12px}.account-card-value .ts-currency{font-size:10px}.account-card small{font-size:10px}}

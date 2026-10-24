@@ -1,3 +1,6 @@
+import { accountDashboard } from './accountStatement.js'
+import { BANK_TRANSFER_TYPE, paymentWorkflow } from './paymentWorkflow.js'
+import { normalizeExpenseReading } from './expenseReading.js'
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
 import { normalizeSalesReading } from './salesReport.js'
@@ -86,7 +89,7 @@ function normalizeMimeType(mimeType, fileName = '') {
   return t
 }
 
-export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '', categories = [], projectName = '', transTypes = [], extractSupplierName = false) {
+export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '', categories = [], projectName = '', transTypes = [], extractSupplierName = false, settings = {}) {
   const mime    = normalizeMimeType(mimeType, fileName)
   const isImage = VALID_IMAGE_TYPES.includes(mime)
   const isPdf   = mime === 'application/pdf'
@@ -100,11 +103,26 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
     : { type: 'document', source: { type: 'base64', media_type: 'application/pdf',  data: fileBase64 } }
 
   const today = fmtDate(new Date())
+  const bankCustody = accountDashboard(settings)
+  const workflow = paymentWorkflow(settings)
+  const uploaderRule = workflow?.uploaders?.[uploadedBy]
+  const readingSource = uploaderRule?.source || (uploadedBy === 'cashier' ? 'cash' : uploadedBy === 'owner' ? 'bank' : 'custody')
+  // Only an explicitly configured bank workflow changes the legacy reading rule.
+  // Keep the production wording (including its supplier-payment exception) for other companies.
+  const paymentSourceRule = workflow
+    ? `- paySource: اقتراح مبدئي من إعداد الرافع = ${readingSource}. المراجع يؤكده أو يغيره. لا تحوّل فاتورة آجلة إلى مدفوعة بسبب الاقتراح. سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash.`
+    : `- paySource: ثابت حسب من رفع المستند — ${
+      uploadedBy === 'cashier'    ? 'cash (الكاشير يدفع من الصندوق دائماً)' :
+      uploadedBy === 'purchasing' ? 'custody (مسؤول المشتريات يدفع من العهدة دائماً)' :
+      uploadedBy === 'owner'      ? 'bank (المالك يدفع من البنك دائماً)' :
+      'custody'
+    } — لا تغيّره حتى لو ذُكر غيره في المستند (عدا سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash)`
 
   // normalize transTypes — قد تكون strings أو objects {label, category}
-  const typesAsStrings = (Array.isArray(transTypes) ? transTypes : [])
+  const typesAsStrings = (Array.isArray(transTypes) ? [...transTypes, ...(workflow ? [BANK_TRANSFER_TYPE] : [])] : [])
     .map(t => (typeof t === 'string' ? t : (t?.label || t?.name || '')).trim())
     .filter(Boolean)
+    .filter(t => !bankCustody || !t.includes('صرف عهدة'))
 
   // build transaction types section — use project-specific list if provided
   const transTypesSection = typesAsStrings.length > 0
@@ -197,6 +215,11 @@ ${lines.join('\n')}
 إذا كان نص معين غير واضح، اكتب أفضل قراءة ممكنة مع إضافة (?) في نهاية الوصف — لا تخترع اسماً لا تتأكد منه.
 
 قاعدة قراءة مبالغ بنود الفاتورة الضريبية:
+- لكل صنف انسخ quantity وunitPrice وprintedLineTotal كلًا من موضعه. printedLineTotal هو الإجمالي المطبوع للكمية كاملة بعد خصم الصنف، لا سعر الوحدة. printedLineBasis يصف أساس ضريبة ذلك الإجمالي. إن لم يظهر الحقل اكتب null ولا تحسبه أو تخترعه.
+- أمثلة تركيبية فقط: سعر الوحدة 8 والكمية 3 وإجمالي الصنف المطبوع 24: amount=24، لا 8. وزن 1.5 كجم وسعر الكيلو 12 والإجمالي 18: amount=18، لا 12. لا تحوّل أيًا من هذه الأمثلة إلى بيانات الصورة.
+- في الفواتير اليدوية ابحث عن المبلغ في خانة الإجمالي أسفل الصفحة وعن المبلغ بالحروف أيضًا؛ عدم وجود تفصيل أصناف لا يعني عدم وجود مبلغ. إذا كان إجمالي واحد واضحًا بلا تفصيل، أنشئ بندًا واحدًا بوصف الفاتورة ومبلغها المطبوع. إذا لم يتضح المبلغ فاكتب null وأضف readingWarnings ولا تفترض صفرًا.
+- التاريخ المكتوب بخط اليد: لا تحوّل تاريخًا ظاهرًا إلى سنة قديمة من عندك. انسخ اليوم والشهر والسنة كما هي، وأضف readingWarnings عند الشك، ولا تستنتج السنة من رقم الفاتورة.
+
 عند قراءة مبلغ كل بند في الفاتورة الضريبية:
 - حدّد أعمدة الصنف وأسطره أولاً: الكمية وسعر الوحدة ومبلغ الكمية قبل الضريبة والضريبة وإجمالي الكمية شامل الضريبة.
 - اختر إجمالي الكمية للصنف مرة واحدة، لا سعر الوحدة ولا مبلغ الضريبة ولا الاثنين معاً. قد يكون الإجمالي في سطر تالٍ للوصف.
@@ -212,7 +235,8 @@ ${lines.join('\n')}
 لا تدمج فاتورتين في فاتورة واحدة، ولا تتجاهل أي فاتورة ثانية تظهر في الصورة ولو جزئياً.
 
 ${transTypesSection}
-
+${workflow ? `تحويل بين حسابين بنكيين تملكهما المنشأة: type="transfer" وtransType="${BANK_TRANSFER_TYPE}" وpaySource="bank"، مع amount وdate وdescription. المراجع يختار حساب الخروج وحساب الدخول من الحسابات المسجلة؛ لا تخمّن معرفاتهما. لا يكفي اسم المستفيد أو لفظ تحويل وحده لإثبات أنه تحويل داخلي.` : ''}
+${bankCustody ? 'هذه المنشأة تستخدم حسابًا بنكيًا للمشتريات اسمه حساب العهدة. ليس عهدة موظف ولا custody. إيصال تمويله من حساب المنشأة الرئيسي تحويل بين حسابين بنكيين، وفاتورة الشراء منه expense بمصدر bank. لا تستخدم صرف عهدة الموظف لهذا الحساب.' : ''}
 مصادر الدفع: cash=صندوق نقدي | bank=بنك أو مدى أو تحويل | custody=عهدة موظف
 ${categorySection}
 ١. تقرير مبيعات (POS أو ملخص مبيعات يومي):
@@ -246,12 +270,12 @@ ${categorySection}
 مثال صحيح: إذا رأيت Transfer=88 و Hunger=584 و Jahez=273 فـ transferSales=88, hungerSales=584, jahez=273
 مثال خاطئ: لا تضع 584 في جاهز ولا 273 في هنقر لمجرد أنك تجاهلت Transfer
 
-٢. تحويل داخلي — نقل مال بين حسابات المنشأة نفسها فقط (صندوق ↔ بنك ↔ عهدة مسؤول المشتريات).
+٢. تحويل داخلي — نقل مال بين حسابات المنشأة نفسها فقط (${bankCustody ? 'الصندوق والحسابات البنكية، ومنها حساب العهدة البنكي' : 'صندوق ↔ بنك ↔ عهدة مسؤول المشتريات'}).
    ⚠️ لا يشمل إطلاقاً أي مبلغ يخرج لطرف خارجي أو لشخص (مالك، شريك، مورد، موظف) — حتى لو كُتب على المستند لفظ "تحويل":
-{"type":"transfer","transType":"تحويل داخلي — صرف عهدة أو تحويل داخلي — إيداع نقدي","date":"YYYY-MM-DD","amount":0.00,"description":"وصف التحويل"}
+{"type":"transfer","transType":"${bankCustody ? BANK_TRANSFER_TYPE : 'تحويل داخلي — صرف عهدة أو تحويل داخلي — إيداع نقدي'}","date":"YYYY-MM-DD","amount":0.00,"description":"وصف التحويل"}
 
 ٣. أي مستند آخر (فاتورة شراء، إيصال، سند، كشف) — فكّك لبنود:
-{"type":"expense","date":"YYYY-MM-DD","totalAmount":0.00,"vatAmount":0.00,"amountsBasis":"inclusive أو exclusive بحسب مبالغ البنود المطبوعة","transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"اسم المورد أو وصف الفاتورة","invoiceNumber":"رقم الفاتورة كما هو مطبوع أو null"${supplierNameField},"items":[{"description":"وصف البند","amount":0.00,"category_main":"التصنيف الرئيسي","category_sub":"التصنيف الفرعي"}]}
+{"type":"expense","date":"YYYY-MM-DD","totalAmount":0.00,"vatAmount":0.00,"amountsBasis":"inclusive أو exclusive بحسب مبالغ البنود المطبوعة","transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"اسم المورد أو وصف الفاتورة","invoiceNumber":"رقم الفاتورة كما هو مطبوع أو null"${supplierNameField},"items":[{"description":"وصف البند","amount":0.00,"quantity":null,"unitPrice":null,"printedLineTotal":null,"printedLineBasis":"inclusive أو exclusive","category_main":"التصنيف الرئيسي","category_sub":"التصنيف الفرعي"}]}
 
 ٤. سداد مورد — دفعة لمورد مقابل مستحق عليه (إيصال حوالة أو سند صرف أو سند قبض صادر من المورد)، لا شراء جديد:
 {"type":"supplier_payment","date":"YYYY-MM-DD","amount":0.00,"beneficiary":"اسم المستفيد/المورد كما طُبع حرفيًا","reference":"رقم العملية أو المرجع أو السند كما طُبع أو null","paySource":"cash أو bank","description":"وصف قصير","paymentEvidence":"النص المطبوع الذي يدل على أنه سداد لمورد، حرفيًا"}
@@ -259,7 +283,7 @@ ${categorySection}
 قواعد صارمة — لا استثناء:
 - إذا كان المستند ملخص مبيعات أو تقرير مبيعات استخدم النوع الأول (sales) دائماً
 - إذا كان المستند سحباً شخصياً لمالك أو شريك (يظهر اسم شخص من الملّاك، أو لفظ "مسحوبات" أو "سحب شخصي" أو "محسوبات") → استخدم النوع الثالث (expense) مع transType="مسحوبات [اسم الشريك]" مطابقاً حرفياً لما في قائمة الأنواع أعلاه — ⚠️ لا تصنّفه تحويلاً داخلياً أبداً حتى لو بدأ الوصف بكلمة "تحويل داخلي"، فالمال خرج لشخص لا بين حسابات المنشأة
-- إذا كان المستند حوالة بنكية لمسؤول مشتريات أو ما يدل على صرف عهدة من البنك → استخدم النوع الثاني (transfer) مع transType="تحويل داخلي — صرف عهدة" — لا تصنّفه كمصروف
+${bankCustody ? '- حوالة إلى حساب العهدة البنكي من حساب آخر للمنشأة: استخدم التحويل بين الحسابات البنكية أعلاه، لا صرف عهدة موظف.' : '- إذا كان المستند حوالة بنكية لمسؤول مشتريات أو ما يدل على صرف عهدة من البنك → استخدم النوع الثاني (transfer) مع transType="تحويل داخلي — صرف عهدة" — لا تصنّفه كمصروف'}
 - إذا كان المستند إيصال إيداع نقدي أو تحويل من الصندوق إلى البنك → استخدم النوع الثاني (transfer) مع transType="تحويل داخلي — إيداع نقدي" — لا تصنّفه كمبيعات
 - إذا كان الإشعار البنكي يظهر تحويل وارد من Hunger Station أو هنقر → استخدم النوع الثاني (transfer) مع transType="📥 تحصيل ذمم هنقر" — المبلغ يذهب bank_in
 - إذا كان الإشعار البنكي يظهر تحويل وارد من Jahez أو جاهز → استخدم النوع الثاني (transfer) مع transType="📥 تحصيل ذمم جاهز" — المبلغ يذهب bank_in
@@ -279,12 +303,8 @@ ${categorySection}
 - totalSales: مجموع cashSales + networkSales + transferSales + hungerSales + jahez + keeta + mrsool (التطبيق يعيد حسابه من paymentLines والإجمالي المطبوع)
 - إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك الباقي 0
 - transType: يجب اختياره دائماً من القائمة أعلاه حرفياً بما فيه الإيموجي — الافتراضي ${defaultExpenseType} لأي فاتورة شراء
-- paySource: ثابت حسب من رفع المستند — ${
-  uploadedBy === 'cashier'    ? 'cash (الكاشير يدفع من الصندوق دائماً)' :
-  uploadedBy === 'purchasing' ? 'custody (مسؤول المشتريات يدفع من العهدة دائماً)' :
-  uploadedBy === 'owner'      ? 'bank (المالك يدفع من البنك دائماً)' :
-  'custody'
-} — لا تغيّره حتى لو ذُكر غيره في المستند (عدا سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash)
+${paymentSourceRule}
+
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
 - انتبه بشكل خاص للأرقام المتشابهة بصرياً بالتاريخ (مثل 0 و2، أو 6 و8، حسب خط الفاتورة). إذا كان التاريخ الذي قرأته يقع بعد تاريخ اليوم (${today}) — هذا مؤشر قوي على خطأ قراءة (رقم يوم أو شهر مقلوب) — أعد فحص الرقم المشتبه به بعناية أكبر قبل اعتماده. لو بقي غير واضح تماماً حتى بعد إعادة الفحص، استخدم أفضل قراءة ممكنة بصيغة YYYY-MM-DD صحيحة دائماً (لا تكتب "؟" أو أي رمز داخل حقل date نفسه أبداً)، وأضف "(تحقق من التاريخ)" في نهاية حقل description لتنبيه المحاسب
 - invoiceNumber: رقم الفاتورة كما هو مطبوع حرفيًا (بالأصفار والحروف والرموز كما هي، دون تعديل). إن لم يوجد رقم واضح فاكتب null — لا تخمّن ولا تستعمل الرقم الضريبي أو رقم الطلب
@@ -367,6 +387,7 @@ ${categorySection}
   if (reading.calls > 1) normalized._reading = reading
   // تقرير المبيعات: القنوات من أسطر وسائل الدفع المنسوخة (المرادفات والتحويل والمرتجعات وغير المعروف) — src/lib/salesReport.js.
   // مرة واحدة عند القراءة: تعديلات المحاسب بعدها لا يُعاد حسابها.
+  normalized.invoices = normalized.invoices.map(normalizeExpenseReading)
   normalized.invoices = normalized.invoices.map(normalizeSalesReading)
   // إيصال سداد مورد: بدليل مطبوع وحده، وبلا بنود (src/lib/supplierReceipts.js)
   normalized.invoices = normalized.invoices.map(normalizeReceiptReading)

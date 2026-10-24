@@ -1,5 +1,7 @@
 import { operatingBankRows, paymentWorkflow, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useRef } from 'react'
+import { Link } from 'react-router-dom'
+import { accountDashboard, accountBalances, balanceCards, accountHref } from '../lib/accountStatement.js'
 import { useSearchParams } from 'react-router-dom'
 import { CalendarCheck, CalendarDays, ChevronDown, ChevronLeft, FileSpreadsheet, FileText, HandCoins, Info, Landmark, ListTree, Percent, Receipt,
   RefreshCw, ShoppingBasket, Smartphone, Store, TrendingUp, Trophy, Wallet } from 'lucide-react'
@@ -130,6 +132,10 @@ function TreeRow({ level, label, sub, amount, pct, pctText, open, onToggle, bar,
 // ── الصفحة ──────────────────────────────────────────────────────────────────
 
 export default function Reports() {
+  const { projectId } = useAuth()
+  return <ReportsPage key={projectId}/>
+}
+function ReportsPage() {
   const { projectId, projectName, sessionEpoch, role } = useAuth()
   const [params, setParams] = useSearchParams()
   const init = useRef(initialFilters(params)).current
@@ -137,9 +143,9 @@ export default function Reports() {
   const [to,   setTo]                   = useState(init.to)
   const [activePeriod, setActivePeriod] = useState(init.period)
   const [activeTab,    setActiveTab]    = useState(init.tab)
-  const [data,     setData]     = useState(null)
+  const [reportData, setData]     = useState(null)
   const [entries,  setEntries]  = useState([])
-  const [balances, setBalances] = useState(null)
+  const [balanceData, setBalances] = useState(null)
   const [bankAccounts, setBankAccounts] = useState([])   // الحسابات البنكية (20261014140000): رصيد البنك مفصّلًا لكل حساب
   const [loading,  setLoading]  = useState(false)
   const [loadError, setLoadError] = useState(null)   // ما تعذّر تحميله؛ لا أرقام تُعرض ولا تُصدَّر حتى تنجح إعادة المحاولة
@@ -161,12 +167,15 @@ export default function Reports() {
   const [filtersOpen, setFiltersOpen] = useState(false)   // على الجوال: الفلاتر مطوية خلف «تغيير»، والاختيار ظاهر في العنوان
   const loadSeq  = useRef(0)
   const [projectSettings, setProjectSettings] = useState(null)
+  const balances = accountDashboard(projectSettings) && balanceData ? balanceData.counted : balanceData
+  const data = reportData && accountDashboard(projectSettings) ? { ...reportData, ...reportData.countedMoves } : reportData
   // كشف حساب التطبيقات (20261023120000): قيود الذمم كلها حتى نهاية الفترة (للرصيد الافتتاحي) وسجلات رصيد كشف التطبيق
   const [appKey, setAppKey] = useState(() => APPS.some(a => a.key === params.get('app')) ? params.get('app') : 'hunger')
   const [appData, setAppData] = useState(null)   // { entries, checkpoints, to }
   const [appLoading, setAppLoading] = useState(false), [appError, setAppError] = useState('')
   const appSeq = useRef(0)
   const [banksReady, setBanksReady] = useState(false)
+  const [settingsReady, setSettingsReady] = useState(false)
 
   const liveRef = useRef({ from: init.from, to: init.to, branch: init.branch })
   useEffect(() => { liveRef.current = { from, to, branch: selectedBranch } }, [from, to, selectedBranch])
@@ -204,10 +213,15 @@ export default function Reports() {
   const appUnassigned = appData ? unassignedEntries(appData.entries, to) : []
 
   useEffect(() => {
+    let active = true
+    setSettingsReady(false); setBanksReady(false)
     if (projectId) {
       supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
-        .then(({ data, error }) => { setBankAccounts(data || []); setBanksReady(!error) })
+        .then(({ data, error }) => { if (active) {setBankAccounts(data || []); setBanksReady(!error)} })
       getProjectSettings(projectId).then(async s => {
+        if (!active) return
+        if (!s?.settings) {setLoadError('إعدادات الحسابات');return}
+        setSettingsReady(true)
         setProjectSettings(s?.settings || null)
         const raw = s?.settings?.branches || []
         const anyCorrupted = raw.length > 0 && raw.some(b => isCorrupted(b))
@@ -219,12 +233,13 @@ export default function Reports() {
             .select('branch').eq('project_id', projectId)
             .not('branch', 'is', null).neq('branch', '')
           const unique = [...new Set((data || []).map(r => r.branch).filter(Boolean))]
-          setBranches(unique.sort())
+          if (active) setBranches(unique.sort())
         }
       })
       const { from: f, to: t, branch: b } = liveRef.current
       load(f, t, b)
     }
+    return () => { active=false; loadSeq.current++; appSeq.current++ }
   }, [projectId, sessionEpoch])
 
   // إعادة الجلب تلقائياً عند العودة للتبويب
@@ -299,8 +314,8 @@ export default function Reports() {
     ] = await Promise.all([
       fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,status,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,total_amount,vat_amount,journal_number,category_main,category_sub,category_id,financial_class')
         .eq('project_id', projectId).or('status.is.null,status.neq.cancelled').gte('date', fromDate).lte('date', toDate).order('date').order('id'))),
-      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id,bank_account_id')
-        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled').order('id'))),
+      fetchEveryRow(() => supabase.from('ledger_entries').select('date,branch,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id,bank_account_id,status')
+        .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled').order('id')),
       fetchAllRows(() => supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
         .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
       supabase.rpc('get_purchase_entries', {
@@ -360,10 +375,12 @@ export default function Reports() {
     // واسترداده منفصلان لا يدخلان المدخلات ولا يُطرحان من صافي الفترة؛ وما لا يثبت معناه يُعرض لتأكيد المحاسب.
     // البنود هنا كاملة (وإلا توقف التحميل أعلاه)، فغياب بند عن قيد يعني فعلًا أنه بلا بنود.
     const vat = vatFigures({ entries: ledgerFull || [], docItems: docItemsData, outputVat: engineResult?.outputVat || 0 })
-    setData({ totalSales, totalIn, totalOut, outputVat: vat.outputVat, netSales, inputVat: vat.inputVat, netVat: vat.netBeforePayment, vat })
+    const countedMoves = (allTime || []).filter(r=>isCounted(r) && r.date>=fromDate).reduce((m,r) => ({ totalIn:m.totalIn+Number(r.cash_in||0)+Number(r.bank_in||0)+Number(r.custody_in||0),totalOut:m.totalOut+Number(r.cash_out||0)+Number(r.bank_out||0)+Number(r.custody_out||0) }),{totalIn:0,totalOut:0})
+    setData({ countedMoves, totalSales, totalIn, totalOut, outputVat: vat.outputVat, netSales, inputVat: vat.inputVat, netVat: vat.netBeforePayment, vat })
 
-    const at = allTime || []
+    const at = (allTime || []).filter(r=>branchFilter==='all'||r.branch===branchFilter)
     setBalances({
+      counted: accountBalances(allTime || []),
       cash:    at.reduce((s,r) => s+(r.cash_in||0)-(r.cash_out||0), 0),
       bank:    at.reduce((s,r) => s+(r.bank_in||0)-(r.bank_out||0), 0),
       custody: at.reduce((s,r) => s+(r.custody_in||0)-(r.custody_out||0), 0),
@@ -385,7 +402,7 @@ export default function Reports() {
 
   // تصدير القسم المختار بالفترة والفرع نفسيهما، من أرقام الشاشة نفسها (src/lib/reportExport.js)
   function currentModel() {
-    const ctx = { tab: activeTab, org: projectName, from, to, branch: selectedBranch, branches, generatedAt: new Date(), engineSummary,
+    const ctx = { tab: activeTab, org: projectName, from, to, branch: activeTab==='balance' && accountDashboard(projectSettings) ? 'all' : selectedBranch, branches, generatedAt: new Date(), engineSummary,
       prevEntriesCount: prevEntries.length, data, balances, bankAccounts, projectSettings: banksReady ? projectSettings : null }
     if (activeTab === 'sales') ctx.s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
     if (activeTab === 'purchases') ctx.x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
@@ -394,7 +411,7 @@ export default function Reports() {
     return reportModel(ctx)
   }
   async function exportAs(kind) {
-    if (activeTab === 'balance' && paymentWorkflow(projectSettings) && !banksReady) { setExportError('أعد تحميل الحسابات قبل تصدير الأرصدة المتاحة للتشغيل.'); return }
+    if (activeTab === 'balance' && (!settingsReady || !banksReady)) { setExportError('أعد تحميل الحسابات قبل تصدير الأرصدة المتاحة للتشغيل.'); return }
     if (activeTab === 'apps' ? (!appStatement || appLoading || appError || exporting) : (!data || loading || loadError || exporting)) return
     setExporting(kind); setExportError('')
     try {
@@ -892,13 +909,14 @@ export default function Reports() {
               unassigned={appUnassigned} branchFiltered={selectedBranch !== 'all'}
               canRecord={role === 'accountant' || role === 'superadmin'} onChanged={loadApps} loading={appLoading && !appData} error={appError} onRetry={loadApps} to={to} />
           )}
-          {activeTab === 'balance' && balances && (
+          {activeTab === 'balance' && !settingsReady && <p>جارٍ تحميل إعدادات الحسابات…</p>}
+          {activeTab === 'balance' && settingsReady && balances && (
             <>
               <div className="ts-metrics" data-k="balance.cards">
                 {[
                   { label: 'رصيد الصندوق', k: 'balance.cash',    value: balances.cash },
-                  { label: 'رصيد البنك',   k: 'balance.bank',    value: balances.bank },
-                  { label: 'رصيد العهدة',  k: 'balance.custody', value: balances.custody },
+                  { label: 'رصيد البنك', k: 'balance.bank', value: balanceCards(balances,projectSettings)[0].value },
+                  { label: accountDashboard(projectSettings) ? 'رصيد حساب العهدة' : 'رصيد العهدة', k: 'balance.custody', value: balanceCards(balances,projectSettings)[2].value },
                 ].map(c => (
                   <Metric key={c.k} label={c.label} icon={Wallet} tone={c.value < 0 ? 'bad' : undefined}
                     foot={c.value < 0 ? <span className="rpt-down">رصيد سالب</span> : <>حتى {day(to)}</>}>
@@ -907,8 +925,9 @@ export default function Reports() {
                 ))}
               </div>
 
+              <div className="ts-panel-body"><Link to={accountHref('bank',to,from)}>فتح كشف الحسابات وتصفية كل حساب ←</Link>{accountDashboard(projectSettings) && <p>أرصدة الحسابات للمنشأة كاملة مهما كان الفرع المختار. بطاقة البنك للبنوك الأخرى دون حساب العهدة، والتفصيل أدناه يشمل جميع البنوك. حساب العهدة يُحتسب مرة واحدة في الإجمالي.</p>}</div>
               {bankAccounts.length > 0 && (
-                <Panel title="رصيد البنك حسب الحساب" icon={Landmark} subtitle={`حتى ${day(to)}${selectedBranch !== 'all' ? ` · ${selectedBranch}` : ''}`}>
+                <Panel title="رصيد البنك حسب الحساب" icon={Landmark} subtitle={`حتى ${day(to)}${selectedBranch !== 'all' && !accountDashboard(projectSettings) ? ` · ${selectedBranch}` : ''}`}>
                   <div className="ts-panel-body">
                     <CalcRows k="balance.byAccount" rows={bankAccountRows(bankAccounts, balances.bankByAccount, balances.bank)} />
                   </div>

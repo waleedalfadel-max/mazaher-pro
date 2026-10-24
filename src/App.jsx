@@ -5,6 +5,7 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Ledger from './pages/Ledger'
+import Accounts from './pages/Accounts.jsx'
 import Sales from './pages/Sales'
 import Journals from './pages/Journals'
 import Reports from './pages/Reports'
@@ -70,6 +71,8 @@ function AppRoutes() {
           <Dashboard />
         </ProtectedRoute>
       } />
+
+      <Route path="/accounts" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><Accounts /></ProtectedRoute>} />
 
       <Route path="/ledger" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
