@@ -238,6 +238,7 @@ export function approvalMessage(res) {
     already_approved: `اعتُمد هذا المستند مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. لم يُسجَّل شيء جديد.`,
     invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
     stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
+    reading_replaced: 'استُبدلت قراءة المستند؛ راجع القراءة الجديدة قبل الاعتماد.',
     bad_status: 'حالة المستند لا تسمح بالاعتماد.',
     empty: 'لا فواتير للاعتماد.',
     duplicate_in_batch: 'في المستند فاتورتان بالرقم نفسه للمورد نفسه.',

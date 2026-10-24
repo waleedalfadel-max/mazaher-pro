@@ -20,6 +20,7 @@ const workflow={version:1,uploaders:{owner:{source:'bank',account_id:main},purch
 const settings={branches:['North','South'],expenses_scope:'project',bank_workflow:workflow}
 try{
  await f.db.exec(await readFile('supabase/migrations/20261024135418_account_dashboard.sql','utf8'))
+ await f.db.exec(await readFile('supabase/migrations/20261025120000_document_reread.sql','utf8'))
  await f.db.query("insert into bank_accounts(id,project_id,name,branches) values($1,$4,'Synthetic Main',array['North']),($2,$4,'Synthetic Purchasing','{}'),($3,$4,'Synthetic Restricted',array['South'])",[main,purchase,restricted,f.p1])
  await f.db.query("insert into categories(id,project_id,name,type,ledger_type,financial_class) values($1,$2,'Synthetic expense','expense','🛒 مصروفات تشغيلية','opex')",[category,f.p1])
  await f.db.query("insert into approval_private.settings(project_id,mode) values($1,'v2')",[f.p1])
@@ -53,7 +54,7 @@ try{
   finally{await f.db.exec('reset role')}
  }))
  await page.exposeFunction('dbRpc',(name,args)=>serial(async()=>{
-  assert(['approval_mode','approval_prepare','approval_approve','supplier_payment_context','admin_account_dashboard_save','get_purchase_entries'].includes(name),'RPC '+name)
+  assert(['approval_mode','approval_prepare','approval_approve','supplier_payment_context','admin_account_dashboard_save','get_purchase_entries','document_readings'].includes(name),'RPC '+name)
   const auth=await page.evaluate(()=>window.auth);await f.claims(auth.userId,auth.projectId);await f.db.exec('set role authenticated')
   try{if(name==='get_purchase_entries')return wire((await f.db.query(`select * from public.${name}(${Object.keys(args).map((k,i)=>ident(k)+' => $'+(i+1)).join(',')})`,Object.values(args))).rows);return(await f.one(`select public.${name}(${Object.keys(args).map((k,i)=>ident(k)+' => $'+(i+1)).join(',')}) result`,Object.values(args).map(x=>x&&typeof x==='object'?JSON.stringify(x):x))).result}finally{await f.db.exec('reset role')}
  }))

@@ -1,3 +1,4 @@
+import { validRereading, readingReplaced, resetReplacedReview } from '../lib/documentReread.js'
 import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices } from '../lib/paymentWorkflow.js'
 import BankTransferFields from '../components/BankTransferFields.jsx'
 import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
@@ -175,6 +176,7 @@ export default function PendingDocuments() {
   const [projects,   setProjects]     = useState([])
   const [projMap,    setProjMap]      = useState({})
   const [filterProjId, setFilterProjId] = useState('')
+  const rereadLocks = useRef(new Set())
   const pidRef                        = useRef(null)
   const [modes, setModes]             = useState({})   // وضع الاعتماد لكل منشأة: legacy | v2 | paused
   const [listNotice, setListNotice]   = useState('')
@@ -303,7 +305,9 @@ export default function PendingDocuments() {
     }
   }
 
-  function updateDoc(id, patch) {
+  function updateDoc(id, patch, duringReread = false) {
+    if (rereadLocks.current.has(id) && !duringReread
+        && !Object.keys(patch).every(k => ['_imageData', '_isUrl', '_showImage', '_loadingImg'].includes(k))) return
     // تعديل من المستخدم (لا نتيجة قراءة جديدة ولا حالة بعد اعتماد جزئي): «تعديلات لم تُحفظ» حتى «حفظ مسودة» أو الاعتماد
     if (patch._edit && patch._state === undefined) patch = { _v2Error: null, ...patch, _dirty: true }
     setDocs(ds => ds.map(d => {
@@ -323,6 +327,7 @@ export default function PendingDocuments() {
   }
   // يعيد true إذا حُفظت المسودة فعلًا، وfalse إن فشل التخزين (ممتلئ أو معطّل) فيبقى المستند «معدّلًا غير محفوظ»
   function saveDraftFor(doc) {
+    if (rereadLocks.current.has(doc.id)) return
     const store = draftStore()
     const extras = Object.fromEntries(DRAFT_EXTRAS.filter(k => doc[k] !== undefined).map(k => [k, doc[k]]))
     const now = Date.now()
@@ -331,6 +336,7 @@ export default function PendingDocuments() {
     return false
   }
   function discardDraft(doc) {
+    if (rereadLocks.current.has(doc.id)) return
     const store = draftStore()
     if (store) dropDraft(store, scopeOf(doc), doc.id)
     updateDoc(doc.id, {
@@ -438,14 +444,16 @@ export default function PendingDocuments() {
   // إعادة قراءة مستند مقروء لم يُعتمد (20261025120000): قراءة جديدة للصورة الأصلية، ثم حفظ في الخادم يحتفظ بالقراءة السابقة
   // ويلغي تجهيز المراجعة. لا يتغير شيء في الشاشة ولا في الخادم إلا بعد نجاح القراءة والحفظ معًا؛ ولا قيد مالي.
   async function reread(doc) {
+    if (rereadLocks.current.has(doc.id)) return
+    rereadLocks.current.add(doc.id)
     const before = doc._state
-    updateDoc(doc.id, { _state: 'rereading', _error: '', _rereadNotice: '' })
+    updateDoc(doc.id, { _state: 'rereading', _error: '', _rereadNotice: '' }, true)
     try {
       const { data: cur, error } = await supabase.from('documents').select('status,version').eq('id', doc.id).single()
       if (error || !cur) throw new Error('تعذّر التحقق من حالة المستند. أعد المحاولة؛ لم يتغير شيء.')
       if (cur.status !== 'analyzed') throw new Error('المستند لم يعد قيد المراجعة؛ لا تُعاد قراءته. حدّث الصفحة.')
       const { result } = await readDocument(doc)
-      if (!Array.isArray(result?.invoices) || !result.invoices.length) throw new Error('لم تُرجع القراءة الجديدة أي فاتورة؛ بقيت القراءة السابقة كما هي.')
+      if (!validRereading(result)) throw new Error('لم تُرجع القراءة الجديدة أي فاتورة؛ بقيت القراءة السابقة كما هي.')
       const { data, error: saveError } = await supabase.rpc('document_reread_save', { p_document_id: doc.id, p_expected_version: cur.version, p_result: result })
       // انقطاع بعد الإرسال: قد يكون الخادم حفظ القراءة الجديدة. لا يُدّعى بقاء السابقة؛ والاعتماد بالنسخة القديمة يرفضه الخادم (stale)
       if (saveError) throw new Error('تعذّر تأكيد حفظ القراءة الجديدة (انقطع الاتصال أو لم يصل الرد)، وقد تكون حُفظت. حدّث الصفحة لمعرفة القراءة المحفوظة قبل أي اعتماد؛ ولن يُقبل اعتماد مبني على القراءة السابقة إن كانت الجديدة قد حُفظت.')
@@ -456,11 +464,13 @@ export default function PendingDocuments() {
       clearDraftOf(doc)
       if (freshError || !fresh) { setListNotice('أُعيدت القراءة وحُفظت. حدّث الصفحة لمراجعة النتيجة الجديدة.'); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
       // كل تأكيدات المراجعة السابقة تسقط مع الحالة القديمة، ثم يُجهَّز المستند للمراجعة من القراءة الجديدة (نسخة الخادم الجديدة)
-      const next = { ...docState(fresh), _imageData: doc._imageData, _isUrl: doc._isUrl, _showImage: doc._showImage,
+      const next = { ...docState(fresh), _state: 'rereading', _readingReviewRequired: true, _imageData: doc._imageData, _isUrl: doc._isUrl, _showImage: doc._showImage,
         _rereadNotice: 'أُعيدت قراءة المستند. القراءة السابقة محفوظة للمراجعة، وأُلغيت تأكيدات المراجعة السابقة: راجع النتيجة الجديدة كاملة قبل الاعتماد.' }
       setDocs(ds => ds.map(d => d.id !== doc.id ? d : { ...next, _imageData: d._imageData, _isUrl: d._isUrl, _showImage: d._showImage }))
       if (modeOf(next) !== 'legacy') await prepareV2(next)
-    } catch (e) { updateDoc(doc.id, { _state: before === 'rereading' ? 'idle' : before, _error: e.message }) }
+      updateDoc(doc.id, { _state: 'analyzed' }, true)
+    } catch (e) { updateDoc(doc.id, { _state: before === 'rereading' ? 'idle' : before, _error: e.message }, true) }
+    finally { rereadLocks.current.delete(doc.id) }
   }
 
   // يحسم هوية المورد لفاتورة "آجل" — يربط بمورد موجود أو ينشئ سجلاً جديداً في payable_suppliers
@@ -712,6 +722,7 @@ export default function PendingDocuments() {
   }
 
   async function approve(doc, forceNew = false) {
+    if (doc._readingReviewRequired || rereadLocks.current.has(doc.id)) return
     if (modeOf(doc) !== 'legacy') return approveV2(doc)
     const rawRes = doc._edit || doc.analysis_result
     if (doc.purchase_category && rawRes) rawRes.transType = doc.purchase_category
@@ -789,6 +800,7 @@ export default function PendingDocuments() {
   }
 
   async function reject(doc) {
+    if (rereadLocks.current.has(doc.id)) return
     updateDoc(doc.id, { _state: 'rejecting' })
     try {
       // الرد يُفحص: كان الفشل يُخفي المستند من القائمة وهو باقٍ في القاعدة
@@ -800,6 +812,7 @@ export default function PendingDocuments() {
 
   // اعتماد فاتورة واحدة من مستند متعدد الفواتير
   async function approveInvoice(doc, invIdx) {
+    if (doc._readingReviewRequired || rereadLocks.current.has(doc.id)) return
     if (modeOf(doc) !== 'legacy') return approveV2(doc, invIdOf(doc, invIdx))
     const rawRes  = doc._edit || doc.analysis_result
     const invList = rawRes?.invoices || []
@@ -839,6 +852,7 @@ export default function PendingDocuments() {
 
   // رفض فاتورة واحدة من مستند متعدد الفواتير
   function rejectInvoice(doc, invIdx) {
+    if (rereadLocks.current.has(doc.id)) return
     if (modeOf(doc) !== 'legacy') return excludeV2(doc, invIdOf(doc, invIdx))
     const rawRes    = doc._edit || doc.analysis_result
     const invList   = rawRes?.invoices || []
@@ -861,6 +875,12 @@ export default function PendingDocuments() {
     setDocs(ds => ds.map(d => {
       if (d.id !== doc.id) return d
       const ar = data.analysis_result
+      if (readingReplaced(d.analysis_result, ar)) {
+        clearDraftOf(d)
+        return { ...resetReplacedReview(d, ar), status: data.status,
+          _edit: withoutLoanPrincipalConfirmation(ar),
+          _v2: { version: data.version, invoices: data.invoices, mode: data.mode } }
+      }
       const src = d._edit || withoutLoanPrincipalConfirmation(ar)
       let edit = src
       if (src && ar?.invoices) {   // معرّفات الفواتير من الخادم تُنقل إلى نسخة المراجعة دون فقد التعديلات
@@ -878,6 +898,8 @@ export default function PendingDocuments() {
   }
 
   async function approveV2(doc, target = 'all') {
+    if (doc._readingReviewRequired) return
+    if (rereadLocks.current.has(doc.id)) return
     if (!bankAccountsReady || !projectSettings) { updateDoc(doc.id,{_state:doc._state,_error:'لم يكتمل تحميل الحسابات. أعد المحاولة قبل الاعتماد.'});return }
     if (modeOf(doc) === 'paused') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'paused' } }); return }
     if (!doc._v2) { await prepareV2(doc); return }
@@ -931,6 +953,7 @@ export default function PendingDocuments() {
       ({ data, error } = await supabase.rpc('approval_approve', { p_document_id: doc.id, p_request_id: requestId,
         p_expected_version: doc._v2.version, p_invoices: payload, p_decisions: decisions, p_document: document }))
     } catch (e) { error = e }
+    if (error?.code === 'P0023') return v2Failed(doc, { code: 'reading_replaced' })
     if (error || !data) { updateDoc(doc.id, { _state: 'analyzed', _v2Error: callError(error) }); return }
     if (!data.ok) return v2Failed(doc, data)
     v2Done(doc, data)
@@ -939,8 +962,8 @@ export default function PendingDocuments() {
   function v2Failed(doc, data) {
     if (data.code === 'already_approved') { clearDraftOf(doc); setListNotice(approvalMessage(data)); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
     const dup = data.code === 'payment_possible_duplicate' && data.invoice_id ? { _receiptDup: { ...(doc._receiptDup || {}), [data.invoice_id]: data } } : {}
-    updateDoc(doc.id, { _state: 'analyzed', _v2Error: data, ...dup, ...(['stale', 'invoice_already_decided', 'payment_deleted'].includes(data.code) ? { _req: null } : {}) })
-    if (['stale', 'invoice_already_decided', 'payment_deleted'].includes(data.code)) prepareV2(doc)
+    updateDoc(doc.id, { _state: 'analyzed', _v2Error: data, ...dup, ...(['stale', 'reading_replaced', 'invoice_already_decided', 'payment_deleted'].includes(data.code) ? { _req: null } : {}) })
+    if (['stale', 'reading_replaced', 'invoice_already_decided', 'payment_deleted'].includes(data.code)) prepareV2(doc)
   }
 
   function v2Done(doc, data) {
@@ -960,6 +983,7 @@ export default function PendingDocuments() {
   }
 
   async function excludeV2(doc, invoiceId, reason = null) {
+    if (rereadLocks.current.has(doc.id)) return
     if (!doc._v2) return prepareV2(doc)
     const { data, error } = await supabase.rpc('approval_exclude_invoice', { p_document_id: doc.id, p_invoice_id: invoiceId,
       p_expected_version: doc._v2.version, p_reason: reason })
@@ -971,6 +995,7 @@ export default function PendingDocuments() {
   }
 
   async function rejectV2(doc, reason) {
+    if (rereadLocks.current.has(doc.id)) return
     if (!doc._v2 && doc.status === 'analyzed') { await prepareV2(doc); return }
     const { data, error } = await supabase.rpc('approval_reject_document', { p_document_id: doc.id,
       p_expected_version: doc._v2?.version ?? doc.version ?? 0, p_reason: reason || null })
@@ -980,6 +1005,7 @@ export default function PendingDocuments() {
   }
 
   async function correctSalesV2(doc, reason) {
+    if (doc._readingReviewRequired || rereadLocks.current.has(doc.id)) return
     const raw = doc._edit || doc.analysis_result
     const inv = (raw?.invoices || [raw])[0]
     const payload = buildInvoicePayload(inv, { original: (doc.analysis_result?.invoices || [])[0], categories: [], transTypes: [] })
@@ -1218,6 +1244,7 @@ export default function PendingDocuments() {
           onLoadImage={() => loadImage(doc)}
           onAnalyze={() => analyze(doc)}
           onReread={() => reread(doc)}
+          onReviewReading={() => updateDoc(doc.id, { _readingReviewRequired: false })}
           canReread={!isSuperAdmin && bankAccountsReady && ['accountant', 'superadmin'].includes(role)}
           onApprove={() => approve(doc)}
           onApproveForced={() => approve(doc, true)}
@@ -1842,9 +1869,10 @@ function PreviousReadings({ docId, refreshKey }) {
   </details>
 }
 
-function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
+function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualApprove, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
   const [manualIndex, setManualIndex] = useState(null)
   const [rereadOpen, setRereadOpen] = useState(false)
+  useEffect(() => { setManualIndex(null) }, [doc.analysis_result?._readingId])
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
@@ -1895,7 +1923,7 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
   const isV2 = !!v2
   const paused = v2?.mode === 'paused'
   const preparing = isV2 && analyzed && v2.version == null
-  const canManual = !!onManualApprove && !readOnly && isV2 && !paused && !preparing && !busy
+  const canManual = !!onManualApprove && !readOnly && isV2 && !paused && !preparing && !busy && !doc._readingReviewRequired
   const invStatus = id => v2?.invoices?.find(i => i.id === id)
   const exact = isV2 && res?.type === 'expense' ? exactTotals(res) : null
   const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid')
@@ -1956,7 +1984,7 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
         : <div className="rp-action-hint">{(exact ? amountsBlocked : totalsCheck.status === 'mismatch') ? <strong>البنود لا تطابق الإجمالي — راجعها قبل الاعتماد. </strong> : null}{approveHint}</div>}
       <div className="rp-action-buttons">
         <Button variant="primary" icon={doc._state === 'approving' ? LoaderCircle : Check} className="rp-approve"
-          disabled={busy || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || supplierBlocked || !!receiptBlocked || !!loanBlocked || preparing || !!decisionPending} onClick={onApprove}>
+          disabled={busy || doc._readingReviewRequired || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || supplierBlocked || !!receiptBlocked || !!loanBlocked || preparing || !!decisionPending} onClick={onApprove}>
           {doc._state === 'approving' ? 'جارٍ الاعتماد…' : approveCount ? approveLabel(approveCount) : 'اعتماد'}
         </Button>
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
@@ -1971,7 +1999,7 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
   )
 
   return (
-    <div className="rp-form">
+    <fieldset className="rp-form" disabled={doc._state === 'rereading'} data-k="reread-fields" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       {manualIndex != null && canManual && <ManualReviewDialog
         invoice={isMultiInvoice ? rawRes.invoices[manualIndex] : res} categories={categories} setup={setup} branch={doc.branch}
         supplierName={(() => { const inv = isMultiInvoice ? rawRes.invoices[manualIndex] : res, ctx = invoiceSupplierContext(doc, inv, isMultiInvoice)
@@ -1992,6 +2020,9 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
           </ul>
         </div>
       </Dialog>
+      {doc._readingReviewRequired && <Note tone="warning" title="مراجعة القراءة الجديدة مطلوبة">
+        <Button data-k="review-new-reading" disabled={busy || readOnly} onClick={onReviewReading}>راجعت القراءة الجديدة</Button>
+      </Note>}
       {doc._rereadNotice && <div data-k="reread-notice"><Note tone="info" icon={RotateCcw}>{doc._rereadNotice}</Note></div>}
       {canReread && rereadBlocked && doc.status === 'analyzed' && <div data-k="reread-blocked"><Note>{rereadBlocked}</Note></div>}
       {analyzed && <PreviousReadings docId={doc.id} refreshKey={doc._rereadNotice || ''} />}
@@ -2065,7 +2096,7 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
                 documentId={doc.id} history={invStatus(inv._id)?.history} receiptContext={receiptCtx[inv._id]} onReceiptContext={onReceiptContext(inv._id)}
                 serverDuplicate={serverDup(inv._id)}
                 onReject={readOnly ? null : () => onRejectInvoice(idx)}
-                approving={busy}
+                approving={busy || doc._readingReviewRequired}
                 blocked={isV2 ? (decisionPending && (!doc._v2Error?.invoice_id || doc._v2Error.invoice_id === inv._id) ? decisionPending
                   : inv.type === 'expense' && inv.items?.length && ['mismatch', 'invalid'].includes(exactTotals(inv).status) ? 'البنود لا تطابق إجمالي هذه الفاتورة بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.'
                   : inv.type === 'sales' && !salesReportCheck(inv).ok ? salesReportCheck(inv).reasons[0] : null)
@@ -2210,7 +2241,7 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
           <Button size="sm" variant="quiet" icon={Plus} disabled={busy} onClick={onAddInvoice}>إضافة فاتورة أخرى من الصورة نفسها</Button>
         </div>
       )}
-    </div>
+    </fieldset>
   )
 }
 

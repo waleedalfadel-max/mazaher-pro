@@ -18,6 +18,43 @@ create index if not exists document_readings_document on approval_private.docume
 alter table approval_private.document_readings enable row level security;
 revoke all on approval_private.document_readings from public, anon, authenticated;
 
+-- Ignore empty containers, whitespace, booleans and internal metadata. Keep partial evidence.
+create or replace function approval_private.reread_evidence(v jsonb)
+returns boolean language plpgsql immutable set search_path = '' as $$
+declare e record;
+begin
+  if jsonb_typeof(v) = 'number' then return true; end if;
+  if jsonb_typeof(v) = 'string' then return btrim(v #>> '{}', E' \t\r\n') <> ''; end if;
+  if jsonb_typeof(v) = 'array' then
+    for e in select value from jsonb_array_elements(v) loop
+      if approval_private.reread_evidence(e.value) then return true; end if;
+    end loop;
+  elsif jsonb_typeof(v) = 'object' then
+    for e in select key, value from jsonb_each(v) loop
+      if left(e.key, 1) <> '_' and approval_private.reread_evidence(e.value) then return true; end if;
+    end loop;
+  end if;
+  return false;
+end $$;
+revoke all on function approval_private.reread_evidence(jsonb) from public, anon, authenticated;
+
+-- Pending invoice identifiers from a replaced reading can never become manual additions.
+-- Raises an exception to roll back the ENTIRE approval, including earlier invoices in its batch.
+create or replace function approval_private.reject_replaced_invoice()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if exists (select 1 from approval_private.document_readings r
+      where r.document_id = new.document_id
+        and r.prepared_invoices @> jsonb_build_array(jsonb_build_object('id', new.id))) then
+    raise exception using errcode = 'P0023', message = 'reading_replaced';
+  end if;
+  return new;
+end $$;
+revoke all on function approval_private.reject_replaced_invoice() from public, anon, authenticated;
+drop trigger if exists reject_replaced_invoice on approval_private.document_invoices;
+create trigger reject_replaced_invoice before insert or update of id, document_id
+  on approval_private.document_invoices for each row execute function approval_private.reject_replaced_invoice();
+
 create or replace function public.document_reread_save(p_document_id uuid, p_expected_version integer, p_result jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare a record; d public.documents; v_reading uuid; v_version integer; v_invoices jsonb;
@@ -41,6 +78,12 @@ begin
      or exists (select 1 from jsonb_array_elements(p_result -> 'invoices') e where jsonb_typeof(e.value) is distinct from 'object') then
     return approval_private.err('invalid');
   end if;
+  if exists (select 1 from jsonb_array_elements(p_result -> 'invoices') inv
+      where not exists (select 1 from jsonb_each(inv.value) field
+        where field.key = any(array['description','date','invoiceNumber','invoice_number','supplier_name','amount','totalAmount','vatAmount','items','sales','payments','returns','paymentLines','returnLines','reportGrossTotal','reportNetTotal','totalSales','cashSales','networkSales','transferSales','hungerSales','jahez','keeta','mrsool','reference','beneficiary'])
+          and approval_private.reread_evidence(field.value))) then
+    return approval_private.err('invalid');
+  end if;
   -- معرّفات الفواتير يولّدها تجهيز المراجعة من جديد؛ لا تُقبل من القراءة
   select jsonb_agg(e.value - '_id' order by e.ordinality) into v_invoices from jsonb_array_elements(p_result -> 'invoices') with ordinality e;
 
@@ -51,7 +94,7 @@ begin
           coalesce(d.version, 0), a.id, a.name, a.role)
   returning id into v_reading;
   delete from approval_private.document_invoices where document_id = d.id;   -- كلها «قيد المراجعة» (فُحص أعلاه)
-  update public.documents set analysis_result = jsonb_set(p_result, '{invoices}', v_invoices), version = coalesce(version, 0) + 1
+  update public.documents set analysis_result = jsonb_set(p_result, '{invoices}', v_invoices) || jsonb_build_object('_readingId', v_reading), version = coalesce(version, 0) + 1
    where id = d.id returning version into v_version;
   return jsonb_build_object('ok', true, 'version', v_version, 'reading_id', v_reading);
 end $$;
