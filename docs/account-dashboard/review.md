@@ -67,3 +67,13 @@ Restore the previous frontend first. `supabase/rollback/account-dashboard.sql` r
 ## Suggested independent review
 
 Review same-ID activation, actual session/tenant isolation and audit, no bank/custody double counting, owner scope, company-level balances, history/export consistency, liability assumptions, multi-invoice correction atomicity and original-reading preservation. Rehearse on a fresh production backup before deployment and test real-image extraction separately without approving or saving a customer document. The implementation has not been deployed.
+
+## Follow-up: preserve non-workflow reading policy
+
+The [independent review of `9bc05e8`](https://github.com/waleedalfadel-max/mazaher-pro/pull/22#issuecomment-6386200882) identified an unintended global change in the payment-source instructions. That finding is valid: the new suggestion wording also reached companies without a bank workflow, and the review screen preserves a nonempty source returned by the reader.
+
+The prompt now uses the exact production payment-source rule when `paymentWorkflow(settings)` is absent: cashier → cash, purchasing → employee custody, owner → bank, with the existing supplier-payment exception unchanged. Only companies with `bank_workflow.version === 1` receive the configurable suggestion wording. The condition deliberately does not depend on enabling the new dashboard: existing bank workflows remain supported. Reviewer choices and extracted fields are not overwritten by this fix. Upload and reread already call the same `analyzeDocument` function with the company settings.
+
+Four new cases in `tests/expense-reading.test.js` capture the actual outgoing request with network access replaced by a synthetic responder. They cover all uploader roles and omitted/empty settings, unsupported workflows, configured suggestions with/without the dashboard, and supplier-payment/credit preservation. Two regression cases fail against `9bc05e8`; all six reading tests pass after the fix. The focused reading/upload/payment/receipt/account/image suite passes **54/54**, and the build passes. No database, approval, compression or layout code changed in this follow-up; their suites were not rerun.
+
+This proves which instructions are sent and how synthetic responses pass through the app, **not real-photo extraction accuracy**. The remaining review observations (very long image downscaling, statement visibility for all companies, required settings, and possible duplicate display names on selecting a different custody bank) are unchanged. The documented liability amount/date/source and sweep confirmation are still required before activating that calculation. No production deploy or customer financial transaction has occurred.

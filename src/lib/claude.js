@@ -107,7 +107,16 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
   const workflow = paymentWorkflow(settings)
   const uploaderRule = workflow?.uploaders?.[uploadedBy]
   const readingSource = uploaderRule?.source || (uploadedBy === 'cashier' ? 'cash' : uploadedBy === 'owner' ? 'bank' : 'custody')
-
+  // Only an explicitly configured bank workflow changes the legacy reading rule.
+  // Keep the production wording (including its supplier-payment exception) for other companies.
+  const paymentSourceRule = workflow
+    ? `- paySource: اقتراح مبدئي من إعداد الرافع = ${readingSource}. المراجع يؤكده أو يغيره. لا تحوّل فاتورة آجلة إلى مدفوعة بسبب الاقتراح. سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash.`
+    : `- paySource: ثابت حسب من رفع المستند — ${
+      uploadedBy === 'cashier'    ? 'cash (الكاشير يدفع من الصندوق دائماً)' :
+      uploadedBy === 'purchasing' ? 'custody (مسؤول المشتريات يدفع من العهدة دائماً)' :
+      uploadedBy === 'owner'      ? 'bank (المالك يدفع من البنك دائماً)' :
+      'custody'
+    } — لا تغيّره حتى لو ذُكر غيره في المستند (عدا سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash)`
 
   // normalize transTypes — قد تكون strings أو objects {label, category}
   const typesAsStrings = (Array.isArray(transTypes) ? [...transTypes, ...(workflow ? [BANK_TRANSFER_TYPE] : [])] : [])
@@ -294,7 +303,7 @@ ${bankCustody ? '- حوالة إلى حساب العهدة البنكي من ح�
 - totalSales: مجموع cashSales + networkSales + transferSales + hungerSales + jahez + keeta + mrsool (التطبيق يعيد حسابه من paymentLines والإجمالي المطبوع)
 - إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك الباقي 0
 - transType: يجب اختياره دائماً من القائمة أعلاه حرفياً بما فيه الإيموجي — الافتراضي ${defaultExpenseType} لأي فاتورة شراء
-- paySource: اقتراح مبدئي من إعداد الرافع = ${readingSource}. المراجع يؤكده أو يغيره. لا تحوّل فاتورة آجلة إلى مدفوعة بسبب الاقتراح. سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash.
+${paymentSourceRule}
 
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
 - انتبه بشكل خاص للأرقام المتشابهة بصرياً بالتاريخ (مثل 0 و2، أو 6 و8، حسب خط الفاتورة). إذا كان التاريخ الذي قرأته يقع بعد تاريخ اليوم (${today}) — هذا مؤشر قوي على خطأ قراءة (رقم يوم أو شهر مقلوب) — أعد فحص الرقم المشتبه به بعناية أكبر قبل اعتماده. لو بقي غير واضح تماماً حتى بعد إعادة الفحص، استخدم أفضل قراءة ممكنة بصيغة YYYY-MM-DD صحيحة دائماً (لا تكتب "؟" أو أي رمز داخل حقل date نفسه أبداً)، وأضف "(تحقق من التاريخ)" في نهاية حقل description لتنبيه المحاسب

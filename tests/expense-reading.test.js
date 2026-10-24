@@ -32,3 +32,60 @@ for (const basis of ['exclusive', 'inclusive']) test(`actual expense request pre
   assert.match(prompt, /لا تغيّر الأرقام لتغطية فرق/)
   assert.doesNotMatch(prompt, /قسّم المبلغ الإجمالي تقديرياً|كل مبلغ بند يشمل ضريبته الخاصة/)
 })
+
+async function captureReading(uploadedBy, settings, invoices = [{ type: 'expense', paySource: 'custody' }]) {
+  const context = vm.createContext({ module: { exports: {} }, requests: [], reply: { rotation: 0, invoices } })
+  vm.runInContext(bundle.outputFiles[0].text, context)
+  const result = await context.module.exports.analyzeDocument('synthetic', 'image/png', 'fixture.png', uploadedBy, [], 'Test company', [], false, settings)
+  assert.equal(context.requests.length, 1)
+  return { result: JSON.parse(JSON.stringify(result)),
+    prompt: context.requests[0].messages[0].content.find(c => c.type === 'text').text }
+}
+
+test('legacy companies send the production uploader rule for every role, including omitted settings', async () => {
+  const roles = [
+    ['cashier', 'cash (الكاشير يدفع من الصندوق دائماً)'],
+    ['purchasing', 'custody (مسؤول المشتريات يدفع من العهدة دائماً)'],
+    ['owner', 'bank (المالك يدفع من البنك دائماً)'],
+    ['accountant', 'custody'], ['', 'custody'],
+  ]
+  for (const settings of [undefined, {}]) for (const [role, source] of roles) {
+    const { prompt } = await captureReading(role, settings)
+    assert.ok(prompt.includes(`- paySource: ثابت حسب من رفع المستند — ${source} — لا تغيّره حتى لو ذُكر غيره في المستند (عدا سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash)`), role)
+    assert.doesNotMatch(prompt, /paySource: اقتراح مبدئي/)
+  }
+})
+
+test('a missing or unsupported workflow cannot opt a company into suggested reading sources', async () => {
+  for (const settings of [null, { bank_workflow: {} }, { bank_workflow: { version: 2 } }, { account_dashboard: { enabled: true } }]) {
+    const { prompt } = await captureReading('purchasing', settings)
+    assert.match(prompt, /paySource: ثابت حسب من رفع المستند — custody/)
+    assert.doesNotMatch(prompt, /paySource: اقتراح مبدئي/)
+  }
+})
+
+test('version 1 workflow keeps configured suggestions with and without the new dashboard', async () => {
+  for (const enabled of [false, true]) {
+    const settings = { bank_workflow: { version: 1, uploaders: { purchasing: { source: 'bank' }, owner: { source: 'cash' } } },
+      account_dashboard: { enabled } }
+    for (const [role, source] of [['purchasing', 'bank'], ['owner', 'cash'], ['cashier', 'cash']]) {
+      const { prompt } = await captureReading(role, settings)
+      assert.ok(prompt.includes(`paySource: اقتراح مبدئي من إعداد الرافع = ${source}. المراجع يؤكده أو يغيره.`))
+      assert.match(prompt, /لا تحوّل فاتورة آجلة إلى مدفوعة بسبب الاقتراح/)
+      assert.doesNotMatch(prompt, /paySource: ثابت حسب من رفع المستند/)
+    }
+  }
+})
+
+test('the scoped prompt preserves supplier-payment exceptions and does not overwrite extracted sources', async () => {
+  const invoices = [
+    { type: 'expense', paySource: 'credit', description: 'Synthetic credit purchase' },
+    { type: 'supplier_payment', paySource: 'bank', amount: 12, paymentEvidence: 'payment to supplier' },
+    { type: 'supplier_payment', paySource: 'cash', amount: 5, paymentEvidence: 'cash payment to supplier' },
+  ]
+  for (const settings of [{}, { bank_workflow: { version: 1, uploaders: { purchasing: { source: 'bank' } } } }]) {
+    const { prompt, result } = await captureReading('purchasing', settings, invoices)
+    assert.match(prompt, /سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash/)
+    assert.deepEqual(result.invoices.map(i => i.paySource), ['credit', 'bank', 'cash'])
+  }
+})
