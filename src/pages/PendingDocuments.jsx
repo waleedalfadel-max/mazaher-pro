@@ -453,9 +453,11 @@ export default function PendingDocuments() {
         .eq('id', doc.id).single()
       clearDraftOf(doc)
       if (freshError || !fresh) { setListNotice('أُعيدت القراءة وحُفظت. حدّث الصفحة لمراجعة النتيجة الجديدة.'); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
-      // كل تأكيدات المراجعة السابقة تسقط مع الحالة القديمة؛ يُعاد تجهيز المراجعة تلقائيًا من القراءة الجديدة
-      setDocs(ds => ds.map(d => d.id !== doc.id ? d : { ...docState(fresh), _imageData: d._imageData, _isUrl: d._isUrl, _showImage: d._showImage,
-        _rereadNotice: 'أُعيدت قراءة المستند. القراءة السابقة محفوظة للمراجعة، وأُلغيت تأكيدات المراجعة السابقة: راجع النتيجة الجديدة كاملة قبل الاعتماد.' }))
+      // كل تأكيدات المراجعة السابقة تسقط مع الحالة القديمة، ثم يُجهَّز المستند للمراجعة من القراءة الجديدة (نسخة الخادم الجديدة)
+      const next = { ...docState(fresh), _imageData: doc._imageData, _isUrl: doc._isUrl, _showImage: doc._showImage,
+        _rereadNotice: 'أُعيدت قراءة المستند. القراءة السابقة محفوظة للمراجعة، وأُلغيت تأكيدات المراجعة السابقة: راجع النتيجة الجديدة كاملة قبل الاعتماد.' }
+      setDocs(ds => ds.map(d => d.id !== doc.id ? d : { ...next, _imageData: d._imageData, _isUrl: d._isUrl, _showImage: d._showImage }))
+      if (modeOf(next) !== 'legacy') await prepareV2(next)
     } catch (e) { updateDoc(doc.id, { _state: before === 'rereading' ? 'idle' : before, _error: e.message }) }
   }
 
@@ -1988,8 +1990,8 @@ function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConf
           </ul>
         </div>
       </Dialog>
-      {doc._rereadNotice && <Note tone="info" icon={RotateCcw} data-k="reread-notice">{doc._rereadNotice}</Note>}
-      {canReread && rereadBlocked && doc.status === 'analyzed' && <Note data-k="reread-blocked">{rereadBlocked}</Note>}
+      {doc._rereadNotice && <div data-k="reread-notice"><Note tone="info" icon={RotateCcw}>{doc._rereadNotice}</Note></div>}
+      {canReread && rereadBlocked && doc.status === 'analyzed' && <div data-k="reread-blocked"><Note>{rereadBlocked}</Note></div>}
       {analyzed && <PreviousReadings docId={doc.id} refreshKey={doc._rereadNotice || ''} />}
       {isStub && (
         <Note tone="info" icon={FlaskConical} title="قراءة محاكاة محليًا">
