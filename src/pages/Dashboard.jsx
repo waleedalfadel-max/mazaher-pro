@@ -1,3 +1,5 @@
+import AccountCards from '../components/AccountCards.jsx'
+import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding } from '../lib/accountStatement.js'
 import { operatingBankFigures, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
 import { APPS, receivableBalances } from '../lib/appStatement.js'
@@ -290,20 +292,35 @@ export default function Dashboard() {
       const [summary, result, settingsResult, banksResult] = await Promise.all([
         getFinancialSummary(projectId, r.from, r.to),
         fetchEveryRow(() => supabase.from('ledger_entries')
-          .select('type,description,date,status,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,bank_account_id')
+          .select('type,description,date,status,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,bank_account_id,payable_in,payable_out,supplier_id')
           .eq('project_id', projectId).neq('status','cancelled').lte('date', r.to).order('id')),
         getProjectSettings(projectId),
         supabase.from('bank_accounts').select('id,name,bank,is_active').eq('project_id',projectId),
       ])
-      if (!summary || result.error) throw new Error('load_failed')
+      if (!summary || result.error || !settingsResult?.settings) throw new Error('load_failed')
       if (request !== mainRequest.current) return
+      const cfg = accountDashboard(settingsResult?.settings)
+      let supplierBalance = null
+      if (cfg) {
+        if (banksResult.error) throw new Error('banks')
+        const [suppliers, txns] = await Promise.all([
+          fetchEveryRow(() => supabase.from('suppliers').select('id,opening_balance').eq('project_id',projectId).order('id')),
+          fetchEveryRow(() => supabase.from('supplier_transactions').select('supplier_id,type,amount,date').eq('project_id',projectId).lte('date',r.to).order('id')),
+        ])
+        if (suppliers.error || txns.error) throw new Error('suppliers')
+        if (request !== mainRequest.current) return
+        supplierBalance = suppliersOutstanding(suppliers.data,txns.data,result.data,r.to)
+      }
       const rows = result.data
       const bankByAccount = rows.reduce((m,e)=>{ const k=e.bank_account_id||''; m[k]=(m[k]||0)+Math.round(Number(e.bank_in||0)*100)-Math.round(Number(e.bank_out||0)*100);return m },{})
+      const countedBalances = cfg ? accountBalances(rows,r.to) : null
       setBalances({
+        settings: settingsResult?.settings, supplierBalance, liabilities: liabilityFigures(rows,settingsResult?.settings,r.to),
+        ...(countedBalances || {}),
         operating: banksResult.error ? null : operatingBankFigures(banksResult.data,bankByAccount,settingsResult?.settings),
-        cash: rows.reduce((s,r) => s + (r.cash_in ||0) - (r.cash_out ||0), 0),
-        bank: rows.reduce((s,r) => s + (r.bank_in ||0) - (r.bank_out ||0), 0),
-        custody: rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
+        cash: cfg ? countedBalances.cash : rows.reduce((s,r) => s + (r.cash_in ||0) - (r.cash_out ||0), 0),
+        bank: cfg ? countedBalances.bank : rows.reduce((s,r) => s + (r.bank_in ||0) - (r.bank_out ||0), 0),
+        custody: cfg ? countedBalances.custody : rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
       })
       // ذمم التطبيقات بإشارتها (src/lib/appStatement.js، القاعدة نفسها في «كشف حساب التطبيقات»): الرصيد السالب يظهر ولا يُخفى
       const rcv = receivableBalances(rows)
@@ -669,7 +686,7 @@ export default function Dashboard() {
       </div> : <>
       {/* الأرقام الأربعة المعتمدة في التصميم — من getFinancialSummary نفسه بلا تغيير في الحساب */}
       {stats?.uncounted && !loading && <div className="ts-note ts-note--warning" data-k="uncounted"><div className="ts-note-body">{stats.uncounted}</div></div>}
-      <div className="ts-metrics">
+      {accountDashboard(balances?.settings) && stats ? <AccountCards stats={stats} balances={balances} settings={balances.settings} receivables={receivables} supplierBalance={balances.supplierBalance} liabilities={balances.liabilities} from={range.from} to={range.to}/> : <div className="ts-metrics">
         {loading || !stats ? [0, 1, 2, 3].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
             <Metric label="المبيعات" icon={Wallet} tag="قبل الضريبة"
@@ -691,7 +708,7 @@ export default function Dashboard() {
             </Metric>
           </>
         )}
-      </div>
+      </div>}
 
       <details className="rp-scope">
         <summary><Info className="ts-icon--sm" aria-hidden="true" />ما الذي يشمله كل رقم؟<ChevronDown className="ts-icon--sm" aria-hidden="true" /></summary>
@@ -740,7 +757,7 @@ export default function Dashboard() {
       </div>
 
       {/* الربح والأرصدة كما في التطبيق الحالي */}
-      <h2 className="rp-subhead">الربح والأرصدة</h2>
+      {!accountDashboard(balances?.settings) && <><h2 className="rp-subhead">الربح والأرصدة</h2>
       <div className="ts-metrics rp-metrics-secondary">
         {loading || !stats ? <div className="ts-metric rp-skeleton-card" /> : (
           <KpiCard label="الربح (حسب التطبيق الحالي)" value={stats.profit} negative={stats.profit < 0}
@@ -756,7 +773,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {balances?.operating && <div className="ts-note ts-note--info">{OPERATING_BALANCE_NOTE}</div>}
+      </>}
+      {balances?.operating && !accountDashboard(balances?.settings) && <div className="ts-note ts-note--info">{OPERATING_BALANCE_NOTE}</div>}
       {!loading && stats && (
         <div className="ts-note ts-note--info">
           <Receipt className="ts-icon" aria-hidden="true" />

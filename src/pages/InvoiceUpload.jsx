@@ -8,6 +8,7 @@ import { savedDocumentWarning } from '../lib/analysisFeedback'
 import { Ban, Camera, CircleAlert, CircleCheck, FileText, LoaderCircle, Plus, RotateCcw, Upload, X } from 'lucide-react'
 import { Button, IconButton, Note, Panel, Status } from '../ui/components.jsx'
 import { DropZone, MyUploads, fileIcon } from '../components/UploadKit.jsx'
+import { getProjectSettings, getTransactionTypes } from '../lib/projectSettings.js'
 import { activeCategories } from '../lib/categorySettings'
 
 const MAX_SIZE_MB = 10
@@ -101,6 +102,7 @@ export default function InvoiceUpload() {
       .select('id,name,parent_id,type,sort_order,is_active')
       .eq('project_id', projectId).order('sort_order')
     const cats = activeCategories(allCats)
+    const [readingSettings, readingTypes] = await Promise.all([getProjectSettings(projectId),getTransactionTypes(projectId)])
 
     for (let i = 0; i < files.length; i++) {
       if (files[i].status !== 'pending') continue
@@ -126,7 +128,7 @@ export default function InvoiceUpload() {
 
         updateFile(i, { status: 'analyzing' })
         try {
-          const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '')
+          const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '', readingTypes, false, readingSettings?.settings || {})
 
           const invoiceCount = result?.invoices?.length || 0
           if (!invoiceCount) throw new Error('EMPTY_ANALYSIS')

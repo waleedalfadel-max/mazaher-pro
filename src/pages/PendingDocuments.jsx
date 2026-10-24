@@ -17,6 +17,8 @@ import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
+import ExpenseReadingHelp from '../components/ExpenseReadingHelp.jsx'
+import { accountDashboard } from '../lib/accountStatement.js'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
 import LoanRepaymentFields from '../components/LoanRepaymentFields.jsx'
@@ -378,7 +380,8 @@ export default function PendingDocuments() {
         // بلا ضغط ثانٍ للمخزّنة ضمن الحدود (src/lib/imageCompress.js)؛ والتدوير عند الحاجة داخل analyzeDocument
         ({ base64: fileBase64, mime: fileMime } = await fitImageBase64(fileBase64, fileMime))
       }
-      let result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes)
+      const readingSettings = await getProjectSettings(docPid)
+      let result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes, false, readingSettings?.settings || {})
 
       // مصدر الدفع الافتراضي — يُطبَّق فقط إذا لم يُحدَّد أصلاً
       const defaultPaySource = getDefaultPaySource(docProjName, doc.uploaded_by)
@@ -1399,6 +1402,7 @@ const PAY_OPTIONS = [
   { value: 'custody', label: 'العهدة' },
   { value: 'payable', label: 'آجل — باسم المورد' },
 ]
+const paymentOptions = (setup, current) => PAY_OPTIONS.filter(o => o.value !== 'custody' || !accountDashboard(setup?.settings) || current === 'custody').map(o => o.value === 'custody' && accountDashboard(setup?.settings) ? {...o,label:'عهدة موظف سابقة — ليست حساب العهدة البنكي'} : o)
 const SALES_CHANNELS = [
   { key: 'cashSales',     label: 'نقدي' },
   { key: 'networkSales',  label: 'شبكة / مدى' },
@@ -1408,6 +1412,10 @@ const SALES_CHANNELS = [
   { key: 'keeta',         label: 'كيتا' },
   { key: 'mrsool',        label: 'مرسول' },
 ]
+const accountTransTypes = (types, setup) => types.filter(t => !accountDashboard(setup?.settings) || !t.includes('صرف عهدة'))
+function HistoricalCustodyNote({invoice,setup}) {
+  return accountDashboard(setup?.settings) && (invoice?.paySource==='custody' || invoice?.transType?.includes('صرف عهدة')) ? <Note tone="warning">هذه القراءة تستخدم عهدة الموظف السابقة، وليست حساب العهدة البنكي. لتمويل حساب العهدة اختر تحويلًا بين الحسابات البنكية، ولشراء مدفوع منه اختر البنك وحساب العهدة.</Note> : null
+}
 const TRANSFER_KINDS = t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي')
 const blankItem = () => ({ description: '', amount: '', category_main: '', category_sub: '' })
 
@@ -1650,12 +1658,13 @@ function ExpenseBasis({ invoice, onEdit, readOnly }) {
   </fieldset>
 }
 
-function ItemsTotals({ check, exact, res, onEdit, readOnly }) {
+function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
   const id = useId()
   const totalKey = res.totalAmount != null ? 'totalAmount' : 'amount'
   const suggestedBasis = exact ? expenseBasisSuggestion(res) : null
   if (exact) return (
     <div className="rp-totals">
+      <ExpenseReadingHelp invoice={res} exact={exact} onReplace={onReplace} readOnly={readOnly}/>
       {exact.status !== 'none' && (
         <div className="rp-total-row"><span>{exact.basis === 'exclusive' ? 'مجموع البنود قبل الضريبة' : 'مجموع البنود'}</span><Money value={exact.itemsTotal / 100} /></div>
       )}
@@ -1776,7 +1785,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
   // "نوع المستند = تحويل" مخصص فقط للتحويلات الداخلية الحقيقية — قصر خيارات "التصنيف الأساسي"
   // على الأنواع التحويلية فقط، مع الحفاظ على أي قيمة محفوظة سابقاً حتى لو لم تعد ضمن الفلتر
   const isTransferDoc      = res?.type === 'transfer'
-  const filteredTransTypes = isTransferDoc ? [...new Set([...transTypes.filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : transTypes
+  const filteredTransTypes = isTransferDoc ? [...new Set([...accountTransTypes(transTypes,setup).filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : accountTransTypes(transTypes,setup)
 
   // مقارنة على الأساس نفسه (src/lib/documentTotals.js): البنود شاملة الضريبة مع الإجمالي الشامل،
   // والبنود المقروءة قبل الضريبة تُميَّز عن البند الناقص بدل أن تُعرض نقصًا بقيمة الضريبة
@@ -1975,6 +1984,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
             <Segment full label="نوع المستند" value={isV2 ? reviewDocumentType(res) : res.type || ''} options={isV2 ? [...TYPE_OPTIONS, RECEIPT_OPTION, LOAN_OPTION] : TYPE_OPTIONS}
               onChange={v => { if (readOnly) return; const next = typeChange(res, v); if (next === undefined) onEdit('type', v); else if (next) onReplaceInvoice(null, next) }} />
             {res._paymentSuggested && <Note>{res._paymentSuggested}</Note>}
+            <HistoricalCustodyNote invoice={res} setup={setup}/>
             {isReceipt(res) ? (
               <SupplierReceiptFields invoice={res} documentId={doc.id} suppliers={suppliers} payableSuppliers={payableSuppliers || []} readOnly={readOnly}
                 bankAccounts={setup?.bankAccounts || []} serverDuplicate={serverDup(res._id)} onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })}
@@ -2001,7 +2011,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
               {!isSales && !isBankTransfer(res) && (
                 <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
                   <Select value={res.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
-                    options={isLoan ? PAY_OPTIONS.filter(o => o.value !== 'payable') : [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
+                    options={isLoan ? paymentOptions(setup,res.paySource).filter(o => o.value !== 'payable') : [...paymentOptions(setup,res.paySource), ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
                       ...(res.paySource && ![...PAY_OPTIONS.map(o => o.value), 'credit'].includes(res.paySource) ? [{ value: res.paySource, label: res.paySource }] : [])]} />
                 </Field>
               )}
@@ -2054,7 +2064,7 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
               )}
               <ItemLines items={res.items || []} independent={itemCount > 1 || isV2} categories={categories} transType={res.transType} discounts={isV2}
                 onEditItem={onEditItem} onDeleteItem={onDeleteItem} onAddItem={onAddItem} />
-              <ItemsTotals check={totalsCheck} exact={exact} res={res} onEdit={onEdit} readOnly={readOnly} />
+              <ItemsTotals check={totalsCheck} exact={exact} res={res} onEdit={onEdit} onReplace={next => onReplaceInvoice(null, next)} readOnly={readOnly} />
             </div>
           )}
 
@@ -2125,7 +2135,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   const isMultiItem  = (invoice.items?.length || 0) > 1
   const isFutureDate = invoice.date && invoice.date > fmtDate(new Date())
   const isTransferDoc      = invoice.type === 'transfer'
-  const filteredTransTypes = isTransferDoc ? [...new Set([...transTypes.filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : transTypes
+  const filteredTransTypes = isTransferDoc ? [...new Set([...accountTransTypes(transTypes,setup).filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : accountTransTypes(transTypes,setup)
   const totalDisp = isSales
     ? SALES_CHANNELS.reduce((t, c) => t + (Number(invoice[c.key]) || 0), 0)
     : Number(invoice.totalAmount || invoice.amount) || 0
@@ -2139,8 +2149,8 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
   const why = blocked || supplierBlocked || receiptBlockReason(invoice, receiptContext, serverDuplicate) || (v2 && loanBlockReason(invoice, transTypes))
   const reopenedNote = receiptHistoryNote(history)
   const payOptions = isExpense
-    ? [...PAY_OPTIONS, ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : [])]
-    : PAY_OPTIONS.filter(o => o.value !== 'payable')
+    ? [...paymentOptions(setup,invoice.paySource), ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : [])]
+    : paymentOptions(setup,invoice.paySource).filter(o => o.value !== 'payable')
 
   return (
     <details className="rp-subinv" open={isFutureDate || undefined}>
@@ -2162,6 +2172,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           </div>
         )}
         {invoice._paymentSuggested && <Note>{invoice._paymentSuggested}</Note>}
+        <HistoricalCustodyNote invoice={invoice} setup={setup}/>
         {receipt ? (
           <SupplierReceiptFields invoice={invoice} index={index} documentId={documentId} suppliers={suppliers} payableSuppliers={payableSuppliers}
             bankAccounts={setup?.bankAccounts || []} readOnly={readOnly} serverDuplicate={serverDuplicate} onPatch={patch => onReplace?.({ ...invoice, ...patch })} onContext={onReceiptContext} />
@@ -2228,7 +2239,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
               onEditItem={(i, patch) => onEdit('items', items.map((it, j) => j === i ? { ...it, ...patch } : it))}
               onDeleteItem={i => onEdit('items', items.filter((_, j) => j !== i))}
               onAddItem={() => onEdit('items', [...items, blankItem()])} />
-            {v2 && invoice.type === 'expense' && <ItemsTotals exact={exactTotals(invoice)} res={invoice} onEdit={onEdit} readOnly={readOnly} />}
+            {v2 && invoice.type === 'expense' && <ItemsTotals exact={exactTotals(invoice)} res={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} />}
           </div>
         )}
         </>}

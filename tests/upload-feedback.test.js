@@ -16,7 +16,7 @@ const mocks = {
   storage: `export const uploadToStorage = (...args) => globalThis.doubles.uploadToStorage(...args);
     export const getSignedUrl = async () => 'test-path';`,
   imageCompress: 'export const compressImage = async file => file;',
-  projectSettings: 'export const getProjectSettings = async () => ({ settings: {} });',
+  projectSettings: 'export const getProjectSettings = async () => ({ settings: {} }); export const getTransactionTypes = async () => [];',
   // مكوّنات العرض بدائل بسيطة بلا hooks: نختبر منطق الصفحتين ونصوصهما، لا شكل المكوّنات
   'components.jsx': `const h = (...a) => globalThis.doubles.react.createElement(...a);
     export const Button = ({ children, onClick, disabled }) => h('button', { onClick, disabled }, children);

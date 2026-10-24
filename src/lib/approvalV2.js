@@ -114,6 +114,7 @@ export function reviewChanges(original, final) {
   const out = original ? [] : ['فاتورة أضافها المراجع (لم تكن في القراءة)']
   if (hasLoanPrincipalConfirmation(final)) out.push(`أكد المراجع بعد مراجعة كشف التمويل أن مبلغ ${final.loanPrincipalConfirmation.amount} لـ«${final.transType}» أصل قرض فقط، دون أرباح تمويل أو رسوم.`)
   if (!original) return out
+  if (final.roundingReview && !same(final.roundingReview,original.roundingReview)) out.push(`تسوية تقريب مؤكدة للبند ${final.roundingReview.line+1}: ${final.roundingReview.from} ← ${final.roundingReview.to}؛ ${final.roundingReview.reason}`)
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
     if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${fieldText(original[k] ?? '—')}» ← «${fieldText(final[k] ?? '—')}»`)

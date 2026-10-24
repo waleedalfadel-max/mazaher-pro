@@ -6,6 +6,7 @@ import { operatesBusiness } from '../lib/adminAccess'
 import { Button, Dialog, Field, Input, Note, Panel, Select, Tabs, Textarea } from '../ui/components.jsx'
 import { clearProjectCache } from '../lib/projectSettings'
 
+import AccountDashboardSettings from '../components/AccountDashboardSettings.jsx'
 import BankWorkflowSettings from '../components/BankWorkflowSettings.jsx'
 
 const CHANNELS = { cash:'كاش', network:'شبكة', transfer:'تحويل', hunger:'هنقرستيشن', jahez:'جاهز', keeta:'كيتا', mrsool:'مرسول' }
@@ -90,6 +91,7 @@ function BusinessControls({projectId,initialSection}){
    </div>
   </Panel>
   {section==='bank'&&<BankWorkflowSettings key={JSON.stringify(state.settings?.bank_workflow||{})} projectId={projectId} settings={state.settings||{}} banks={state.banks||[]} onSaved={async()=>{await load();setNotice('حُفظت مهام الحسابات وسُجّل التعديل باسم إدارة تحسيب.')}}/>}
+  {section==='bank'&&<AccountDashboardSettings key={JSON.stringify(state.settings?.account_dashboard||{})} settings={state.settings||{}} banks={state.banks||[]} onSaved={async()=>{await load();setNotice('حُفظ إعداد لوحة الحسابات باسم إدارة تحسيب.')}}/>}
   <Dialog open={!!dialog} title={dialog?.id||dialog?.data.old_name?'تعديل البيانات':'إضافة سجل'} onClose={()=>!busy&&setDialog(null)} footer={<><Button disabled={busy||!dialog?.data.name?.trim()} onClick={()=>run(dialog.entity,'save',dialog.id,dialog.data)}>{busy?'جارٍ الحفظ…':'حفظ'}</Button><Button disabled={busy} onClick={()=>setDialog(null)}>إلغاء</Button></>}>
    {dialog&&<div className="ts-form-grid">
     {error&&<Note tone="error">{error}</Note>}

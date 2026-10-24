@@ -1,71 +1,31 @@
-/**
- * صورة للقراءة الآلية بلا ضغط ثانٍ (2026-10-19): المخزّنة ضُغطت عند الرفع، فتُرسل كما هي ما دامت ضمن الحدود
- * (العرض ≤ maxWidth والحجم ≤ maxSizeMB)؛ وإلا تُضغط كما كانت. يعيد النوع الفعلي المرسل.
- * @returns {Promise<{ base64: string, mime: string, recompressed: boolean }>}
- */
-export async function fitImageBase64(base64, mime, maxSizeMB = 3, maxWidth = 1400) {
-  if (!mime || !mime.startsWith('image/')) return { base64, mime, recompressed: false }
-  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
-  let width = Infinity
-  try { width = (await createImageBitmap(new Blob([bytes], { type: mime }))).width } catch { /* نوع لا يُفك ⇒ يُضغط كما كان */ }
-  if (width <= maxWidth && bytes.length <= maxSizeMB * 1024 * 1024 && ['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
-    return { base64, mime, recompressed: false }
+import { receiptImageSize } from './receiptImageSize.js'
+const base64Of = file => new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(file)})
+const blobOf = (canvas,quality) => new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('تعذّر تجهيز الصورة')),'image/jpeg',quality))
+async function load(file) {
+  const url=URL.createObjectURL(file)
+  try {return await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('تعذّر فتح الصورة؛ أرسل PNG أو JPEG'));img.src=url})}
+  finally {URL.revokeObjectURL(url)}
+}
+// Store an original within limits byte-for-byte. A receipt's short edge governs resolution,
+// regardless of orientation; a landscape receipt is not shrunk more than an upright one.
+export async function compressImage(file,maxSizeMB=3,maxWidth=1400) {
+  const img=await load(file), size=receiptImageSize(img.width,img.height,maxWidth)
+  const limit=maxSizeMB*1024*1024
+  if(size.width===img.width&&size.height===img.height&&file.size<=limit&&['image/jpeg','image/png','image/webp'].includes(file.type))return file
+  const canvas=document.createElement('canvas');canvas.width=size.width;canvas.height=size.height
+  for(let step=0;step<10;step++) {
+    const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height)
+    for(const q of [0.93,0.85,0.75]) {const blob=await blobOf(canvas,q);if(blob.size<=limit)return new File([blob],file.name,{type:'image/jpeg'})}
+    canvas.width=Math.max(1,Math.round(canvas.width*0.85));canvas.height=Math.max(1,Math.round(canvas.height*0.85))
   }
-  return { base64: await compressImageBase64(base64, mime, maxSizeMB, maxWidth), mime: 'image/jpeg', recompressed: true }
+  throw new Error('حجم الصورة كبير؛ أعد رفع صورة أوضح للمستند وحده')
 }
-
-// للاستخدام عندما عندنا base64 string بدل File object (مثل PendingDocuments)
-export async function compressImageBase64(base64, mime, maxSizeMB = 3, maxWidth = 1400) {
-  if (!mime || !mime.startsWith('image/')) return base64
-  const bytes = atob(base64)
-  const arr = new Uint8Array(bytes.length)
-  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
-  const blob = new Blob([arr], { type: mime })
-  const file = new File([blob], 'image', { type: mime })
-  const compressed = await compressImage(file, maxSizeMB, maxWidth)
-  return new Promise(resolve => {
-    const reader = new FileReader()
-    reader.onload = e => resolve(e.target.result.split(',')[1])
-    reader.readAsDataURL(compressed)
-  })
+export async function fitImageBase64(base64,mime,maxSizeMB=3,maxWidth=1400) {
+  if(!mime?.startsWith('image/'))return {base64,mime,recompressed:false}
+  const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0)),file=new File([bytes],'image',{type:mime})
+  const out=await compressImage(file,maxSizeMB,maxWidth)
+  return out===file?{base64,mime,recompressed:false}:{base64:await base64Of(out),mime:out.type,recompressed:true}
 }
-
-export async function compressImage(file, maxSizeMB = 3, maxWidth = 1400) {
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const img = new Image()
-      img.onload = () => {
-        let width = img.width
-        let height = img.height
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width)
-          width = maxWidth
-        }
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(img, 0, 0, width, height)
-
-        let quality = 0.85
-        canvas.toBlob(
-          (blob) => {
-            if (blob.size > maxSizeMB * 1024 * 1024) {
-              quality = 0.7
-              canvas.toBlob(
-                (blob2) => resolve(new File([blob2], file.name, { type: 'image/jpeg' })),
-                'image/jpeg', quality
-              )
-            } else {
-              resolve(new File([blob], file.name, { type: 'image/jpeg' }))
-            }
-          },
-          'image/jpeg', quality
-        )
-      }
-      img.src = e.target.result
-    }
-    reader.readAsDataURL(file)
-  })
+export async function compressImageBase64(base64,mime,maxSizeMB=3,maxWidth=1400) {
+  return (await fitImageBase64(base64,mime,maxSizeMB,maxWidth)).base64
 }
