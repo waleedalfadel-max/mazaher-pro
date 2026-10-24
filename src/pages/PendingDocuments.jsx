@@ -2,7 +2,7 @@ import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, sug
 import BankTransferFields from '../components/BankTransferFields.jsx'
 import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowRight, Ban, Check, CircleAlert, FileSearch, FileText, FlaskConical, Inbox, Info, Layers, ListChecks, LoaderCircle, Maximize2, Plus, RefreshCw, Save, ScanText, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
+import { ArrowRight, Ban, Check, CircleAlert, FileSearch, FileText, FlaskConical, Inbox, Info, Layers, ListChecks, LoaderCircle, Maximize2, Plus, RefreshCw, RotateCcw, Save, ScanText, Trash2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button, Chip, DateInput, Dialog, EmptyState, Field, GrowInput, IconButton, Input, Money, Note, Panel, SearchBox, Segment, Select, Status, Tabs, Textarea } from '../ui/components.jsx'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
@@ -103,6 +103,22 @@ function getDefaultPaySource(projName, uploadedBy) {
   if (uploadedBy === 'purchasing') return 'custody'
   return null
 }
+
+// إعادة القراءة (20261025120000): رسالة واضحة لكل رفض من الخادم؛ القراءة السابقة تبقى كما هي في كل الحالات
+const REREAD_ERRORS = {
+  forbidden: 'إعادة القراءة للمحاسب وإدارة تحسيب داخل المنشأة.',
+  not_rereadable: 'المستند معتمد أو مرفوض أو لم يُقرأ بعد؛ لا تُعاد قراءته.',
+  partially_decided: 'اعتُمدت أو استُبعدت فاتورة من هذه الصورة؛ لا تُعاد قراءتها.',
+  stale: 'تغيّر المستند أثناء القراءة (اعتماد أو حفظ من شاشة أخرى). حدّث الصفحة؛ لم يُستبدل شيء.',
+  invalid: 'نتيجة القراءة غير صالحة؛ بقيت القراءة السابقة كما هي.',
+  no_session: 'انتهت الجلسة. سجّل الدخول من جديد؛ لم يتغير شيء.',
+  not_found: 'المستند غير موجود في هذه المنشأة.',
+}
+const rereadError = code => REREAD_ERRORS[code] || 'تعذّر حفظ القراءة الجديدة؛ بقيت القراءة السابقة كما هي.'
+// التعديلات اليدوية على القراءة: الفرق بين نسخة المراجعة والقراءة المحفوظة بعد إهمال علامات العرض (حقول _)
+const withoutMarks = v => Array.isArray(v) ? v.map(withoutMarks) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => !k.startsWith('_')).map(([k, x]) => [k, withoutMarks(x)])) : v
+const hasManualEdits = doc => !!doc._dirty || !!doc._draftSavedAt
+  || JSON.stringify(withoutMarks(doc._edit || null)) !== JSON.stringify(withoutMarks(withoutLoanPrincipalConfirmation(doc.analysis_result || null)))
 
 // مسودة المراجعة: تُحفظ بزر «حفظ مسودة» في هذه النافذة فقط (sessionStorage)، معزولة حسب المنشأة
 // والمستخدم والمستند، ولا تُطبَّق إن تغيّرت حالة المستند أو قراءته (src/lib/reviewDraft.js).
@@ -271,18 +287,20 @@ export default function PendingDocuments() {
     const { data } = await q
     const uid = await sessionUid()
     const store = draftStore()
-    setDocs((data || []).map(d => {
-      const saved = store && uid ? loadDraft(store, scopeOf(d, uid), d) : null
-      const ok = saved && !saved.stale
-      const extras = ok ? Object.fromEntries(DRAFT_EXTRAS.filter(k => k in saved.extras).map(k => [k, saved.extras[k]])) : {}
-      return {
-        ...d, ...extras,
-        _state: 'idle', _error: '', _edit: withoutLoanPrincipalConfirmation(ok ? saved.edit : (d.analysis_result || null)),
-        _dirty: false, _draftSavedAt: ok ? saved.savedAt : null, _draftStale: !!saved?.stale,
-        _origBranch: d.branch, _branchEditable: !d.branch,
-        _imageData: null, _showImage: false, _isUrl: false,
-      }
-    }))
+    setDocs((data || []).map(d => docState(d, store && uid ? loadDraft(store, scopeOf(d, uid), d) : null)))
+  }
+
+  // حالة مستند كما يُحمَّل من الخادم: بلا أي تأكيد مراجعة أو اختيار سابق (حقول _) إلا ما في مسودة صالحة
+  function docState(d, saved = null) {
+    const ok = saved && !saved.stale
+    const extras = ok ? Object.fromEntries(DRAFT_EXTRAS.filter(k => k in saved.extras).map(k => [k, saved.extras[k]])) : {}
+    return {
+      ...d, ...extras,
+      _state: 'idle', _error: '', _edit: withoutLoanPrincipalConfirmation(ok ? saved.edit : (d.analysis_result || null)),
+      _dirty: false, _draftSavedAt: ok ? saved.savedAt : null, _draftStale: !!saved?.stale,
+      _origBranch: d.branch, _branchEditable: !d.branch,
+      _imageData: null, _showImage: false, _isUrl: false,
+    }
   }
 
   function updateDoc(id, patch) {
@@ -347,58 +365,64 @@ export default function PendingDocuments() {
     updateDoc(doc.id, { _imageData: data?.file_data || null, _isUrl: false, _showImage: true, _loadingImg: false })
   }
 
+  // قراءة الصورة الأصلية المخزّنة بالتعليمات الحالية (القراءة الأولى وإعادة القراءة معًا)؛ لا تكتب شيئًا
+  async function readDocument(doc) {
+    const docPid      = doc.project_id || projectId
+    const docProjName = projMap[docPid] || projectName || ''
+
+    // اجلب التصنيفات وأنواع الحركة الخاصة بمشروع المستند
+    let docCategories = categories
+    let docTransTypes = transTypes
+    if (isSuperAdmin && docPid) {
+      const { data: cats } = await supabase.from('categories')
+        .select('id,name,parent_id,type,sort_order,financial_class,ledger_type,is_active')
+        .eq('project_id', docPid).order('sort_order')
+      docCategories = cats || []
+      docTransTypes = transTypesMap[docPid] || await getTransactionTypes(docPid)
+    }
+
+    let fileBase64, fileMime, signedFileUrl = null
+    if (doc.file_url) {
+      signedFileUrl = await getSignedUrl(doc.file_url)
+      const fetched = await fetchAsBase64(signedFileUrl)
+      fileBase64 = fetched.base64
+      fileMime   = fetched.mimeType || doc.file_type
+    } else {
+      const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
+      if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
+      fileBase64 = data.file_data
+      fileMime   = doc.file_type
+    }
+    if (fileMime?.startsWith('image/')) {
+      // بلا ضغط ثانٍ للمخزّنة ضمن الحدود (src/lib/imageCompress.js)؛ والتدوير عند الحاجة داخل analyzeDocument
+      ({ base64: fileBase64, mime: fileMime } = await fitImageBase64(fileBase64, fileMime))
+    }
+    const readingSettings = await getProjectSettings(docPid)
+    let result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes, false, readingSettings?.settings || {})
+
+    // مصدر الدفع الافتراضي — يُطبَّق فقط إذا لم يُحدَّد أصلاً
+    const defaultPaySource = getDefaultPaySource(docProjName, doc.uploaded_by)
+    if (defaultPaySource) {
+      if (result?.invoices) {
+        result.invoices = result.invoices.map(inv =>
+          inv.type === 'sales' ? inv
+            : isReceipt(inv) ? { ...inv, paySource: ['cash', 'bank'].includes(inv.paySource) ? inv.paySource : ['cash', 'bank'].includes(defaultPaySource) ? defaultPaySource : '' }
+            : { ...inv, paySource: inv.paySource || defaultPaySource }
+        )
+      } else if (result && result.type !== 'sales') {
+        result.paySource = result.paySource || defaultPaySource
+      }
+    }
+
+    // إيصال سداد: المورد المطابق تمامًا لاسم المستفيد يُحفظ اقتراحًا (suggestedSupplier) يؤكده المراجع؛ لا يُملأ المورد تلقائيًا
+    if (!isSuperAdmin) result = withSuggestedSuppliers(result, supplierOptions(suppliers, payableSuppliers))
+    return { result, signedFileUrl, fileBase64 }
+  }
+
   async function analyze(doc) {
     updateDoc(doc.id, { _state: 'analyzing', _error: '' })
     try {
-      const docPid      = doc.project_id || projectId
-      const docProjName = projMap[docPid] || projectName || ''
-
-      // اجلب التصنيفات وأنواع الحركة الخاصة بمشروع المستند
-      let docCategories = categories
-      let docTransTypes = transTypes
-      if (isSuperAdmin && docPid) {
-        const { data: cats } = await supabase.from('categories')
-          .select('id,name,parent_id,type,sort_order,financial_class,ledger_type,is_active')
-          .eq('project_id', docPid).order('sort_order')
-        docCategories = cats || []
-        docTransTypes = transTypesMap[docPid] || await getTransactionTypes(docPid)
-      }
-
-      let fileBase64, fileMime, signedFileUrl = null
-      if (doc.file_url) {
-        signedFileUrl = await getSignedUrl(doc.file_url)
-        const fetched = await fetchAsBase64(signedFileUrl)
-        fileBase64 = fetched.base64
-        fileMime   = fetched.mimeType || doc.file_type
-      } else {
-        const { data } = await supabase.from('documents').select('file_data').eq('id', doc.id).single()
-        if (!data?.file_data) throw new Error('لا توجد بيانات الملف')
-        fileBase64 = data.file_data
-        fileMime   = doc.file_type
-      }
-      if (fileMime?.startsWith('image/')) {
-        // بلا ضغط ثانٍ للمخزّنة ضمن الحدود (src/lib/imageCompress.js)؛ والتدوير عند الحاجة داخل analyzeDocument
-        ({ base64: fileBase64, mime: fileMime } = await fitImageBase64(fileBase64, fileMime))
-      }
-      const readingSettings = await getProjectSettings(docPid)
-      let result = await analyzeDocument(fileBase64, fileMime, doc.file_name, doc.uploaded_by, docCategories, docProjName, docTransTypes, false, readingSettings?.settings || {})
-
-      // مصدر الدفع الافتراضي — يُطبَّق فقط إذا لم يُحدَّد أصلاً
-      const defaultPaySource = getDefaultPaySource(docProjName, doc.uploaded_by)
-      if (defaultPaySource) {
-        if (result?.invoices) {
-          result.invoices = result.invoices.map(inv =>
-            inv.type === 'sales' ? inv
-              : isReceipt(inv) ? { ...inv, paySource: ['cash', 'bank'].includes(inv.paySource) ? inv.paySource : ['cash', 'bank'].includes(defaultPaySource) ? defaultPaySource : '' }
-              : { ...inv, paySource: inv.paySource || defaultPaySource }
-          )
-        } else if (result && result.type !== 'sales') {
-          result.paySource = result.paySource || defaultPaySource
-        }
-      }
-
-      // إيصال سداد: المورد المطابق تمامًا لاسم المستفيد يُحفظ اقتراحًا (suggestedSupplier) يؤكده المراجع؛ لا يُملأ المورد تلقائيًا
-      if (!isSuperAdmin) result = withSuggestedSuppliers(result, supplierOptions(suppliers, payableSuppliers))
+      const { result, signedFileUrl, fileBase64 } = await readDocument(doc)
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',
@@ -409,6 +433,30 @@ export default function PendingDocuments() {
         _showImage: true,
       })
     } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
+  }
+
+  // إعادة قراءة مستند مقروء لم يُعتمد (20261025120000): قراءة جديدة للصورة الأصلية، ثم حفظ في الخادم يحتفظ بالقراءة السابقة
+  // ويلغي تجهيز المراجعة. لا يتغير شيء في الشاشة ولا في الخادم إلا بعد نجاح القراءة والحفظ معًا؛ ولا قيد مالي.
+  async function reread(doc) {
+    const before = doc._state
+    updateDoc(doc.id, { _state: 'rereading', _error: '', _rereadNotice: '' })
+    try {
+      const { data: cur, error } = await supabase.from('documents').select('status,version').eq('id', doc.id).single()
+      if (error || !cur) throw new Error('تعذّر التحقق من حالة المستند. أعد المحاولة؛ لم يتغير شيء.')
+      if (cur.status !== 'analyzed') throw new Error('المستند لم يعد قيد المراجعة؛ لا تُعاد قراءته. حدّث الصفحة.')
+      const { result } = await readDocument(doc)
+      if (!Array.isArray(result?.invoices) || !result.invoices.length) throw new Error('لم تُرجع القراءة الجديدة أي فاتورة؛ بقيت القراءة السابقة كما هي.')
+      const { data, error: saveError } = await supabase.rpc('document_reread_save', { p_document_id: doc.id, p_expected_version: cur.version, p_result: result })
+      if (saveError || !data?.ok) throw new Error(rereadError(data?.code))
+      const { data: fresh, error: freshError } = await supabase.from('documents')
+        .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,created_by_role,file_url,branch,purchase_category,category_main,category_sub,project_id')
+        .eq('id', doc.id).single()
+      clearDraftOf(doc)
+      if (freshError || !fresh) { setListNotice('أُعيدت القراءة وحُفظت. حدّث الصفحة لمراجعة النتيجة الجديدة.'); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
+      // كل تأكيدات المراجعة السابقة تسقط مع الحالة القديمة؛ يُعاد تجهيز المراجعة تلقائيًا من القراءة الجديدة
+      setDocs(ds => ds.map(d => d.id !== doc.id ? d : { ...docState(fresh), _imageData: d._imageData, _isUrl: d._isUrl, _showImage: d._showImage,
+        _rereadNotice: 'أُعيدت قراءة المستند. القراءة السابقة محفوظة للمراجعة، وأُلغيت تأكيدات المراجعة السابقة: راجع النتيجة الجديدة كاملة قبل الاعتماد.' }))
+    } catch (e) { updateDoc(doc.id, { _state: before === 'rereading' ? 'idle' : before, _error: e.message }) }
   }
 
   // يحسم هوية المورد لفاتورة "آجل" — يربط بمورد موجود أو ينشئ سجلاً جديداً في payable_suppliers
@@ -1165,6 +1213,8 @@ export default function PendingDocuments() {
           projName={isSuperAdmin ? (projMap[doc.project_id] || '') : ''}
           onLoadImage={() => loadImage(doc)}
           onAnalyze={() => analyze(doc)}
+          onReread={() => reread(doc)}
+          canReread={!isSuperAdmin && bankAccountsReady && ['accountant', 'superadmin'].includes(role)}
           onApprove={() => approve(doc)}
           onApproveForced={() => approve(doc, true)}
           onDupIgnore={() => askReject(doc)}
@@ -1767,13 +1817,37 @@ function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
   )
 }
 
-function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
+// القراءات المستبدلة بإعادة القراءة، للمراجعة (approval_private.document_readings)
+function PreviousReadings({ docId, refreshKey }) {
+  const [list, setList] = useState(null)
+  useEffect(() => {
+    let on = true
+    supabase.rpc('document_readings', { p_document_id: docId }).then(({ data }) => { if (on) setList(data?.ok ? data.readings : []) }, () => { if (on) setList([]) })
+    return () => { on = false }
+  }, [docId, refreshKey])
+  if (!list?.length) return null
+  const total = inv => inv.totalAmount ?? inv.amount ?? inv.totalSales ?? '—'
+  return <details className="rp-prev-readings" data-k="previous-readings">
+    <summary>القراءات السابقة ({list.length})</summary>
+    {list.map(r => <div key={r.id} data-k="previous-reading">
+      <strong>{new Date(r.replaced_at).toLocaleString('ar-SA-u-ca-gregory-nu-latn')} — استُبدلت بإعادة قراءة من {r.replaced_by_name}</strong>
+      <ul>{(r.reading?.invoices || [r.reading]).filter(Boolean).map((inv, i) => <li key={i}>
+        {inv.description || inv.transType || inv.type || 'فاتورة'} · {inv.date || 'بلا تاريخ'} · الإجمالي <span className="ts-num">{total(inv)}</span>
+        {inv.vatAmount != null && <> · الضريبة <span className="ts-num">{inv.vatAmount}</span></>} · البنود <span className="ts-num">{inv.items?.length || 0}</span></li>)}</ul>
+    </div>)}
+  </details>
+}
+
+function DocCard({ readOnly, onReread, canReread, v2, onManualApprove, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
   const [manualIndex, setManualIndex] = useState(null)
+  const [rereadOpen, setRereadOpen] = useState(false)
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
   const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
-  const busy          = ['analyzing','approving','rejecting'].includes(doc._state)
+  const busy          = ['analyzing','approving','rejecting','rereading'].includes(doc._state)
   const analyzed      = doc.status === 'analyzed' || doc._state === 'analyzed'
+  // إعادة القراءة ممنوعة متى حُسمت فاتورة من الصورة (اعتُمدت أو استُبعدت)؛ والخادم يرفضها أيضًا
+  const rereadBlocked = (v2?.invoices || []).some(i => i.status !== 'pending') ? 'اعتُمدت أو استُبعدت فاتورة من هذه الصورة؛ لا تُعاد قراءتها.' : null
 
   const parentCats     = categories.filter(c => !c.parent_id)
   const isSales        = res?.type === 'sales'
@@ -1884,6 +1958,9 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
           title={canSaveDraft ? 'تُحفظ في هذه النافذة فقط، لا في قاعدة البيانات' : 'تعذّر التعرف على هوية الجلسة'}>حفظ مسودة</Button>
         {!isMultiInvoice && canManual && !isReceipt(res) && <Button onClick={() => setManualIndex(0)}>اعتماد يدوي</Button>}
+        {canReread && doc.status === 'analyzed' && <Button icon={doc._state === 'rereading' ? LoaderCircle : RotateCcw} className="rp-reread" data-k="reread"
+          disabled={busy || !!rereadBlocked} title={rereadBlocked || 'قراءة الصورة الأصلية من جديد بالتعليمات الحالية'} onClick={() => setRereadOpen(true)}>
+          {doc._state === 'rereading' ? 'جارٍ إعادة القراءة…' : 'إعادة قراءة المستند'}</Button>}
         <Button variant="quiet" icon={Ban} className="rp-reject" disabled={busy} onClick={onReject}>رفض</Button>
       </div>
     </div>
@@ -1896,6 +1973,24 @@ function DocCard({ readOnly, v2, onManualApprove, onDupConfirm, onCorrectSales, 
         supplierName={(() => { const inv = isMultiInvoice ? rawRes.invoices[manualIndex] : res, ctx = invoiceSupplierContext(doc, inv, isMultiInvoice)
           return inv?.paySource === 'credit' ? (suppliers.find(x => x.id === ctx.supplierId)?.name || '') : ctx.name })()}
         onClose={() => setManualIndex(null)} onConfirm={invoice => onManualApprove(manualIndex, invoice)} />}
+      <Dialog open={rereadOpen} title="إعادة قراءة المستند" onClose={() => setRereadOpen(false)}
+        footer={<><Button variant="primary" data-k="reread-confirm" onClick={() => { setRereadOpen(false); onReread() }}>إعادة القراءة</Button>
+          <Button data-k="reread-cancel" onClick={() => setRereadOpen(false)}>إلغاء</Button></>}>
+        <div data-k="reread-dialog">
+          {hasManualEdits(doc) && <Note tone="warning" icon={CircleAlert} title="ستُستبدل تعديلاتك اليدوية">
+            على هذه القراءة تعديلات منك أو مسودة محفوظة. ستُستبدل بالقراءة الجديدة ولا تُطبَّق عليها.</Note>}
+          <p>تُقرأ الصورة الأصلية المخزّنة من جديد بالتعليمات الحالية، دون إعادة رفعها أو إنشاء نسخة منها.</p>
+          <ul>
+            <li>تُحفظ القراءة الحالية للمراجعة.</li>
+            <li>تُلغى تأكيدات المراجعة السابقة (المورد، والتكرار، وأصل القرض، والتقريب، والمراجعة اليدوية، واختيارات الحساب)، وتراجع النتيجة الجديدة كاملة.</li>
+            <li>إن فشلت القراءة أو الحفظ بقيت القراءة الحالية وتعديلاتك كما هي.</li>
+            <li>لا يُنشأ أي قيد.</li>
+          </ul>
+        </div>
+      </Dialog>
+      {doc._rereadNotice && <Note tone="info" icon={RotateCcw} data-k="reread-notice">{doc._rereadNotice}</Note>}
+      {canReread && rereadBlocked && doc.status === 'analyzed' && <Note data-k="reread-blocked">{rereadBlocked}</Note>}
+      {analyzed && <PreviousReadings docId={doc.id} refreshKey={doc._rereadNotice || ''} />}
       {isStub && (
         <Note tone="info" icon={FlaskConical} title="قراءة محاكاة محليًا">
           بيئة الاختبار: نتيجة ثابتة مطابقة للصورة المصطنعة. لا تقيس دقة مزوّد القراءة، ولم يُرسل المستند إلى أي مزوّد.
