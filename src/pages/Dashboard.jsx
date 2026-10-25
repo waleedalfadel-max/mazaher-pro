@@ -1,4 +1,5 @@
 import AccountCards from '../components/AccountCards.jsx'
+import { usesCompactHome } from '../lib/businessPresentation.js'
 import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding } from '../lib/accountStatement.js'
 import { operatingBankFigures, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
@@ -192,6 +193,7 @@ function getRange(type) {
 
 export default function Dashboard() {
   const { roleLabel, role, userName, projectId: pid, projectName, sessionEpoch } = useAuth()
+  const compactHome = usesCompactHome(projectName)
   const [pendingDocs, setPendingDocs] = useState(null)
   const [pendingError, setPendingError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -786,7 +788,7 @@ export default function Dashboard() {
       )}
 
       {/* ذمم تطبيقات التوصيل: كل تطبيق له حركة يظهر برصيده الدفتري وإشارته؛ السالب يعني تحصيلًا أكبر من المبيعات المسجلة */}
-      {receivables && (() => {
+      {!compactHome && receivables && (() => {
         const shown = APPS.filter(a => receivables.active.includes(a.key))
         const total = shown.reduce((t, a) => t + Math.round((receivables.balances[a.key] || 0) * 100), 0) / 100
         const fmt2 = v => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -819,7 +821,7 @@ export default function Dashboard() {
       {/* ── الرسوم البيانية ── */}
 
       {/* ١. خط المبيعات اليومية */}
-      {hasCharts && combinedDailyData.length > 0 && (
+      {!compactHome && hasCharts && combinedDailyData.length > 0 && (
         <ChartCard title={`📈 المبيعات اليومية${hasCompare ? ` (مقارنة مع ${cmpLabel})` : ''}`}>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={combinedDailyData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
@@ -840,9 +842,9 @@ export default function Dashboard() {
       )}
 
       {/* ٢ و ٣. دائريَّان — لا تتأثران بالمقارنة */}
-      {hasCharts && (channelPieData.length > 0 || expensePieData.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {channelPieData.length > 0 && (
+      {hasCharts && ((!compactHome && channelPieData.length > 0) || expensePieData.length > 0) && (
+        <div className={`grid grid-cols-1 ${compactHome ? '' : 'md:grid-cols-2 '}gap-4`}>
+          {!compactHome && channelPieData.length > 0 && (
             <ChartCard title="🍰 توزيع قنوات المبيعات">
               <ResponsiveContainer width="100%" height={230}>
                 <PieChart>
@@ -896,7 +898,7 @@ export default function Dashboard() {
       )}
 
       {/* ٥. مقارنة مبيعات الفروع */}
-      {hasCharts && branchSalesData.length > 1 && (
+      {!compactHome && hasCharts && branchSalesData.length > 1 && (
         <ChartCard title="🏪 مقارنة مبيعات الفروع">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={branchSalesData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }} barCategoryGap="35%">
