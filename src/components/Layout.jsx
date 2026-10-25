@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase'
 import { Brand, Button, Dialog } from '../ui/components.jsx'
 import VersionNotice from './VersionNotice.jsx'
 import { operatesBusiness } from '../lib/adminAccess'
+import { usesCompactHome } from '../lib/businessPresentation.js'
 
 // إدارة تحسيب ترى أدوات المنشأة كاملة بعد التحقق من سياقها. أدوار المنشأة ووحداتها تبقى كما كانت.
 // الكاشير، مثل المشتريات، يرفع المستندات من زر الرفع وحده.
@@ -79,6 +80,7 @@ export default function Layout({ children }) {
   const adminWorking = operatesBusiness(role, projectId, viewState)
   const visibleItems = navItems(pendingCount).filter(item =>
     item.roles.includes(role) &&
+    !(item.to === '/loans' && usesCompactHome(projectName)) &&
     (!item.module || adminWorking || modules.includes(item.module)) &&
     (!item.cond || item.cond(projectName))
   )
