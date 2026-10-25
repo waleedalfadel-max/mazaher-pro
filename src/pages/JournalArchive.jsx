@@ -25,6 +25,7 @@ function getCashAccount(r) {
 
 // حساب طرفَي القيد (مدين / دائن)
 export function getEntryAccounts(r) {
+  if (r._creditRows) return { amount: r.total_amount, isIncome: false, debitAccount: r.type, creditAccount: 'ذمم الموردين — آجل' }
   const d = (r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0)
   const c = (r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0)
   const amount     = d > 0 ? d : c

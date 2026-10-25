@@ -59,10 +59,10 @@ const n = s => `<span class="dpdf-n">${esc(s)}</span>`
  */
 export function buildDayPages(group, fmt, accountsOf, { printedDate, printedAt } = {}) {
   if (!document.getElementById('dpdf-css')) { const st = el('style'); st.id = 'dpdf-css'; st.textContent = CSS; document.head.appendChild(st) }
-  const { rows, date, journalNumber } = group
+  const { rows, date, journalNumber, cashSummary = false } = group
   // الحسابات كما كانت في exportGroupPdf
-  const totalDebit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0), 0)
-  const totalCredit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0), 0)
+  const totalDebit  = rows.reduce((s,r) => s+(r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(cashSummary ? 0 : (r.receivable_in||0)), 0)
+  const totalCredit = rows.reduce((s,r) => s+(r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(cashSummary ? 0 : (r.receivable_out||0)), 0)
   const balance     = totalDebit - totalCredit
   const printed = printedDate || new Date().toLocaleDateString('en-GB')
   const stamp = printedAt || new Date().toLocaleString('en-US')
@@ -90,7 +90,10 @@ export function buildDayPages(group, fmt, accountsOf, { printedDate, printedAt }
     if (!fits() && tbodyHost.querySelectorAll('tbody, tfoot').length > 1) { node.remove(); newPage(); startTable(true); tbodyHost.appendChild(node) }
   }
 
-  newPage(); startTable(false)
+  newPage()
+  const creditPurchases = rows.filter(r => r._creditRows).reduce((n,r) => n + Math.round(r.payable_in * 100), 0) / 100
+  if (creditPurchases > 0) body.appendChild(el('div', 'dpdf-cont', `مشتريات آجلة: ${n(fmt(creditPurchases))} — على الموردين، دون خروج نقدي. الشراء الآجل لا يدخل في إجماليات حركة النقد أدناه.`))
+  startTable(false)
   rows.forEach((r, i) => {
     const { amount, debitAccount, creditAccount } = accountsOf(r)
     const desc = r.description && r.description !== r.type ? r.description : ''
@@ -102,13 +105,13 @@ export function buildDayPages(group, fmt, accountsOf, { printedDate, printedAt }
     tb.setAttribute('data-i', String(i + 1)); tb.setAttribute('data-id', r.id || '')
     placeInTable(tb)
   })
-  const tf = el('tfoot', '', `<tr><td colspan="2">الإجمالي (${rows.length} حركة)</td><td class="d">${n(fmt(totalDebit))}</td><td class="c">${n(fmt(totalCredit))}</td><td></td></tr>`)
+  const tf = el('tfoot', '', `<tr><td colspan="2">${cashSummary ? 'حركة النقد فقط' : 'الإجمالي'} (${rows.length} حركة)</td><td class="d">${n(fmt(totalDebit))}</td><td class="c">${n(fmt(totalCredit))}</td><td></td></tr>`)
   tf.setAttribute('data-total', '1'); placeInTable(tf)
 
   const sum = el('div', 'dpdf-sum',
-    `<div style="background:#f0fdf4;border:1px solid #bbf7d0"><span>إجمالي المدين</span><strong style="color:#16a34a">${n(fmt(totalDebit))}</strong></div>`
-    + `<div style="background:#fef2f2;border:1px solid #fecaca"><span>إجمالي الدائن</span><strong style="color:#dc2626">${n(fmt(totalCredit))}</strong></div>`
-    + `<div style="background:${balance>=0?'#eff6ff':'#fef2f2'};border:1px solid ${balance>=0?'#bfdbfe':'#fecaca'}"><span>الميزان</span><strong style="color:${balance>=0?'#1d4ed8':'#dc2626'}">${n(fmt(Math.abs(balance)))} <small>${balance>=0?'(مدين)':balance<0?'(دائن)':''}</small></strong></div>`)
+    `<div style="background:#f0fdf4;border:1px solid #bbf7d0"><span>${cashSummary ? 'الوارد النقدي' : 'إجمالي المدين'}</span><strong style="color:#16a34a">${n(fmt(totalDebit))}</strong></div>`
+    + `<div style="background:#fef2f2;border:1px solid #fecaca"><span>${cashSummary ? 'الصادر النقدي' : 'إجمالي الدائن'}</span><strong style="color:#dc2626">${n(fmt(totalCredit))}</strong></div>`
+    + `<div style="background:${balance>=0?'#eff6ff':'#fef2f2'};border:1px solid ${balance>=0?'#bfdbfe':'#fecaca'}"><span>${cashSummary ? 'صافي الحركة النقدية' : 'الميزان'}</span><strong style="color:${balance>=0?'#1d4ed8':'#dc2626'}">${n(fmt(Math.abs(balance)))} <small>${balance>=0?'(مدين)':balance<0?'(دائن)':''}</small></strong></div>`)
   sum.setAttribute('data-summary', '1')
   body.appendChild(sum)
   if (!fits()) { sum.remove(); newPage(); body.appendChild(sum) }
