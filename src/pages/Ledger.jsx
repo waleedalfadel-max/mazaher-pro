@@ -1,3 +1,6 @@
+import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
+import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
+import { usesCompactHome } from '../lib/businessPresentation.js'
 import BankTransferManage from '../components/BankTransferManage.jsx'
 import { BANK_TRANSFER_TYPE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
@@ -155,7 +158,8 @@ function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts 
 }
 
 export default function Ledger() {
-  const { canEdit, projectId } = useAuth()
+  const { canEdit, projectId, projectName } = useAuth()
+  const compactInvoices = usesCompactHome(projectName)
   const [allRows, setAllRows]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [types, setTypes]           = useState([])
@@ -232,8 +236,8 @@ export default function Ledger() {
     if (filter.from) rows = rows.filter(r => r.date >= filter.from)
     if (filter.to)   rows = rows.filter(r => r.date <= filter.to)
     if (filter.type) rows = rows.filter(r => r.type === filter.type)
-    return [...rows].reverse()
-  }, [enriched, filter])
+    return compactInvoices ? groupCreditInvoices([...rows].reverse(), enriched) : [...rows].reverse()
+  }, [enriched, filter, compactInvoices])
 
   async function saveEdit() {
     if (!editRow) return
@@ -343,7 +347,7 @@ export default function Ledger() {
   const linkButton = (r, Comp) => canEdit && needsLink(r) && (Comp === 'icon'
     ? <IconButton bare label="ربط بحساب" icon={Landmark} data-k="ldg-link" onClick={() => { setActionError(''); setLinking({ row: r, account: chosenBankAccount(bankAccounts, r.branch || null, '') }) }} />
     : <Button size="sm" variant="quiet" icon={Landmark} data-k="ldg-link" onClick={() => { setActionError(''); setLinking({ row: r, account: chosenBankAccount(bankAccounts, r.branch || null, '') }) }}>ربط بحساب</Button>)
-  const actions = r => canEdit && r.status !== 'cancelled' && (
+  const actions = r => !r._creditRows && canEdit && r.status !== 'cancelled' && (
     <div className="ldg-actions">
       {linkButton(r)}
       {!isSupplierPaymentType(r.type) && <Button size="sm" variant="quiet" icon={Pencil} onClick={() => openEdit(r)}>تعديل</Button>}
@@ -351,7 +355,7 @@ export default function Ledger() {
     </div>
   )
 
-  const iconActions = r => canEdit && r.status !== 'cancelled' && (
+  const iconActions = r => !r._creditRows && canEdit && r.status !== 'cancelled' && (
     <div className="ldg-actions">
       {linkButton(r, 'icon')}
       {!isSupplierPaymentType(r.type) && <IconButton bare label="تعديل" icon={Pencil} onClick={() => openEdit(r)} />}
@@ -413,8 +417,8 @@ export default function Ledger() {
                     <th rowSpan={2}>الحالة</th><th rowSpan={2}><span className="ts-sr">إجراءات</span></th>
                   </tr>
                   <tr>
-                    {ACCOUNTS.map(a => <th key={a.key} className="ts-end">{a.label}</th>)}
-                    {ACCOUNTS.map(a => <th key={a.key} className="ts-end ldg-bal-head">{a.label}</th>)}
+                    {ACCOUNTS.map(a => <th key={a.key} className="ts-end">{compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label}</th>)}
+                    {ACCOUNTS.map(a => <th key={a.key} className="ts-end ldg-bal-head">{compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -425,7 +429,7 @@ export default function Ledger() {
                     <tr key={r.id} data-id={r.id} className={r.status === 'cancelled' ? 'is-cancelled' : ''}>
                       <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
                       <td data-k="type" className="ldg-type">{cleanLabel(r.type) || '—'}</td>
-                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}{r.bank_account_id && accountName[r.bank_account_id] ? <small className="ldg-bank-acc" data-k="bank-acc">{accountName[r.bank_account_id]}</small> : null}</td>
+                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}<CreditInvoiceSummary row={r} onEdit={canEdit ? openEdit : undefined} onDelete={canEdit ? askDelete : undefined}/>{r.bank_account_id && accountName[r.bank_account_id] ? <small className="ldg-bank-acc" data-k="bank-acc">{accountName[r.bank_account_id]}</small> : null}</td>
                       {ACCOUNTS.map(a => <MoveCell key={a.key} r={r} acc={a.key} />)}
                       {ACCOUNTS.map(a => <BalCell key={a.key} v={r[a.bal]} k={a.bal} />)}
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
@@ -449,14 +453,14 @@ export default function Ledger() {
                     <Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status>
                   </div>
                   <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
-                  {r.description && <div className="ldg-card-desc">{r.description}</div>}
+                  {r.description && <div className="ldg-card-desc">{r.description}</div>}<CreditInvoiceSummary row={r} onEdit={canEdit ? openEdit : undefined} onDelete={canEdit ? askDelete : undefined}/>
                   {r.bank_account_id && accountName[r.bank_account_id] && <div className="ldg-card-desc ldg-bank-acc">{accountName[r.bank_account_id]}</div>}
                   <dl className="ldg-card-moves">
                     {moves.length === 0 && <div><dt>الحركة</dt><dd>—</dd></div>}
                     {moves.map(k => <div key={k} className={k.endsWith('_out') ? 'is-out' : 'is-in'}><dt>{AMOUNT_LABEL[k]}</dt><dd className="ts-num">{fmt(r[k])}</dd></div>)}
                   </dl>
                   <dl className="ldg-card-bals">
-                    {ACCOUNTS.map(a => <div key={a.key} className={r[a.bal] != null && r[a.bal] < 0 ? 'is-neg' : ''}><dt>{a.label}</dt><dd className="ts-num">{fmtBal(r[a.bal])}</dd></div>)}
+                    {ACCOUNTS.map(a => <div key={a.key} className={r[a.bal] != null && r[a.bal] < 0 ? 'is-neg' : ''}><dt>{compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label}</dt><dd className="ts-num">{fmtBal(r[a.bal])}</dd></div>)}
                   </dl>
                   {actions(r)}
                 </article>
@@ -465,7 +469,7 @@ export default function Ledger() {
           </div>
 
           {filteredRows.length > 0 && (
-            <p className="ldg-count" data-k="ledger.count">{filteredRows.length} صف معروض من {allRows.length} إجمالي</p>
+            <p className="ldg-count" data-k="ledger.count">{filteredRows.length} {compactInvoices ? 'عملية معروضة؛ تفاصيل التصنيفات داخل الفاتورة' : `صف معروض من ${allRows.length} إجمالي`}</p>
           )}
         </>
       )}

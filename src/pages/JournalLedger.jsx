@@ -1,3 +1,5 @@
+import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
+import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Download, ExternalLink, FileText, Info, NotebookText, Paperclip, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -31,7 +33,7 @@ const QUICK_PERIODS = [
   { value: 'year',      label: 'السنة الحالية' },
   { value: 'custom',    label: 'فترة أخرى' },
 ]
-const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url,document_id,bank_account_id,receivable_in,receivable_out'
+const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url,document_id,bank_account_id,receivable_in,receivable_out,project_id,document_invoice_id,supplier_id,payable_in,payable_out,vat_amount,category_main,category_sub'
 const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير', superadmin: 'إدارة تحسيب' }
 
 function getRange(type) {
@@ -186,7 +188,7 @@ export default function JournalLedger({ unified = false }) {
 
   // الحذف كما كان: حذف نهائي للصف بعد التأكيد. قيد «سداد مورد» يُحذف بدالة الخادم مع حركة المورد معًا (20261013120000)
   async function handleDelete(entry) {
-    if (!canEdit) return
+    if (!canEdit || entry?._creditRows) return
     setBusy(true); setActionError('')
     let msg = null
     if (isSupplierPaymentType(entry.type)) msg = await deleteSupplierPayment(supabase, entry).catch(e => e?.message || 'خطأ غير معروف')
@@ -229,11 +231,13 @@ export default function JournalLedger({ unified = false }) {
     const credit  = (unified ? visibleRows : rows).reduce((s, r) => s + scopedMovement(r).outgoing / 100, 0)
     return { debit, credit }
   }, [rows, visibleRows, unified, account])
+  const displayRows = useMemo(() => unified ? groupCreditInvoices(visibleRows, rows) : visibleRows, [visibleRows, rows, unified])
+  const creditPurchases = displayRows.filter(r => r._creditRows).reduce((n,r) => n + Math.round(r.payable_in * 100), 0) / 100
   const groups = useMemo(() => {
     const days = new Map()
-    for (const row of visibleRows) { if (!days.has(row.date)) days.set(row.date, []); days.get(row.date).push(row) }
+    for (const row of displayRows) { if (!days.has(row.date)) days.set(row.date, []); days.get(row.date).push(row) }
     return [...days].sort(([a],[b]) => b.localeCompare(a)).map(([date, rows]) => ({ date, rows, journalNumber: date }))
-  }, [visibleRows])
+  }, [displayRows])
   async function exportDay(group) {
     setExporting(group.date); setActionError('')
     try {
@@ -243,7 +247,7 @@ export default function JournalLedger({ unified = false }) {
         bank_in: account.startsWith('bank') ? r.bank_in : 0, bank_out: account.startsWith('bank') ? r.bank_out : 0,
         custody_in: account === 'custody' ? r.custody_in : 0, custody_out: account === 'custody' ? r.custody_out : 0,
         receivable_in: 0, receivable_out: 0, description: `${selected} — ${r.description || ''}` }))
-      await exportGroupPdf({ ...group, rows: exportRows }, value => formatNumber(value, 2))
+      await exportGroupPdf({ ...group, rows: exportRows, cashSummary: true }, value => formatNumber(value, 2))
     }
     catch { setActionError('تعذّر تصدير اليوم. أعد المحاولة.') }
     finally { setExporting('') }
@@ -254,9 +258,9 @@ export default function JournalLedger({ unified = false }) {
   const rangeText = filter.from && filter.to
     ? (filter.from === filter.to ? formatDate(filter.from, { year: true }) : `${formatDate(filter.from, { year: filter.from.slice(0, 4) !== filter.to.slice(0, 4) })} – ${formatDate(filter.to, { year: true })}`)
     : 'كل التواريخ'
-  const countText = `${visibleRows.length} حركة${search && rows.length !== visibleRows.length ? ` (من ${rows.length})` : ''}`
+  const countText = unified ? `${displayRows.length} عملية` : `${visibleRows.length} حركة${search && rows.length !== visibleRows.length ? ` (من ${rows.length})` : ''}`
 
-  const rowView = rows.length ? visibleRows : []
+  const rowView = rows.length ? displayRows : []
   const jnLabel = (r, idx) => r.journal_number || `#${idx + 1}`
   const canAttachOf = r => ['approved', 'auto'].includes(r.status) && r.journal_number
   const docButton = r => r.file_url
@@ -317,16 +321,17 @@ export default function JournalLedger({ unified = false }) {
       ) : (
         <>
           <div className="jx-totals" data-k="jl.totals">
-            <div><span>{unified ? 'الوارد المعروض' : 'مدين الفترة'}</span><strong className="ts-num is-in" data-k="jl.totalDebit">{fmt(totals.debit)}</strong></div>
-            <div><span>{unified ? 'الصادر المعروض' : 'دائن الفترة'}</span><strong className="ts-num is-out" data-k="jl.totalCredit">{fmt(totals.credit)}</strong></div>
-            <div><span>{unified ? 'الحركات المعروضة' : 'قيود الفترة'}</span><strong className="ts-num" data-k="jl.totalCount">{unified ? visibleRows.length : rows.length}</strong></div>
+            <div><span>{unified ? 'الوارد النقدي المعروض' : 'مدين الفترة'}</span><strong className="ts-num is-in" data-k="jl.totalDebit">{fmt(totals.debit)}</strong></div>
+            <div><span>{unified ? 'الصادر النقدي المعروض' : 'دائن الفترة'}</span><strong className="ts-num is-out" data-k="jl.totalCredit">{fmt(totals.credit)}</strong></div>
+            <div><span>{unified ? 'العمليات المعروضة' : 'قيود الفترة'}</span><strong className="ts-num" data-k="jl.totalCount">{unified ? displayRows.length : rows.length}</strong></div>
           </div>
 
+          {unified && creditPurchases > 0 && <div className="ts-note ts-note--info" data-k="credit-purchases-total">مشتريات آجلة معروضة: <strong className="ts-num">{fmt(creditPurchases)}</strong> · أُضيفت لمستحقات الموردين، ولا تدخل في الوارد والصادر النقدي أعلاه.</div>}
           {unified && view === 'days' && <div className="jar-days">{groups.map(group => <Panel key={group.date} title={day(group.date)}>
             <div className="ts-panel-body">
               <Button size="sm" icon={Download} disabled={!!exporting} onClick={() => exportDay(group)}>تصدير اليوم PDF</Button>
               <p className="ts-field-hint">{group.rows.length} حركة · حسب الفلاتر الحالية</p>
-              <ul className="sup-txns">{group.rows.map(r => <li key={r.id}><div><strong>{r.journal_number || '—'} · {cleanLabel(r.type)}</strong><p>{r.description}</p><small>{fmt(shownDebit(r))} وارد · {fmt(shownCredit(r))} صادر</small></div><div>{docButton(r)}{attButton(r)}{canEdit && <IconButton bare label="حذف الحركة" icon={Trash2} onClick={() => setDeleting(r)} />}</div></li>)}</ul>
+              <ul className="sup-txns">{group.rows.map(r => <li key={r.id}><div><strong>{r.journal_number || '—'} · {cleanLabel(r.type)}</strong><p>{r.description}</p><CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined}/><small>{fmt(shownDebit(r))} وارد · {fmt(shownCredit(r))} صادر</small></div><div>{docButton(r)}{attButton(r)}{canEdit && !r._creditRows && <IconButton bare label="حذف الحركة" icon={Trash2} onClick={() => setDeleting(r)} />}</div></li>)}</ul>
             </div>
           </Panel>)}</div>}
           {(!unified || view === 'list') && <>
@@ -351,14 +356,14 @@ export default function JournalLedger({ unified = false }) {
                       <td data-k="jn" className="jrl-jn ts-num">{jnLabel(r, idx)}</td>
                       <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
                       <td data-k="type" className="ldg-type" title={r.type || ''}>{cleanLabel(r.type) || '—'}</td>
-                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}</td>
+                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}<CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined}/></td>
                       <td data-k="debit" className="ts-end ldg-move">{shownDebit(r) > 0 ? <span className="is-in ts-num">{fmt(shownDebit(r))}</span> : <span className="ldg-nil">—</span>}</td>
                       <td data-k="credit" className="ts-end ldg-move">{shownCredit(r) > 0 ? <span className="is-out ts-num">{fmt(shownCredit(r))}</span> : <span className="ldg-nil">—</span>}</td>
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
                       <td data-k="doc" className="jrl-c">{docButton(r)}</td>
                       <td data-k="att" className="jrl-c" data-count={attachCounts[r.journal_number] || 0}>{attButton(r)}</td>
                       {canEdit && (
-                        <td>{r.status !== 'cancelled' && <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); setDeleting(r) }} />}</td>
+                        <td>{!r._creditRows && r.status !== 'cancelled' && <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); setDeleting(r) }} />}</td>
                       )}
                     </tr>
                   ))}
@@ -377,7 +382,7 @@ export default function JournalLedger({ unified = false }) {
                   <Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status>
                 </div>
                 <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
-                {r.description && <div className="ldg-card-desc">{r.description}</div>}
+                {r.description && <div className="ldg-card-desc">{r.description}</div>}<CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined}/>
                 <dl className="ldg-card-moves">
                   <div className="is-in"><dt>مدين</dt><dd className="ts-num">{fmt(shownDebit(r))}</dd></div>
                   <div className="is-out"><dt>دائن</dt><dd className="ts-num">{fmt(shownCredit(r))}</dd></div>
@@ -385,7 +390,7 @@ export default function JournalLedger({ unified = false }) {
                 <div className="jrl-card-actions">
                   {r.file_url && <Button size="sm" variant="quiet" icon={FileText} onClick={() => openFile(r.file_url)}>المستند</Button>}
                   {canAttachOf(r) && <Button size="sm" variant="quiet" icon={Paperclip} onClick={() => setModalEntry(r)}>المرفقات ({attachCounts[r.journal_number] || 0})</Button>}
-                  {canEdit && r.status !== 'cancelled' && <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); setDeleting(r) }}>حذف</Button>}
+                  {canEdit && !r._creditRows && r.status !== 'cancelled' && <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); setDeleting(r) }}>حذف</Button>}
                 </div>
               </article>
             ))}
