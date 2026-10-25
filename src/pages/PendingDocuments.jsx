@@ -1694,12 +1694,12 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
       {independentMode && (
         <label className="rp-cell"><span className="rp-cell-label">التصنيف الأساسي</span>
           <Select value={mainValue} placeholder="— اختر —" aria-label={`التصنيف الأساسي للبند ${n}`}
-            onChange={e => onEdit({ category_main: e.target.value, category_sub: '' })}
+            onChange={e => onEdit({ category_main: e.target.value, category_sub: '', category_id: null, subcategory_id: null })}
             options={catOptions(parentCats.filter(p => p.is_active !== false).map(p => p.name), mainValue)} /></label>
       )}
       <label className="rp-cell"><span className="rp-cell-label">التصنيف الفرعي</span>
         <Select value={subValue} placeholder="— اختر —" aria-label={`التصنيف الفرعي للبند ${n}`}
-          onChange={e => onEdit({ category_sub: e.target.value })}
+          onChange={e => onEdit({ category_sub: e.target.value, subcategory_id: null })}
           options={catOptions(itemSubs.length ? itemSubs.filter(s => s.is_active !== false).map(s => s.name) : ['أخرى'], subValue)} /></label>
       {discounts && (
         <label className="rp-cell rp-cell--amount"><span className="rp-cell-label">خصم البند</span>

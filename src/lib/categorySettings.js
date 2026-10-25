@@ -45,7 +45,7 @@ export function nameError(name, siblings, selfId = null) {
   return null
 }
 
-const ACTIONS = { create: 'أُضيف', rename: 'أُعيدت تسميته', set_class: 'تغيّرت معالجته', disable: 'عُطّل', enable: 'أُعيد تفعيله', move: 'تغيّر ترتيبه' }
+const ACTIONS = { link: 'رُبطت به بيانات سابقة', create: 'أُضيف', rename: 'أُعيدت تسميته', set_class: 'تغيّرت معالجته', disable: 'عُطّل', enable: 'أُعيد تفعيله', move: 'تغيّر ترتيبه' }
 export const actionLabel = a => ACTIONS[a] || a
 
 /** رسالة عربية لرموز خادم إعدادات التصنيفات. */
@@ -68,6 +68,11 @@ export function categoryMessage(res) {
     name_too_long: 'الاسم أطول من 60 حرفًا.',
     name_needs_letters: 'اكتب الاسم بحروف؛ الأرقام والرموز وحدها لا تميّز التصنيف.',
     duplicate_name: `يوجد تصنيف بالاسم نفسه: «${d.existing || ''}»${d.parent ? ` تحت «${d.parent}»` : ''}${d.existing_active === false ? ' (معطّل — أعد تفعيله بدل إنشاء جديد)' : ''}.`,
+    financial_review_required: 'هذا الربط ينقل بيانات بين تكلفة البضاعة والمصروفات التشغيلية؛ يحتاج مراجعة مالية مستقلة، ولم يُغيَّر شيء.',
+    stale: 'تغيرت البيانات منذ المعاينة. أعد المعاينة قبل الربط.',
+    reason_required: 'اكتب سببًا واضحًا للتصحيح (5 أحرف على الأقل).',
+    category_invalid: 'اختر تصنيفًا أساسيًا فعالًا من منشأتك.',
+    subcategory_invalid: 'اختر تصنيفًا فرعيًا فعالًا تابعًا للتصنيف الأساسي.',
     no_change: 'لا تغيير لحفظه.',
     at_edge: 'التصنيف في طرف القائمة.',
     bad_request: 'طلب غير صالح. حدّث الصفحة.',
