@@ -83,6 +83,24 @@ export function possibleDuplicates(payments = [], inv) {
   return rankPayments(payments, inv).filter(p => p.sameAmount && p.days != null && p.days <= DUPLICATE_WINDOW_DAYS)
 }
 
+/** Explicit two-bank split; use the same cent parser as approval. */
+export function paymentSplitCheck(inv) {
+  if (inv?.splitPayment !== true || inv?.paymentMode === 'link') return { error: null, allocations: null }
+  const parts = inv.paymentAllocations
+  if (!Array.isArray(parts) || parts.length !== 2) return { error: 'أدخل حسابين لتقسيم مبلغ السداد.' }
+  const ids = new Set(), allocations = []
+  for (const part of parts) {
+    const amount = toHalalas(part?.amount)
+    if (!part?.bankAccountId) return { error: 'اختر الحساب لكل جزء من السداد.' }
+    if (ids.has(part.bankAccountId)) return { error: 'اختر حسابين مختلفين، أو ألغِ تقسيم السداد.' }
+    if (!Number.isSafeInteger(amount) || amount <= 0) return { error: 'أدخل مبلغًا موجبًا صحيحًا لكل حساب، بمنزلتين عشريتين كحد أقصى.' }
+    ids.add(part.bankAccountId); allocations.push({ bankAccountId: part.bankAccountId, amount: amount / 100 })
+  }
+  const sum = allocations.reduce((n,p) => n + toHalalas(p.amount), 0), total = toHalalas(inv.amount)
+  if (sum !== total) return { error: `مجموع التقسيم ${money(sum / 100)} لا يساوي مبلغ السداد ${money((total || 0) / 100)}.`, total: sum / 100 }
+  return { error: null, allocations, total: sum / 100 }
+}
+
 /**
  * سبب منع اعتماد الإيصال قبل إرساله، أو null. ctx: { payments } من supplier_payment_context إن حُمّل.
  * serverDup: رد الخادم payment_possible_duplicate لهذه الفاتورة — يحتاج سبب المسار ولو لم يرَ فحص الشاشة المحدود التشابه.
@@ -104,7 +122,9 @@ export function receiptBlockReason(inv, ctx = null, serverDup = null) {
     if (serverDup && !String(inv.linkReason || '').trim()) return 'وجد الخادم مستندًا أو إيصالًا مشابهًا (أدناه): إن كان هذا مستندًا آخر للدفعة نفسها فاكتب ذلك سببًا.'
     return null
   }
-  if (!['cash', 'bank'].includes(inv.paySource)) return 'اختر مصدر الدفع: الصندوق أو البنك.'
+  const split = paymentSplitCheck(inv)
+  if (split.error) return split.error
+  if (!split.allocations && !['cash', 'bank'].includes(inv.paySource)) return 'اختر مصدر الدفع: الصندوق أو البنك.'
   if (ctx?.payments && !String(inv.newPaymentReason || '').trim() && possibleDuplicates(ctx.payments, inv).length) {
     return 'للمورد دفعة مسجلة بالمبلغ نفسه قريبة التاريخ: اربط الإيصال بها إن كانت هي، أو اكتب سبب أنها دفعة أخرى.'
   }
@@ -128,6 +148,14 @@ export function buildReceiptPayload(inv, { original } = {}) {
   } else {
     out.paySource = inv.paySource || null
     if (inv.paySource === 'bank' && inv.bankAccountId) out.bankAccountId = inv.bankAccountId
+    if (inv.splitPayment === true) {
+      const split = paymentSplitCheck(inv)
+      if (split.error) throw new Error(split.error)
+      out.splitPayment = true
+      out.paymentAllocations = split.allocations
+      out.paySource = 'bank'
+      out.bankAccountId = split.allocations[0].bankAccountId
+    }
     const reason = String(inv.newPaymentReason || '').trim()
     if (reason) out.newPaymentReason = reason
   }
@@ -172,6 +200,6 @@ export function receiptHistoryNote(history) {
 export function normalizeReceiptReading(inv) {
   if (!isReceipt(inv)) return inv
   if (!String(inv.paymentEvidence || '').trim()) return { ...fromReceipt(inv, 'expense'), _id: inv._id, paySource: inv.paySource || '' }
-  const { items, vatAmount, totalAmount, transType, category_main, category_sub, ...rest } = inv
+  const { items, vatAmount, totalAmount, transType, category_main, category_sub, splitPayment, paymentAllocations, ...rest } = inv
   return { ...rest, amount: inv.amount ?? totalAmount ?? '', paymentMode: 'new' }
 }

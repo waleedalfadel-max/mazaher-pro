@@ -105,8 +105,8 @@ const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'الت
   totalSales: 'إجمالي التقرير المطبوع',
   // إيصال سداد مورد (20261020120000)
   beneficiary: 'المستفيد', reference: 'مرجع العملية', supplierKind: 'قائمة المورد', supplierId: 'المورد', paymentMode: 'طريقة الاعتماد',
-  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', bankTransfer: 'حسابا التحويل الداخلي' }
-const fieldText = v => v && typeof v === 'object' ? JSON.stringify(v, Object.keys(v).sort()) : String(v ?? '')
+  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', bankTransfer: 'حسابا التحويل الداخلي', splitPayment: 'تقسيم السداد', paymentAllocations: 'مبالغ السداد وحساباتها' }
+const fieldText = v => Array.isArray(v) ? JSON.stringify(v) : v && typeof v === 'object' ? JSON.stringify(v, Object.keys(v).sort()) : String(v ?? '')
 const same = (a, b) => fieldText(a) === fieldText(b)
 
 /** سجل التعديلات بين نتيجة القراءة وما يُعتمد (يُحفظ مع الاعتماد في الخادم). */
@@ -244,6 +244,9 @@ export function approvalMessage(res) {
     duplicate_in_batch: 'في المستند فاتورتان بالرقم نفسه للمورد نفسه.',
     supplier_payment_via_suppliers: 'هذه الفاتورة مصنفة «سداد مورد» كمصروف. غيّر «نوع المستند» إلى «سداد مورد» واختر المورد (يخفض مستحقه مع القيد)، أو سجّل الدفعة من «الموردين» ثم اربط الإيصال بها، أو صنّفها مصروفًا آخر. لم يُسجَّل شيء.',
     date_required: 'التاريخ مطلوب.',
+    payment_split_invalid: 'أدخل حسابين مختلفين ومبلغًا موجبًا لكل حساب.',
+    payment_split_mismatch: 'مجموع مبالغ الحسابين لا يساوي مبلغ السداد. راجع التقسيم.',
+    payment_split_disabled: 'تقسيم السداد غير متاح في هذه النسخة. حدّث الصفحة.',
     pay_required: 'اختر مصدر الدفع.',
     type_required: 'اختر التصنيف الأساسي.',
     amount_required: 'المبلغ مطلوب.',

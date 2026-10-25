@@ -152,6 +152,11 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      <Route path="/operations" element={
+        <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
+          <JournalLedger unified />
+        </ProtectedRoute>
+      } />
       <Route path="/journal" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <JournalLedger />

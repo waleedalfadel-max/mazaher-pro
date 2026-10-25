@@ -3,7 +3,7 @@ import { Link2, Info, ReceiptText } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Button, DateInput, Field, Input, Money, Note, Segment, Select, Status, Textarea } from '../ui/components.jsx'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup.js'
-import { balanceAfter, optionKey, paymentDocuments, possibleDuplicates, rankPayments, suggestSupplier, supplierOptions } from '../lib/supplierReceipts.js'
+import { paymentSplitCheck, balanceAfter, optionKey, paymentDocuments, possibleDuplicates, rankPayments, suggestSupplier, supplierOptions } from '../lib/supplierReceipts.js'
 import { dupCandidate, money } from '../lib/approvalV2.js'
 
 const MODES = [{ value: 'new', label: 'تسجيل دفعة جديدة' }, { value: 'link', label: 'ربط بدفعة مسجلة' }]
@@ -48,6 +48,8 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
   const after = ctx ? balanceAfter(ctx.balance, invoice) : null
   const k = s => `${s}-${index}`
   const pick = o => onPatch({ supplierKind: o.kind, supplierId: o.id, linkJournal: null, newPaymentReason: '', linkReason: '' })
+  const splitError = paymentSplitCheck(invoice).error
+  const setPart = (index, patch) => onPatch({ paymentAllocations: invoice.paymentAllocations.map((p,i) => i === index ? { ...p, ...patch } : p) })
   const linkedTo = ranked.find(p => p.journal_number === invoice.linkJournal) || null
 
   return (
@@ -83,8 +85,21 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
         </Field>
       </div>
       <Segment full label="طريقة الاعتماد" value={mode} onChange={v => !readOnly && onPatch(v === 'link' ? { paymentMode: 'link' } : { paymentMode: 'new', linkJournal: null })} options={MODES} />
-      {mode === 'new' ? (
-        <div className="ts-form-grid">
+      {mode === 'new' ? (<>
+        <label className="ts-check">
+          <input type="checkbox" checked={invoice.splitPayment === true} disabled={readOnly} data-k={k('receipt-split-toggle')}
+            onChange={e => onPatch(e.target.checked ? { splitPayment: true, paymentAllocations: [{bankAccountId:invoice.bankAccountId || '',amount:''},{bankAccountId:'',amount:''}] } : { splitPayment:false, paymentAllocations:null })} />
+          <span>تقسيم السداد على حسابين (اختياري)</span>
+        </label>
+        {invoice.splitPayment === true ? <div className="rp-payment-split" data-k={k('receipt-split')}>
+          {(invoice.paymentAllocations || []).map((part,i) => <div className="ts-form-grid" key={i}>
+            <Field label={`الحساب ${i + 1}`}><Select value={part.bankAccountId || ''} placeholder="— اختر الحساب —" disabled={readOnly}
+              data-k={k(`receipt-split-bank-${i}`)} onChange={e => setPart(i,{bankAccountId:e.target.value})} options={accounts.map(a=>({value:a.id,label:bankAccountLabel(a)}))} /></Field>
+            <Field label={`المبلغ من الحساب ${i + 1}`}><Input numeric dir="ltr" disabled={readOnly} value={part.amount ?? ''}
+              data-k={k(`receipt-split-amount-${i}`)} onChange={e=>setPart(i,{amount:e.target.value})} /></Field>
+          </div>)}
+          {splitError ? <p className="ts-field-error" role="alert">{splitError}</p> : <p className="ts-field-hint">مجموع الجزأين يساوي مبلغ السداد. تُسجّل دفعة واحدة للمورد وخروج من كل حساب بمبلغه.</p>}
+        </div> : <div className="ts-form-grid">
           <Field label="دُفع من" error={!['cash', 'bank'].includes(invoice.paySource) ? 'اختر الصندوق أو البنك.' : undefined}>
             <Select value={['cash', 'bank'].includes(invoice.paySource) ? invoice.paySource : ''} placeholder="— اختر —" disabled={readOnly} data-k={k('receipt-source')}
               onChange={e => onPatch({ paySource: e.target.value })} options={SOURCES} />
@@ -95,8 +110,8 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
                 onChange={e => onPatch({ bankAccountId: e.target.value })} options={accounts.map(a => ({ value: a.id, label: bankAccountLabel(a) }))} />
             </Field>
           )}
-        </div>
-      ) : (
+        </div>}
+      </>) : (
         <div className="rp-receipt-link" data-k={k('receipt-payments')}>
           {!chosen ? <p className="ts-field-hint">اختر المورد لتظهر دفعاته المسجلة.</p>
             : !ctx ? <p className="ts-field-hint">{ctxError || 'جارٍ تحميل دفعات المورد…'}</p>
@@ -108,7 +123,7 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
                     <label className="ts-check">
                       <input type="radio" name={k('receipt-link')} disabled={readOnly} checked={invoice.linkJournal === p.journal_number}
                         onChange={() => onPatch({ linkJournal: p.journal_number })} />
-                      <span className="ts-num">{p.journal_number}</span> · {p.date} · {p.source === 'bank' ? 'البنك' : 'الصندوق'}
+                      <span className="ts-num">{p.journal_number}</span> · {p.date} · {p.allocations?.length > 1 ? 'حسابان' : p.source === 'bank' ? 'البنك' : 'الصندوق'}
                       {p.linked ? <Status tone="neutral">مرفق بها: {paymentDocuments(p).map(x => x.file_name).join('، ')}</Status> : p.likely ? <Status tone="warning">المبلغ نفسه وتاريخ قريب</Status> : null}
                     </label>
                     <Money value={Number(p.amount)} />
