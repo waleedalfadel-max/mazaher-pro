@@ -1,3 +1,4 @@
+import { readingCategoryLinks } from './categoryLinks.js'
 import { accountDashboard } from './accountStatement.js'
 import { BANK_TRANSFER_TYPE, paymentWorkflow } from './paymentWorkflow.js'
 import { normalizeExpenseReading } from './expenseReading.js'
@@ -388,7 +389,7 @@ ${paymentSourceRule}
   }
 
   // Normalize to always { invoices: [...] }
-  const normalized = result.invoices ? result : { invoices: [result] }
+  let normalized = result.invoices ? result : { invoices: [result] }
   delete normalized.rotation
   // أثر تجهيز الصورة للمراجعة: عدد القراءات والتدوير (لا أثر له على المبالغ)
   if (reading.calls > 1) normalized._reading = reading
@@ -399,31 +400,7 @@ ${paymentSourceRule}
   // إيصال سداد مورد: بدليل مطبوع وحده، وبلا بنود (src/lib/supplierReceipts.js)
   normalized.invoices = normalized.invoices.map(normalizeReceiptReading)
 
-  // تصحيح أسماء التصنيفات لكل الفواتير
-  if (categories.length > 0) {
-    const norm    = s => (s || '').replace(/[^؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim()
-    const parents = categories.filter(c => !c.parent_id)
-    const kidsOf  = id => categories.filter(c => c.parent_id === id)
-    const fixItems = items => (items || []).map(item => {
-      const matchedParent = parents.find(p =>
-        p.name === item.category_main || norm(p.name) === norm(item.category_main)
-      )
-      if (!matchedParent) return item
-      const subs       = kidsOf(matchedParent.id)
-      const matchedSub = subs.find(s =>
-        s.name === item.category_sub || norm(s.name) === norm(item.category_sub)
-      )
-      return {
-        ...item,
-        category_main: matchedParent.name,
-        category_sub:  matchedSub ? matchedSub.name : (item.category_sub || ''),
-      }
-    })
-    normalized.invoices = normalized.invoices.map(inv => ({
-      ...inv,
-      items: inv.items ? fixItems(inv.items) : inv.items,
-    }))
-  }
+  normalized = readingCategoryLinks(normalized, categories)
 
   return normalized
 }

@@ -23,7 +23,7 @@ const usageText = u => {
 }
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 const isUsed = u => Number(u?.entries || 0) + Number(u?.items || 0) > 0
-const REVIEW_STATUS = { ambiguous_main: 'يطابق أكثر من تصنيف رئيسي', unmatched_main: 'لا يطابق أي تصنيف', ambiguous_sub: 'يطابق أكثر من فرعي', unmatched_sub: 'فرعي لا يطابق' }
+const REVIEW_STATUS = { missing_sub: 'لم يُحدد التصنيف الفرعي', financial_review: 'اختلاف المعالجة المالية يحتاج مراجعة', ambiguous_main: 'يطابق أكثر من تصنيف رئيسي', unmatched_main: 'لا يطابق أي تصنيف', ambiguous_sub: 'يطابق أكثر من فرعي', unmatched_sub: 'فرعي لا يطابق' }
 
 async function call(fn, args) {
   try {
@@ -158,7 +158,7 @@ export default function Settings() {
           )}
       </Panel>
 
-      {state.review?.length > 0 && <ReviewPanel rows={state.review} />}
+      {state.review?.length > 0 && <ReviewPanel rows={state.review} categories={cats} disabled={disabledAll} onSaved={load} />}
       {state.changes?.length > 0 && <ChangesPanel changes={state.changes} byId={byId} />}
 
       {dialog?.kind === 'main' && (
@@ -313,7 +313,8 @@ function DisableDialog({ c, parent, activeSubs, busy, onClose, onConfirm }) {
   )
 }
 
-function ReviewPanel({ rows }) {
+export function ReviewPanel({ rows, categories = [], disabled = false, onSaved }) {
+  const [selected, setSelected] = useState(null)
   // صف لكل اسم محفوظ، بأعداد القيود والبنود
   const groups = Object.values(rows.reduce((m, r) => {
     const key = `${r.main}|${r.sub}|${r.status}`
@@ -331,11 +332,12 @@ function ReviewPanel({ rows }) {
               <strong>{g.main || '—'}{g.sub ? ` / ${g.sub}` : ''}</strong>
               <small>{REVIEW_STATUS[g.status] || g.status} · {[g.ledger && entriesText(g.ledger), g.item && itemsText(g.item)].filter(Boolean).join('، ')}</small>
             </div>
-            <Status tone="warning">للمراجعة</Status>
+            <Button disabled={disabled} onClick={() => setSelected(g)}>مراجعة وربط</Button>
           </li>
         ))}
       </ul>
-      <p className="ts-panel-body ts-field-hint">ربطها بتصنيف محدد قرار يتخذه المالك؛ لم يُنفَّذ في هذه النسخة.</p>
+      {selected && <LegacyLinkDialog row={selected} categories={categories} onClose={() => setSelected(null)} onSaved={async () => { setSelected(null); await onSaved?.() }} />}
+      <p className="ts-panel-body ts-field-hint">تعرض القائمة البيانات الحالية. الربط يحفظ الأسماء الأصلية والأرقام، ويُسجَّل بسببه. اختلاف المعالجة المالية يحتاج مراجعة منفصلة.</p>
     </Panel>
   )
 }
@@ -360,4 +362,38 @@ function ChangesPanel({ changes, byId }) {
       </ul>
     </Panel>
   )
+}
+
+
+function LegacyLinkDialog({ row, categories, onClose, onSaved }) {
+  const [main, setMain] = useState(''), [sub, setSub] = useState(''), [reason, setReason] = useState('')
+  const [preview, setPreview] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const parents = categories.filter(c => !c.parent_id && c.is_active !== false)
+  const children = categories.filter(c => c.parent_id === main && c.is_active !== false)
+  const reset = () => { setPreview(null); setError('') }
+  async function submit() {
+    if (busy || !main || !sub || (preview && reason.trim().length < 5)) return
+    setBusy(true); setError('')
+    const result = await call('category_link_legacy', { p_main: row.main, p_sub: row.sub, p_category: main, p_subcategory: sub,
+      p_reason: reason.trim() || null, p_fingerprint: preview?.fingerprint || null })
+    setBusy(false)
+    if (!result.ok) { setError(categoryMessage(result)); if (result.code === 'stale') setPreview(null); return }
+    if (result.preview) setPreview(result)
+    else await onSaved()
+  }
+  return <Dialog open title="ربط التصنيف السابق" onClose={() => { if (!busy) onClose() }} footer={<>
+    <Button disabled={busy} onClick={onClose}>إلغاء</Button>
+    <Button variant="primary" disabled={busy || !main || !sub || (preview && reason.trim().length < 5)} onClick={submit}>{busy ? 'جارٍ التحقق…' : preview ? 'تأكيد الربط' : 'معاينة الربط'}</Button>
+  </>}>
+    <p>{row.main || 'بلا تصنيف'}{row.sub ? ` / ${row.sub}` : ''}</p>
+    <Field label="التصنيف الأساسي"><select className="ts-input" aria-label="التصنيف الأساسي للربط" value={main} disabled={busy} onChange={e => { setMain(e.target.value); setSub(''); reset() }}>
+      <option value="">اختر التصنيف الأساسي</option>{parents.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select></Field>
+    <Field label="التصنيف الفرعي"><select className="ts-input" aria-label="التصنيف الفرعي للربط" value={sub} disabled={busy || !main} onChange={e => { setSub(e.target.value); reset() }}>
+      <option value="">اختر التصنيف الفرعي</option>{children.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select></Field>
+    {preview && <><Note tone="info">سيُربط {preview.items} بند و{preview.entries} قيد. تبقى المبالغ والضريبة والأرصدة كما هي.</Note><ul>{preview.examples?.map((x, i) => <li key={i}>{x.journal} — {x.description}</li>)}</ul></>}
+    <Field label="سبب التصحيح"><Input aria-label="سبب ربط التصنيف" value={reason} disabled={busy} onChange={e => setReason(e.target.value)} /></Field>
+    {error && <Note tone="error">{error}</Note>}
+  </Dialog>
 }

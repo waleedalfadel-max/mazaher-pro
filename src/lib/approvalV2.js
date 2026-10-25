@@ -1,3 +1,4 @@
+import { categoryChoice } from './categoryLinks.js'
 // الاعتماد الجديد (v2): العمليات كلها في الخادم (دوال approval_* في قاعدة البيانات، معاملة واحدة لكل اعتماد).
 // هذه الوحدة تبني البيانات المرسلة وتفحص المبالغ بالهللة قبل الإرسال وتترجم رموز الخادم إلى رسائل.
 // الفحص هنا للعرض فقط؛ الخادم يعيد الفحص نفسه ويرفض ما يخالفه.
@@ -149,16 +150,15 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   const byName = (name, parentId = null) => (categories || []).find(c => (c.parent_id || null) === parentId && normCat(c.name) === normCat(name || ''))
   const items = (inv.items || []).map(it => {
     const main = itemMainCategory(categories, it, transType)
-    const cat = byName(main)
-    const sub = cat && it.category_sub ? byName(it.category_sub, cat.id) : null
-    const { _dictionary, _dictionaryNote, ...line } = it   // علامات عرض القاموس لا تُرسل
-    return { ...line, category_main: main, category_id: cat?.id || it.category_id || null, subcategory_id: sub?.id || it.subcategory_id || null,
-      ledger_type: cat?.ledger_type || ledgerTypeFor(main, transTypes, transType) }
+    const chosen = categoryChoice(categories, { ...it, category_main: main }, transType)
+    const { _dictionary, _dictionaryNote, ...line } = it
+    return { ...line, ...chosen, ledger_type: chosen.ledger_type || ledgerTypeFor(main, transTypes, transType) }
   })
-  const invCat = (categories || []).find(c => !c.parent_id && c.ledger_type && c.ledger_type === transType) || byName(inv.category_main || transType)
+  const invoiceName = (inv.type === 'expense' && purchaseCategory) || inv.category_main || transType
+  const invCat = byName(invoiceName) || (() => { const matches = (categories || []).filter(c => !c.parent_id && c.is_active !== false && c.ledger_type && c.ledger_type === transType); return matches.length === 1 ? matches[0] : null })()
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
-  const payload = { ...inv, transType: effectiveType, items, category_main: inv.category_main || normCat(transType) || null, category_id: invCat?.id || inv.category_id || null }
+  const payload = { ...inv, transType: effectiveType, items, category_main: invCat?.name || invoiceName || null, category_id: invCat?.id || null, subcategory_id: categoryChoice(categories, { ...inv, category_main: invCat?.name || inv.category_main }, transType).subcategory_id }
   if (loan) {
     // The server's transfer path reads amount first: send exactly the visible amount, even for an older saved draft.
     payload.amount = fromHalalas(toHalalas(loanAmount(inv)))
@@ -282,6 +282,8 @@ export function approvalMessage(res) {
     invoice_mismatch: 'الفاتورة لا تخص هذا المستند.',
     invoice_id_missing: 'حدّث الصفحة ثم أعد المحاولة.',
     mode_locked: 'لا يمكن الرجوع إلى طريقة الاعتماد السابقة بعد تفعيل الجديدة.',
+    category_required: 'اختر التصنيف الأساسي من القائمة قبل الاعتماد.',
+    subcategory_required: 'اختر التصنيف الفرعي التابع للتصنيف الأساسي قبل الاعتماد.',
     category_invalid: 'التصنيف المختار غير موجود في منشأتك. حدّث الصفحة واختره من جديد.',
     subcategory_invalid: 'التصنيف الفرعي المختار غير موجود في منشأتك. حدّث الصفحة واختره من جديد.',
     subcategory_mismatch: `الفرعي «${d.name || ''}» لا يتبع «${d.parent || ''}». اختر فرعيًا من تحت التصنيف الرئيسي للبند.`,
