@@ -20,7 +20,7 @@ for (const basis of ['exclusive', 'inclusive']) test(`actual expense request pre
   const invoice = { type: 'expense', amountsBasis: basis, totalAmount: 230, vatAmount: 30,
     items: [{ description: 'Product A', amount: basis === 'exclusive' ? 80 : 92 },
       { description: 'Product B', amount: basis === 'exclusive' ? 120 : 138 }] }
-  const context = vm.createContext({ module: { exports: {} }, requests: [], reply: { rotation: 0, invoices: [invoice] } })
+  const context = vm.createContext({ TextEncoder, module: { exports: {} }, requests: [], reply: { rotation: 0, invoices: [invoice] } })
   vm.runInContext(bundle.outputFiles[0].text, context)
   const output = JSON.parse(JSON.stringify(await context.module.exports.analyzeDocument('synthetic', 'image/png', 'fixture.png')))
   assert.deepEqual(output.invoices[0], invoice)
@@ -34,7 +34,7 @@ for (const basis of ['exclusive', 'inclusive']) test(`actual expense request pre
 })
 
 async function captureReading(uploadedBy, settings, invoices = [{ type: 'expense', paySource: 'custody' }]) {
-  const context = vm.createContext({ module: { exports: {} }, requests: [], reply: { rotation: 0, invoices } })
+  const context = vm.createContext({ TextEncoder, module: { exports: {} }, requests: [], reply: { rotation: 0, invoices } })
   vm.runInContext(bundle.outputFiles[0].text, context)
   const result = await context.module.exports.analyzeDocument('synthetic', 'image/png', 'fixture.png', uploadedBy, [], 'Test company', [], false, settings)
   assert.equal(context.requests.length, 1)
@@ -88,4 +88,19 @@ test('the scoped prompt preserves supplier-payment exceptions and does not overw
     assert.match(prompt, /سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash/)
     assert.deepEqual(result.invoices.map(i => i.paySource), ['credit', 'bank', 'cash'])
   }
+})
+
+test('multiline receipt evidence uses the printed full-quantity total without inventing a missing item', async () => {
+  const invoice = { type: 'expense', totalAmount: 92, vatAmount: 12, amountsBasis: 'inclusive',
+    items: [{ description: 'Synthetic product', quantity: 3, unitPrice: 23, amount: 23,
+      printedLineTotal: 69, printedLineBasis: 'inclusive' }] }
+  const { result, prompt } = await captureReading('purchasing', {}, [invoice])
+  assert.equal(result.invoices[0].items[0].amount, '69.00')
+  assert.equal(result.invoices[0].items[0].readingAmount, 23)
+  assert.equal(result.invoices[0].items.length, 1)
+  assert.equal(result.invoices[0].totalAmount, 92)
+  assert.equal(exactTotals(result.invoices[0]).status, 'mismatch')
+  assert.match(prompt, /مفتاح الأعمدة/)
+  assert.match(prompt, /لا تنشئ صنفًا من فرق الإجمالي/)
+  assert.match(prompt, /لا تقلب اليوم والسنة/)
 })

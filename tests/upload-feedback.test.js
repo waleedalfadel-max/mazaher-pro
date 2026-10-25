@@ -15,7 +15,7 @@ const mocks = {
   AuthContext: 'export const useAuth = () => globalThis.doubles.identity;',
   storage: `export const uploadToStorage = (...args) => globalThis.doubles.uploadToStorage(...args);
     export const getSignedUrl = async () => 'test-path';`,
-  imageCompress: 'export const compressImage = async file => file;',
+  imageCompress: 'export const compressImage = async file => file; export const fitImageBase64 = async (base64,mime) => ({base64,mime});',
   projectSettings: 'export const getProjectSettings = async () => ({ settings: {} }); export const getTransactionTypes = async () => [];',
   // مكوّنات العرض بدائل بسيطة بلا hooks: نختبر منطق الصفحتين ونصوصهما، لا شكل المكوّنات
   'components.jsx': `const h = (...a) => globalThis.doubles.react.createElement(...a);
@@ -110,7 +110,7 @@ function harness(page, { responses = [{ status: 200, body: success }], saveError
     },
   }
   const context = vm.createContext({
-    module: { exports: {} }, doubles, console, setTimeout,
+    module: { exports: {} }, doubles, console, setTimeout, TextEncoder,
     FileReader: class {
       readAsDataURL() { this.onload({ target: { result: 'data:application/pdf;base64,JVBERi0=' } }) }
     },
