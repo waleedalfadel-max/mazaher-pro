@@ -90,3 +90,11 @@ export function suppliersOutstanding(suppliers, transactions, ledger, to) {
     payable[e.supplier_id] = (payable[e.supplier_id] || 0) + cents(e.payable_in) - cents(e.payable_out)
   return [...Object.values(byId), ...Object.values(payable)].reduce((s, c) => s + Math.max(0, c), 0) / 100
 }
+
+// Booked net liquidity: include overdrafts, count the purchasing bank once,
+// and exclude restricted/inactive banks and movements without an account.
+export function netLiquidity(balances, banks, settings) {
+  const rules = settings?.bank_workflow?.accounts || {}
+  return (banks || []).filter(a => a.is_active !== false && rules[a.id]?.operating_available !== false)
+    .reduce((sum, a) => sum + (balances.bankByAccount?.[a.id] || 0), cents(balances.cash)) / 100
+}

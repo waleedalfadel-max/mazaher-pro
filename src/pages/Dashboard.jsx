@@ -1,6 +1,6 @@
 import AccountCards from '../components/AccountCards.jsx'
 import { usesCompactHome } from '../lib/businessPresentation.js'
-import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding } from '../lib/accountStatement.js'
+import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding, netLiquidity } from '../lib/accountStatement.js'
 import { operatingBankFigures, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
 import { APPS, receivableBalances } from '../lib/appStatement.js'
@@ -317,6 +317,7 @@ export default function Dashboard() {
       const bankByAccount = rows.reduce((m,e)=>{ const k=e.bank_account_id||''; m[k]=(m[k]||0)+Math.round(Number(e.bank_in||0)*100)-Math.round(Number(e.bank_out||0)*100);return m },{})
       const countedBalances = cfg ? accountBalances(rows,r.to) : null
       setBalances({
+        liquidity: countedBalances && !banksResult.error ? netLiquidity(countedBalances, banksResult.data, settingsResult?.settings) : null,
         settings: settingsResult?.settings, supplierBalance, liabilities: liabilityFigures(rows,settingsResult?.settings,r.to),
         ...(countedBalances || {}),
         operating: banksResult.error ? null : operatingBankFigures(banksResult.data,bankByAccount,settingsResult?.settings),
@@ -551,6 +552,12 @@ export default function Dashboard() {
         </button>
       </div>
 
+      {compactHome && <div className={`ts-note ${pendingError ? 'ts-note--error' : (pendingDocs || []).length ? 'ts-note--warning' : 'ts-note--info'}`} role={pendingError ? 'alert' : 'status'} data-k="pending-notice">
+        <Hourglass className="ts-icon" aria-hidden="true" />
+        <span>{pendingError || (pendingDocs == null ? 'جارٍ تحميل المستندات…' : pendingDocs.length ? `${pendingDocs.length} مستند بانتظار المراجعة` : 'لا مستندات بانتظار المراجعة')}</span>
+        {pendingError ? <button className="ts-btn" onClick={() => loadPending(pid)}>إعادة المحاولة</button> : pendingDocs?.length > 0 && ['accountant', 'superadmin'].includes(role) ? <Link className="ts-btn" to="/pending">مراجعة المستندات</Link> : null}
+      </div>}
+
       {/* فلتر التاريخ + زر المقارنة */}
       <div className="ts-panel ts-panel-pad rp-dash-period">
         <div className="rp-dash-period-row">
@@ -688,7 +695,7 @@ export default function Dashboard() {
       </div> : <>
       {/* الأرقام الأربعة المعتمدة في التصميم — من getFinancialSummary نفسه بلا تغيير في الحساب */}
       {stats?.uncounted && !loading && <div className="ts-note ts-note--warning" data-k="uncounted"><div className="ts-note-body">{stats.uncounted}</div></div>}
-      {accountDashboard(balances?.settings) && stats ? <AccountCards stats={stats} balances={balances} settings={balances.settings} receivables={receivables} supplierBalance={balances.supplierBalance} liabilities={balances.liabilities} from={range.from} to={range.to}/> : <div className="ts-metrics">
+      {accountDashboard(balances?.settings) && stats ? <AccountCards compactHome={compactHome} stats={stats} balances={balances} settings={balances.settings} receivables={receivables} supplierBalance={balances.supplierBalance} liabilities={balances.liabilities} from={range.from} to={range.to}/> : <div className="ts-metrics">
         {loading || !stats ? [0, 1, 2, 3].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
             <Metric label="المبيعات" icon={Wallet} tag="قبل الضريبة"
@@ -736,7 +743,7 @@ export default function Dashboard() {
             </Link>
           )}
         </div>
-        <Panel className="rp-actions-panel" clip title="يحتاج إجراء" icon={ClipboardList}>
+        {!compactHome && <Panel className="rp-actions-panel" clip title="يحتاج إجراء" icon={ClipboardList}>
           {pendingError ? <div className="ts-note ts-note--error" role="alert">
             <span>{pendingError}</span><button className="ts-btn" onClick={() => loadPending(pid)}>إعادة المحاولة</button>
           </div> : pendingDocs == null ? <div className="rp-todo-clear" role="status">جارٍ تحميل المستندات…</div> : (pendingDocs || []).length > 0 ? (
@@ -755,7 +762,7 @@ export default function Dashboard() {
               )}
             </li></ul>
           ) : <div className="rp-todo-clear">لا شيء يحتاج إجراء الآن.</div>}
-        </Panel>
+        </Panel>}
       </div>
 
       {/* الربح والأرصدة كما في التطبيق الحالي */}
@@ -777,7 +784,7 @@ export default function Dashboard() {
 
       </>}
       {balances?.operating && !accountDashboard(balances?.settings) && <div className="ts-note ts-note--info">{OPERATING_BALANCE_NOTE}</div>}
-      {!loading && stats && (
+      {!compactHome && !loading && stats && (
         <div className="ts-note ts-note--info">
           <Receipt className="ts-icon" aria-hidden="true" />
           <div className="ts-note-body">
@@ -842,7 +849,7 @@ export default function Dashboard() {
       )}
 
       {/* ٢ و ٣. دائريَّان — لا تتأثران بالمقارنة */}
-      {hasCharts && ((!compactHome && channelPieData.length > 0) || expensePieData.length > 0) && (
+      {!compactHome && hasCharts && (channelPieData.length > 0 || expensePieData.length > 0) && (
         <div className={`grid grid-cols-1 ${compactHome ? '' : 'md:grid-cols-2 '}gap-4`}>
           {!compactHome && channelPieData.length > 0 && (
             <ChartCard title="🍰 توزيع قنوات المبيعات">
@@ -878,7 +885,7 @@ export default function Dashboard() {
       )}
 
       {/* ٤. أعمدة أسبوعية */}
-      {hasCharts && combinedWeeklyData.length > 0 && (
+      {!compactHome && hasCharts && combinedWeeklyData.length > 0 && (
         <ChartCard title={`📊 مبيعات ومصروفات الأسابيع${hasCompare ? ` (مقارنة مع ${cmpLabel})` : ''}`}>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={combinedWeeklyData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }} barCategoryGap="30%">

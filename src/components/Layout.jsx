@@ -21,6 +21,7 @@ function navItems(pendingCount) {
     { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant', 'owner', 'superadmin'], module: 'suppliers' },
     { to: '/ledger',          label: 'سجل الدفتر',       icon: BookOpen,     roles: ['accountant', 'superadmin'] },
+    { to: '/operations', label: 'سجل العمليات', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesCompactHome },
     { to: '/journal',         label: 'سجل الحركات',      icon: NotebookText, roles: ['accountant', 'superadmin'] },
     { to: '/archive',         label: 'أرشيف الحركات',    icon: Archive,      roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/loans',           label: 'القروض',           icon: Landmark,     roles: ['accountant', 'superadmin'] },
@@ -80,7 +81,7 @@ export default function Layout({ children }) {
   const adminWorking = operatesBusiness(role, projectId, viewState)
   const visibleItems = navItems(pendingCount).filter(item =>
     item.roles.includes(role) &&
-    !(item.to === '/loans' && usesCompactHome(projectName)) &&
+    !(['/loans', '/journal', '/archive'].includes(item.to) && usesCompactHome(projectName)) &&
     (!item.module || adminWorking || modules.includes(item.module)) &&
     (!item.cond || item.cond(projectName))
   )

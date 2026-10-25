@@ -10,7 +10,7 @@ export function CompactCard({ label, value, hint, to, id }) {
   </Link>
 }
 
-export default function AccountCards({ stats, balances, settings, receivables, supplierBalance, liabilities, from, to }) {
+export default function AccountCards({ stats, balances, settings, receivables, supplierBalance, liabilities, from, to, compactHome = false }) {
   const report = tab => '/reports?' + new URLSearchParams({ tab, from, to, period: 'custom' })
   const appBalance = receivables ? Object.values(receivables.balances).reduce((s, v) => s + Math.round(v * 100), Math.round(receivables.unassigned * 100)) / 100 : 0
   return <div className="account-overview" data-k="account-overview">
@@ -25,6 +25,11 @@ export default function AccountCards({ stats, balances, settings, receivables, s
       <CompactCard id="overview-suppliers" label="ذمم الموردين" value={supplierBalance} hint="علينا للموردين" to="/suppliers" />
       <CompactCard id="overview-liabilities" label="التزامات أخرى" value={liabilities.remaining} hint={liabilities.confirmed ? 'بعد الخصم الآلي المؤكد بالإعداد' : liabilities.baseline ? `حسب الكشف في ${liabilities.baseline.date}` : 'يلزم إجمالي موثّق وتاريخه'} to={'/accounts?'+new URLSearchParams({section:'liabilities',to})} />
     </div>
+    {compactHome && <div className="account-card-row account-card-row-two">
+      <CompactCard id="overview-gross-sales" label="المبيعات شامل الضريبة" value={stats.grossSales} hint="خلال الفترة · تشمل المبيعات الآجلة" to={report('sales')} />
+      <CompactCard id="overview-liquidity" label="السيولة المسجلة" value={balances.liquidity} hint={`البنوك المتاحة + الصندوق · حتى ${to}`} to={accountHref('bank', to)} />
+    </div>}
+    {compactHome && <p className="ts-field-hint">السيولة حسب القيود المسجلة، وليست رصيدًا مباشرًا من البنك. تشمل حساب العهدة مرة واحدة، وتستبعد الحسابات المخصصة للالتزامات والحركات البنكية بلا حساب محدد.</p>}
     {balances.custody !== 0 && <p className="ts-note">توجد عهدة موظفين سابقة بمبلغ <Money value={balances.custody} />، منفصلة عن حساب العهدة البنكي. <Link to={accountHref('custody', to)}>عرض حركاتها</Link></p>}
   </div>
 }

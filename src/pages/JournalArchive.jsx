@@ -24,7 +24,7 @@ function getCashAccount(r) {
 }
 
 // حساب طرفَي القيد (مدين / دائن)
-function getEntryAccounts(r) {
+export function getEntryAccounts(r) {
   const d = (r.cash_in||0)+(r.bank_in||0)+(r.custody_in||0)+(r.receivable_in||0)
   const c = (r.cash_out||0)+(r.bank_out||0)+(r.custody_out||0)+(r.receivable_out||0)
   const amount     = d > 0 ? d : c
@@ -43,7 +43,7 @@ function getEntryAccounts(r) {
 }
 
 // ── تصدير اليوم PDF: صفحات A4 متعددة عند الحاجة (src/lib/dayPdf.js) بالحسابات نفسها، وباسم الملف نفسه ─────────
-async function exportGroupPdf(group, fmt) {
+export async function exportGroupPdf(group, fmt) {
   await exportDayPdf(group, fmt, getEntryAccounts)
 }
 
