@@ -14,7 +14,7 @@ export default function AccountCards({ stats, balances, settings, receivables, s
   const report = tab => '/reports?' + new URLSearchParams({ tab, from, to, period: 'custom' })
   const appBalance = receivables ? Object.values(receivables.balances).reduce((s, v) => s + Math.round(v * 100), Math.round(receivables.unassigned * 100)) / 100 : 0
   const liquidity = compactHome ? liquidityBreakdown(balances, balances.banks, settings) : null
-  return <div className="account-overview" data-k="account-overview">
+  return <div className={`account-overview${compactHome ? ' account-overview-compact' : ''}`} data-k="account-overview">
     <div className="account-card-row">
       <CompactCard id="overview-sales" label="المبيعات" value={stats.totalSales} hint="قبل الضريبة · خلال الفترة" to={report('sales')} />
       <CompactCard id="overview-expenses" label="المصروفات" value={stats.totalExpenses} hint="المشتريات والتشغيل · قبل الضريبة" to={report('purchases')} />
