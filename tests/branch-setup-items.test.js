@@ -148,10 +148,10 @@ test('R1-05 صفوف رصيد البنك حسب الحساب: النشطة وم�
   assert.deepEqual(bankAccountRows([], byAcc, 5), [])   // منشأة بلا حسابات: لا صفوف (كما كانت)
 })
 
-test('R1-05 نموذج التصدير (أساس PDF وExcel) فيه صفوف الشاشة نفسها بأسمائها وقيمها وإشاراتها؛ وبلا حسابات لا كتلة', () => {
+test('R1-05 نموذج التصدير يحتفظ بالأرصدة الموقعة ويميز الحركات غير المسماة', () => {
   const blk = reportModel(balCtx).blocks.find(b => b.id === 'balance.byAccount')
-  assert.deepEqual(blk.rows.map(r => [r.label, r.value]), bankAccountRows(accs, byAcc, 1000.25).map(r => [r.label, r.value]))
-  assert.equal(reportModel({ ...balCtx, bankAccounts: [] }).blocks.some(b => b.id === 'balance.byAccount'), false)
+  assert.deepEqual(blk.rows.map(r => r.value), [1250.5,-300.25,50,1000.25])
+  assert.equal(reportModel({ ...balCtx, bankAccounts: [] }).blocks.find(b => b.id === 'balance.byAccount').rows.at(-1).value,1000.25)
 })
 
 test('R1-05 ملف Excel فيه أسماء الحسابين وقيمهما بالإشارة (رقم سالب للحساب الثاني) وسطر بلا حساب', () => {
@@ -163,7 +163,7 @@ test('R1-05 ملف Excel فيه أسماء الحسابين وقيمهما با�
     files[name] = (m === 0 ? d : inflateRawSync(d)).toString('utf8'); o = st + size
   }
   const sheet = Object.entries(files).find(([k]) => /worksheets\/sheet1\.xml$/.test(k))[1]
-  for (const t of ['رصيد البنك حسب الحساب', 'الحساب الأول — بنك أ', 'الحساب الثاني — بنك ب', 'حركات بنك بلا حساب محدد']) assert.ok(sheet.includes(t), t)
+  for (const t of ['البنوك المتاحة حسب الحساب', 'الحساب الأول — بنك أ', 'الحساب الثاني — بنك ب', 'حركات بنكية سابقة بلا حساب محدد']) assert.ok(sheet.includes(t), t)
   assert.ok(/<v>1250\.5<\/v>/.test(sheet) && /<v>-300\.25<\/v>/.test(sheet) && /<v>50<\/v>/.test(sheet), 'القيم أرقام بإشارتها')
 })
 

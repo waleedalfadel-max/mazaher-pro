@@ -1,7 +1,6 @@
-import { operatingBankRows, paymentWorkflow, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { accountDashboard, accountBalances, balanceCards, accountHref } from '../lib/accountStatement.js'
+import { accountDashboard, accountBalances, accountHref } from '../lib/accountStatement.js'
 import { useSearchParams } from 'react-router-dom'
 import { CalendarCheck, CalendarDays, ChevronDown, ChevronLeft, FileSpreadsheet, FileText, HandCoins, Info, Landmark, ListTree, Percent, Receipt,
   RefreshCw, ShoppingBasket, Smartphone, Store, TrendingUp, Trophy, Wallet } from 'lucide-react'
@@ -17,7 +16,6 @@ import { SCOPE, TITLES, exportFileName, modelToXlsx, reportModel } from '../lib/
 import { downloadBlob } from '../lib/reportPdf.js'
 import { Button, DateInput, EmptyState, Field, Metric, Money, Panel, Segment, Select, Tabs } from '../ui/components.jsx'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
-import { bankAccountRows } from '../lib/branchSetup'
 import AppStatementPanel from '../components/AppStatementPanel.jsx'
 import { APPS, buildAppStatement, receivableBalances, statementComparison, balanceNote, comparisonText, preSystemNote, unassignedEntries } from '../lib/appStatement.js'
 
@@ -167,7 +165,7 @@ function ReportsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false)   // على الجوال: الفلاتر مطوية خلف «تغيير»، والاختيار ظاهر في العنوان
   const loadSeq  = useRef(0)
   const [projectSettings, setProjectSettings] = useState(null)
-  const balances = accountDashboard(projectSettings) && balanceData ? balanceData.counted : balanceData
+  const balances = balanceData
   const data = reportData && accountDashboard(projectSettings) ? { ...reportData, ...reportData.countedMoves } : reportData
   // كشف حساب التطبيقات (20261023120000): قيود الذمم كلها حتى نهاية الفترة (للرصيد الافتتاحي) وسجلات رصيد كشف التطبيق
   const [appKey, setAppKey] = useState(() => APPS.some(a => a.key === params.get('app')) ? params.get('app') : 'hunger')
@@ -378,19 +376,7 @@ function ReportsPage() {
     const countedMoves = (allTime || []).filter(r=>isCounted(r) && r.date>=fromDate).reduce((m,r) => ({ totalIn:m.totalIn+Number(r.cash_in||0)+Number(r.bank_in||0)+Number(r.custody_in||0),totalOut:m.totalOut+Number(r.cash_out||0)+Number(r.bank_out||0)+Number(r.custody_out||0) }),{totalIn:0,totalOut:0})
     setData({ countedMoves, totalSales, totalIn, totalOut, outputVat: vat.outputVat, netSales, inputVat: vat.inputVat, netVat: vat.netBeforePayment, vat })
 
-    const at = (allTime || []).filter(r=>branchFilter==='all'||r.branch===branchFilter)
-    setBalances({
-      counted: accountBalances(allTime || []),
-      cash:    at.reduce((s,r) => s+(r.cash_in||0)-(r.cash_out||0), 0),
-      bank:    at.reduce((s,r) => s+(r.bank_in||0)-(r.bank_out||0), 0),
-      custody: at.reduce((s,r) => s+(r.custody_in||0)-(r.custody_out||0), 0),
-      // بالهللة لكل حساب؛ قيود البنك بلا حساب (قبل إعداد الحسابات) في سطر مستقل
-      bankByAccount: at.reduce((m, r) => {
-        const v = Math.round((Number(r.bank_in) || 0) * 100) - Math.round((Number(r.bank_out) || 0) * 100)
-        if (v) { const k = r.bank_account_id || ''; m[k] = (m[k] || 0) + v }
-        return m
-      }, {}),
-    })
+    setBalances({ ...accountBalances(allTime || []), entries: allTime || [] })
     const prevSalesTotal = (prevEntriesData || [])
       .filter(e => isCounted(e) && isSales(e.type))
       .reduce((s, e) => s + salesAmountNet(e), 0)
@@ -402,7 +388,7 @@ function ReportsPage() {
 
   // تصدير القسم المختار بالفترة والفرع نفسيهما، من أرقام الشاشة نفسها (src/lib/reportExport.js)
   function currentModel() {
-    const ctx = { tab: activeTab, org: projectName, from, to, branch: activeTab==='balance' && accountDashboard(projectSettings) ? 'all' : selectedBranch, branches, generatedAt: new Date(), engineSummary,
+    const ctx = { tab: activeTab, org: projectName, from, to, branch: activeTab==='balance' ? 'all' : selectedBranch, branches, generatedAt: new Date(), engineSummary,
       prevEntriesCount: prevEntries.length, data, balances, bankAccounts, projectSettings: banksReady ? projectSettings : null }
     if (activeTab === 'sales') ctx.s = salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries })
     if (activeTab === 'purchases') ctx.x = expenseFigures({ entries, docItems, categoriesById, engineSummary, data })
@@ -909,48 +895,16 @@ function ReportsPage() {
               unassigned={appUnassigned} branchFiltered={selectedBranch !== 'all'}
               canRecord={role === 'accountant' || role === 'superadmin'} onChanged={loadApps} loading={appLoading && !appData} error={appError} onRetry={loadApps} to={to} />
           )}
-          {activeTab === 'balance' && !settingsReady && <p>جارٍ تحميل إعدادات الحسابات…</p>}
-          {activeTab === 'balance' && settingsReady && balances && (
-            <>
-              <div className="ts-metrics" data-k="balance.cards">
-                {[
-                  { label: 'رصيد الصندوق', k: 'balance.cash',    value: balances.cash },
-                  { label: 'رصيد البنك', k: 'balance.bank', value: balanceCards(balances,projectSettings)[0].value },
-                  { label: accountDashboard(projectSettings) ? 'رصيد حساب العهدة' : 'رصيد العهدة', k: 'balance.custody', value: balanceCards(balances,projectSettings)[2].value },
-                ].map(c => (
-                  <Metric key={c.k} label={c.label} icon={Wallet} tone={c.value < 0 ? 'bad' : undefined}
-                    foot={c.value < 0 ? <span className="rpt-down">رصيد سالب</span> : <>حتى {day(to)}</>}>
-                    <span data-k={c.k}><Money value={c.value} /></span>
-                  </Metric>
-                ))}
-              </div>
+          {activeTab === 'balance' && (!settingsReady || !banksReady) && <p>لم يكتمل تحميل إعدادات الحسابات؛ لا تُعرض أرصدة جزئية. أعد تحميل الصفحة.</p>}
+          {activeTab === 'balance' && settingsReady && banksReady && balances && <>
+            {currentModel().blocks.map(block => block.kind === 'metrics'
+              ? <div className="ts-metrics" data-k={block.id} key={block.id}>{block.items.map(c => <Metric key={c.key} label={c.label} icon={Wallet} tone={c.value < 0 ? 'bad' : undefined} foot={c.foot}><Link to={accountHref(c.account,to,from)}><span data-k={c.key}><Money value={c.value}/></span></Link></Metric>)}</div>
+              : block.kind === 'calc' ? <Panel key={block.id} title={block.title} icon={Landmark}><div className="ts-panel-body"><CalcRows k={block.id} rows={block.rows}/></div></Panel>
+              : <p className="ts-note" key={block.id} data-k={block.id}>{block.text}</p>)}
+            <div className="ts-panel-body"><Link to={accountHref('liquidity',to,from)}>فتح كشف الكاش الفعلي وتصفية كل حساب ←</Link></div>
+            <Scope tab="balance"/>
+          </>}
 
-              <div className="ts-panel-body"><Link to={accountHref('bank',to,from)}>فتح كشف الحسابات وتصفية كل حساب ←</Link>{accountDashboard(projectSettings) && <p>أرصدة الحسابات للمنشأة كاملة مهما كان الفرع المختار. بطاقة البنك للبنوك الأخرى دون حساب العهدة، والتفصيل أدناه يشمل جميع البنوك. حساب العهدة يُحتسب مرة واحدة في الإجمالي.</p>}</div>
-              {bankAccounts.length > 0 && (
-                <Panel title="رصيد البنك حسب الحساب" icon={Landmark} subtitle={`حتى ${day(to)}${selectedBranch !== 'all' && !accountDashboard(projectSettings) ? ` · ${selectedBranch}` : ''}`}>
-                  <div className="ts-panel-body">
-                    <CalcRows k="balance.byAccount" rows={bankAccountRows(bankAccounts, balances.bankByAccount, balances.bank)} />
-                  </div>
-                </Panel>
-              )}
-
-              {paymentWorkflow(projectSettings) && <Panel title="الأرصدة البنكية المتاحة للتشغيل"><div className="ts-panel-body">
-                {banksReady ? <><CalcRows k="balance.operating" rows={operatingBankRows(bankAccounts, balances.bankByAccount, projectSettings)}/><p>{OPERATING_BALANCE_NOTE}</p></> : <p>لم يكتمل تحميل الحسابات؛ لا يمكن حساب المتاح للتشغيل.</p>}
-              </div></Panel>}
-              <Panel title="ملخص الفترة" icon={Landmark} subtitle={`${rangeText}`}>
-                <div className="ts-panel-body">
-                  <CalcRows k="balance.calc" rows={[
-                    { label: 'إجمالي المدين (الدخل)', value: data.totalIn, strong: true },
-                    { label: 'إجمالي الدائن (الخروج)', value: data.totalOut, strong: true },
-                    { label: 'صافي الفترة', value: data.totalIn - data.totalOut, strong: true, line: true },
-                    { label: 'إجمالي الأرصدة النقدية', value: balances.cash + balances.bank + balances.custody, strong: true, line: true },
-                  ]} />
-                </div>
-              </Panel>
-
-              <Scope tab="balance" />
-            </>
-          )}
         </div>
       )}
 

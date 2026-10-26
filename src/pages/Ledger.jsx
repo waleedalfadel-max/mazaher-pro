@@ -1,3 +1,5 @@
+import { runningAccountBalances, accountDashboard, accountHref } from '../lib/accountStatement.js'
+import { Link } from 'react-router-dom'
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
 import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
 import { usesCompactHome } from '../lib/businessPresentation.js'
@@ -8,7 +10,7 @@ import { BookOpen, CalendarDays, Info, Landmark, Pencil, Plus, RefreshCw, Trash2
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
-import { getTransactionTypes } from '../lib/projectSettings'
+import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
 import { fetchEveryRow } from '../lib/fetchAll'
 import { deleteSupplierPayment, isSupplierPaymentType, SUPPLIER_PAYMENT_EDIT_MSG, SUPPLIER_PAYMENT_ONLY_MSG } from '../lib/supplierPayments'
 import { Button, DateInput, Dialog, EmptyState, Field, IconButton, Input, Panel, Segment, Select, Status } from '../ui/components.jsx'
@@ -175,6 +177,7 @@ export default function Ledger() {
   const [tried, setTried]             = useState(false)  // بعد أول محاولة حفظ تظهر أخطاء الحقول وتتحدث مع الكتابة
   const loadSeq = useRef(0)
   const [bankAccounts, setBankAccounts] = useState([])
+  const [balanceSettings, setBalanceSettings] = useState(null)
   // R1-04: ربط حساب لقيد بنك بلا حساب (ومنه سداد المورد) بدالة الخادم ledger_link_bank_account: الحساب وحده، والمبلغ كما هو
   const [linking, setLinking] = useState(null)       // { row, account }
   const needsLink = r => bankAccounts.length > 0 && !r.bank_account_id && r.status !== 'cancelled' && (Number(r.bank_in) || Number(r.bank_out))
@@ -195,8 +198,7 @@ export default function Ledger() {
     if (!projectId) return
     getTransactionTypes(projectId).then(setTypes)
     load(projectId)
-    supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id', projectId).order('sort_order')
-      .then(({ data }) => setBankAccounts(data || []))
+
   }, [projectId])
 
   // كل القيود بلا حد للعدد، بترتيب ثابت (التاريخ ثم وقت الإنشاء ثم المعرّف) فلا يتكرر صف ولا يسقط بين الصفحات. فشل أي صفحة خطأ
@@ -204,31 +206,23 @@ export default function Ledger() {
   async function load(pid) {
     const seq = ++loadSeq.current
     setLoading(true); setLoadError('')
-    const { data, error } = await fetchEveryRow(() => supabase.from('ledger_entries')
+    const [{ data, error }, banks, setup] = await Promise.all([fetchEveryRow(() => supabase.from('ledger_entries')
       .select('*')
       .eq('project_id', pid)
       .order('date', { ascending: true })
       .order('created_at', { ascending: true })
-      .order('id', { ascending: true }))
+      .order('id', { ascending: true })),
+      fetchEveryRow(()=>supabase.from('bank_accounts').select('id,name,bank,branches,is_active,sort_order').eq('project_id',pid).order('id')),
+      getProjectSettings(pid),
+    ])
     if (seq !== loadSeq.current) return
-    if (error) { setAllRows([]); setLoadError(reason(error)) } else setAllRows(data)
+    if (error || banks.error || !setup?.settings) { setAllRows([]); setLoadError('تعذّر تحميل الحركات وإعدادات الحسابات كاملة؛ أعد المحاولة.') } else { setAllRows(data); setBankAccounts(banks.data); setBalanceSettings(setup.settings) }
     setLoading(false)
   }
 
-  // Compute running balances for all non-cancelled entries (ascending order)
-  const enriched = useMemo(() => {
-    let cash = 0, bank = 0, custody = 0, receivable = 0
-    return allRows.map(r => {
-      if (r.status !== 'cancelled') {
-        cash       += (r.cash_in       || 0) - (r.cash_out       || 0)
-        bank       += (r.bank_in       || 0) - (r.bank_out       || 0)
-        custody    += (r.custody_in    || 0) - (r.custody_out    || 0)
-        receivable += (r.receivable_in || 0) - (r.receivable_out || 0)
-        return { ...r, _cashBal: cash, _bankBal: bank, _custodyBal: custody, _receivableBal: receivable }
-      }
-      return { ...r, _cashBal: null, _bankBal: null, _custodyBal: null, _receivableBal: null }
-    })
-  }, [allRows])
+  // Movements remain untouched; running balances use the same signed, approved account scope as the home and reports.
+  const enriched = useMemo(() => runningAccountBalances(allRows,bankAccounts,balanceSettings),[allRows,bankAccounts,balanceSettings])
+  const balanceLabel = a => a.key === 'bank' ? 'البنوك المتاحة' : a.key === 'custody' && accountDashboard(balanceSettings) ? 'حساب العهدة' : compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label
 
   // Apply date + type filters, then reverse for newest-first display
   const filteredRows = useMemo(() => {
@@ -405,6 +399,7 @@ export default function Ledger() {
         </div>
       ) : (
         <>
+          <p className="ts-note">الحركة تعرض القيود كما سُجلت، والأرصدة الجارية تحتسب المعتمد والتلقائي فقط. البنك المتاح لا يشمل حساب العهدة البنكي ولا الحسابات المقيّدة؛ السالب يُخصم. <Link to={accountHref('liquidity',filter.to)}>عرض كشف الكاش الفعلي</Link></p>
           {/* الكمبيوتر: جدول بأعمدة مجمّعة حسب الحساب، ثم الأرصدة الجارية بعد كل حركة */}
           <Panel className="ldg-table-panel" clip>
             <div className="ldg-scroll">
@@ -413,12 +408,12 @@ export default function Ledger() {
                   <tr className="ldg-group">
                     <th rowSpan={2}>التاريخ</th><th rowSpan={2}>النوع</th><th rowSpan={2}>الوصف</th>
                     <th colSpan={4} className="ldg-acc">الحركة <small>الخرج <span className="ts-num">−</span> والدخل <span className="ts-num">+</span></small></th>
-                    <th colSpan={4} className="ldg-acc ldg-bal-head">الرصيد بعد الحركة</th>
+                    <th colSpan={4} className="ldg-acc ldg-bal-head">الرصيد المتاح بعد الحركة</th>
                     <th rowSpan={2}>الحالة</th><th rowSpan={2}><span className="ts-sr">إجراءات</span></th>
                   </tr>
                   <tr>
                     {ACCOUNTS.map(a => <th key={a.key} className="ts-end">{compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label}</th>)}
-                    {ACCOUNTS.map(a => <th key={a.key} className="ts-end ldg-bal-head">{compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label}</th>)}
+                    {ACCOUNTS.map(a => <th key={a.key} className="ts-end ldg-bal-head">{balanceLabel(a)}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -460,7 +455,7 @@ export default function Ledger() {
                     {moves.map(k => <div key={k} className={k.endsWith('_out') ? 'is-out' : 'is-in'}><dt>{AMOUNT_LABEL[k]}</dt><dd className="ts-num">{fmt(r[k])}</dd></div>)}
                   </dl>
                   <dl className="ldg-card-bals">
-                    {ACCOUNTS.map(a => <div key={a.key} className={r[a.bal] != null && r[a.bal] < 0 ? 'is-neg' : ''}><dt>{compactInvoices && a.key === 'receivable' ? 'الذمم المدينة' : a.label}</dt><dd className="ts-num">{fmtBal(r[a.bal])}</dd></div>)}
+                    {ACCOUNTS.map(a => <div key={a.key} className={r[a.bal] != null && r[a.bal] < 0 ? 'is-neg' : ''}><dt>{balanceLabel(a)}</dt><dd className="ts-num">{fmtBal(r[a.bal])}</dd></div>)}
                   </dl>
                   {actions(r)}
                 </article>

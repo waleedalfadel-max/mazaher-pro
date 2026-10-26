@@ -50,10 +50,10 @@ export default function BankWorkflowSettings({ projectId, settings, banks, onSav
       {banks.map(a => <div key={a.id} className="py-3 border-b">
         <strong>{bankAccountLabel(a)}</strong>
         <Field label={`مهمة ${a.name}`}><Input maxLength={500} value={value.accounts?.[a.id]?.purpose || ''} onChange={e => setRule(a.id, { purpose: e.target.value })} /></Field>
-        <label className="flex gap-2"><input type="checkbox" checked={value.accounts?.[a.id]?.operating_available !== false} onChange={e => setRule(a.id, { operating_available: e.target.checked })} />أرصدة هذا الحساب الموجبة ضمن المتاح للتشغيل</label>
+        <label className="flex gap-2"><input type="checkbox" checked={value.accounts?.[a.id]?.operating_available !== false} onChange={e => setRule(a.id, { operating_available: e.target.checked })} />رصيد هذا الحساب بإشارته ضمن المتاح للتشغيل</label>
         <Field label={`وجهة التحويل المعتادة من ${a.name}`} hint="اقتراح عند تسجيل تحويل حقيقي؛ لا ينشئ تحويلات تلقائية."><Select value={value.accounts?.[a.id]?.transfer_to || ''} placeholder="بلا وجهة مقترحة" options={options.filter(o => o.value !== a.id)} onChange={e => setRule(a.id, { transfer_to: e.target.value || null })} /></Field>
       </div>)}
-      <Note>استبعاد حساب من المتاح للتشغيل لا يغيّر رصيده ولا يمنع إدارة تحسيب من اختياره. الرصيد السالب يُثبت من كشف البنك، والتحصيل أو سداد الالتزامات يُسجّل بمستنده الفعلي.</Note>
+      <Note>استبعاد حساب من المتاح للتشغيل لا يغيّر رصيده ولا يمنع إدارة تحسيب من اختياره. الأرصدة من القيود المعتمدة، والالتزام من الرصيد المرجعي المحدد ومصدره؛ العرض لا يُنشئ تسديدًا أو مصروفًا.</Note>
       {error && <Note tone="error">{error}</Note>}
       <Button onClick={save} disabled={busy}>{busy ? 'جارٍ الحفظ…' : 'حفظ مهام الحسابات'}</Button>
     </fieldset></div>

@@ -1,7 +1,6 @@
 import AccountCards from '../components/AccountCards.jsx'
 import { usesCompactHome } from '../lib/businessPresentation.js'
-import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding, netLiquidity } from '../lib/accountStatement.js'
-import { operatingBankFigures, OPERATING_BALANCE_NOTE } from '../lib/paymentWorkflow.js'
+import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding, liquidityBreakdown } from '../lib/accountStatement.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
 import { APPS, receivableBalances } from '../lib/appStatement.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
@@ -314,16 +313,12 @@ export default function Dashboard() {
         supplierBalance = suppliersOutstanding(suppliers.data,txns.data,result.data,r.to)
       }
       const rows = result.data
-      const bankByAccount = rows.reduce((m,e)=>{ const k=e.bank_account_id||''; m[k]=(m[k]||0)+Math.round(Number(e.bank_in||0)*100)-Math.round(Number(e.bank_out||0)*100);return m },{})
-      const countedBalances = cfg ? accountBalances(rows,r.to) : null
-      setBalances({
-        liquidity: countedBalances && !banksResult.error ? netLiquidity(countedBalances, banksResult.data, settingsResult?.settings) : null,
-        banks: banksResult.data || [], settings: settingsResult?.settings, supplierBalance, liabilities: liabilityFigures(rows,settingsResult?.settings,r.to),
-        ...(countedBalances || {}),
-        operating: banksResult.error ? null : operatingBankFigures(banksResult.data,bankByAccount,settingsResult?.settings),
-        cash: cfg ? countedBalances.cash : rows.reduce((s,r) => s + (r.cash_in ||0) - (r.cash_out ||0), 0),
-        bank: cfg ? countedBalances.bank : rows.reduce((s,r) => s + (r.bank_in ||0) - (r.bank_out ||0), 0),
-        custody: cfg ? countedBalances.custody : rows.reduce((s,r) => s + (r.custody_in||0) - (r.custody_out||0), 0),
+      if (banksResult.error) throw new Error('banks')
+      const countedBalances = accountBalances(rows,r.to)
+      const available = liquidityBreakdown(countedBalances,banksResult.data,settingsResult?.settings)
+      setBalances({ ...countedBalances, available, liquidity:available.total,
+        banks:banksResult.data || [], settings:settingsResult?.settings, supplierBalance,
+        liabilities:liabilityFigures(rows,settingsResult?.settings,r.to),
       })
       // ذمم التطبيقات بإشارتها (src/lib/appStatement.js، القاعدة نفسها في «كشف حساب التطبيقات»): الرصيد السالب يظهر ولا يُخفى
       const rcv = receivableBalances(rows)
@@ -774,8 +769,8 @@ export default function Dashboard() {
         )}
         {!balances ? [0, 1, 2].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
-            <KpiCard label="البنك" value={balances.bank} negative={balances.bank < 0} />
-            {balances.operating && <KpiCard label="أرصدة بنكية موجبة متاحة للتشغيل" value={balances.operating.available} foot="حسب الدفتر؛ يستبعد الحسابات المخصصة للالتزامات"/>}
+            <KpiCard label="البنوك المتاحة" value={balances.available.bank} negative={balances.available.bank < 0} />
+
             <KpiCard label="الصندوق" value={balances.cash} negative={balances.cash < 0} />
             <KpiCard label="العهدة" value={balances.custody} negative={balances.custody < 0} />
           </>
@@ -783,7 +778,6 @@ export default function Dashboard() {
       </div>
 
       </>}
-      {balances?.operating && !accountDashboard(balances?.settings) && <div className="ts-note ts-note--info">{OPERATING_BALANCE_NOTE}</div>}
       {!compactHome && !loading && stats && (
         <div className="ts-note ts-note--info">
           <Receipt className="ts-icon" aria-hidden="true" />

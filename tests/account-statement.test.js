@@ -5,12 +5,13 @@ import { exactTotals, buildInvoicePayload } from '../src/lib/approvalV2.js'
 import { confirmExpenseRounding, normalizeExpenseReading } from '../src/lib/expenseReading.js'
 import { suggestInvoicePayment, BANK_TRANSFER_TYPE } from '../src/lib/paymentWorkflow.js'
 import { reportModel } from '../src/lib/reportExport.js'
+const banks=[{id:'m',name:'Main'},{id:'p',name:'Custody'},{id:'l',name:'Other'}]
 const cfg={account_dashboard:{enabled:true,custody_account_id:'p',liability_account_id:'l',liabilities:{balance:1000,date:'2026-10-01',reference:'Synthetic closing statement',automatic_sweep:false}},bank_workflow:{version:1,uploaders:{purchasing:{source:'bank',account_id:'p'}}}}
 const row=(id,date,account,into,out,status='approved',extra={})=>({id,date,bank_account_id:account,bank_in:into,bank_out:out,status,...extra})
 const entries=[row('1','2026-09-30','m',1000,0),row('2','2026-10-02','m',0,300),row('3','2026-10-02','p',300,0),row('4','2026-10-03','p',0,40),row('5','2026-10-04','p',0,900,'pending'),row('6','2026-10-04','p',0,900,'cancelled'),row('7','2026-11-01','p',0,200),row('8','2026-10-03','l',50,0)]
 test('account balances: transfer + expense, no double-counting custody bank, non-counted rows excluded',()=>{
  const b=accountBalances(entries,'2026-10-31');assert.equal(b.bank,1010);assert.equal(b.bankByAccount.p,26000)
- const cards=balanceCards(b,cfg);assert.deepEqual(cards.map(c=>c.value),[750,0,260]);assert.equal(cards.reduce((s,c)=>s+c.value,0),1010)
+ const cards=balanceCards(b,cfg,banks);assert.deepEqual(cards.map(c=>c.value),[750,0,260]);assert.equal(cards.reduce((s,c)=>s+c.value,0),1010)
  assert.equal(balanceCards({...b,custody:90},{})[2].value,90)
 })
 test('statement opening, search and each running balance use the complete account history',()=>{
@@ -55,7 +56,7 @@ test('rounding: explicit reason and selected line, max two halalas, exact server
  assert.equal(confirmExpenseRounding({...inv,totalAmount:31},1,'reason'),null)
 })
 test('balance report export keeps custody split and total bank unchanged',()=>{
- const b=accountBalances(entries,'2026-10-31');const model=reportModel({tab:'balance',org:'Synthetic',from:'2026-10-01',to:'2026-10-31',balances:b,data:{totalIn:0,totalOut:0},projectSettings:cfg,bankAccounts:[{id:'p',name:'حساب العهدة'}]})
+ const b=accountBalances(entries,'2026-10-31');const model=reportModel({tab:'balance',org:'Synthetic',from:'2026-10-01',to:'2026-10-31',balances:b,data:{totalIn:0,totalOut:0},projectSettings:cfg,bankAccounts:banks})
  const cards=model.blocks.find(b=>b.id==='balance.cards').items;assert.equal(cards.find(c=>c.key==='balance.custody').value,260);assert.equal(cards.find(c=>c.key==='balance.bank').value,750)
  assert.equal(model.blocks.find(b=>b.id==='balance.calc').rows.at(-1).value,1010)
 })
