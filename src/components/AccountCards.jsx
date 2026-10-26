@@ -24,14 +24,16 @@ export default function AccountCards({ stats, balances, settings, receivables, s
     <div className="account-card-row">
       <CompactCard id="overview-apps" label="ذمم التطبيقات" value={appBalance} hint="لنا على التطبيقات · صافي دفتري" to={report('apps')} />
       <CompactCard id="overview-suppliers" label="ذمم الموردين" value={supplierBalance} hint="علينا للموردين" to="/suppliers" />
-      <CompactCard id="overview-liabilities" label="التزامات أخرى" value={liabilities.remaining} hint={liabilities.confirmed ? 'بعد الخصم الآلي المؤكد بالإعداد' : liabilities.baseline ? `حسب الكشف في ${liabilities.baseline.date}` : 'يلزم إجمالي موثّق وتاريخه'} to={'/accounts?'+new URLSearchParams({section:'liabilities',to})} />
+      <CompactCard id="overview-liabilities" label="التزامات أخرى" value={compactHome ? liabilities.signedRemaining : liabilities.remaining} hint={liabilities.confirmed ? 'السالب التزام متبقٍ؛ إيداعات حساب السداد تقلّله' : liabilities.baseline ? `حسب الرصيد المرجعي في ${liabilities.baseline.date}` : 'يلزم تحديد الرصيد وتاريخه ومصدره'} to={'/accounts?'+new URLSearchParams({section:'liabilities',to})} />
     </div>
     {compactHome && <div className="account-card-row account-card-row-two">
       <CompactCard id="overview-gross-sales" label="المبيعات شامل الضريبة" value={stats.grossSales} hint="خلال الفترة · تشمل المبيعات الآجلة" to={report('sales')} />
       <CompactCard id="overview-liquidity" label="الكاش الفعلي" value={liquidity.total} hint={`البنوك المتاحة + الصندوق + حساب العهدة · حتى ${to}`} to={accountHref('liquidity', to)} />
     </div>}
     {compactHome && <p className="ts-field-hint">الكاش الفعلي هو مجموع بطاقات البنوك المتاحة والصندوق وحساب العهدة بإشاراتها؛ الرصيد السالب يُخصم. الأرصدة حسب القيود المسجلة حتى {to}.</p>}
-    {liquidity?.excluded.map(e => <p className="ts-field-hint" key={e.account} data-k="liquidity-excluded">خارج الكاش المتاح: <Link to={accountHref(e.account, to)}>{e.label}</Link> — <Money value={e.value} /> ({e.reason}).</p>)}
+    {liquidity?.excluded.map(e => liabilities.baseline && e.account === `bank:${liabilities.accountId}`
+      ? <p className="ts-field-hint" key={e.account} data-k="liquidity-excluded"><Link to={accountHref(e.account, to)}>{e.label}</Link> مخصص لسداد الالتزامات؛ المتبقي ظاهر في بطاقة «التزامات أخرى»، وخارج الكاش المتاح.</p>
+      : <p className="ts-field-hint" key={e.account} data-k="liquidity-excluded">خارج الكاش المتاح: <Link to={accountHref(e.account, to)}>{e.label}</Link> — <Money value={e.value} /> ({e.reason}).</p>)}
     {balances.custody !== 0 && <p className="ts-note">توجد عهدة موظفين سابقة بمبلغ <Money value={balances.custody} />، منفصلة عن حساب العهدة البنكي. <Link to={accountHref('custody', to)}>عرض حركاتها</Link></p>}
   </div>
 }

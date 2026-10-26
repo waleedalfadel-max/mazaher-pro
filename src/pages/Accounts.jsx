@@ -85,10 +85,10 @@ function AccountPage() {
     </>}
     </div></Panel>
     {data && accountDashboard(data.settings) && <Panel title="الالتزامات الأخرى وحساب السداد"><div className="ts-panel-body">
-      <p>الرصيد حسب الكشف الموثّق: {liabilities.baseline ? <><Money value={liabilities.baseline.balance}/> في {liabilities.baseline.date} — المصدر: {liabilities.baseline.reference}</> : 'غير محدد؛ أدخل الإجمالي وتاريخه ومصدره من إعدادات إدارة تحسيب.'}</p>
-      <p>الإيداعات الموجّهة لحساب السداد {liabilities.baseline ? 'بعد تاريخ الكشف' : 'من بداية التسجيل'}: <Money value={liabilities.directed}/></p>
-      <p>المتبقي: {liabilities.remaining == null ? 'غير محدد' : <Money value={liabilities.remaining}/>}</p>
-      <Note>{liabilities.confirmed ? 'الحساب وفق إقرار إدارة تحسيب بأن كل إيداع يُخصم آليًا من الالتزام. المتبقي = رصيد الكشف بعد نهاية يومه − الإيداعات المعتمدة بعده. راجع كشف الجهة لأي رسوم أو التزامات جديدة. لا يُنشئ هذا العرض قيود سداد أو مصروفات.' : 'الإيداع وحده ليس إثبات سداد. لا يُخصم من الالتزام دون تأكيد آلية الخصم الآلي أو تحديث الرصيد من كشف جديد.'}</Note>
+      <p>الرصيد المرجعي للالتزام: {liabilities.baseline ? <><Money value={liabilities.baseline.balance}/> — يشمل الحركات حتى {liabilities.baseline.date} — المصدر: {liabilities.baseline.reference}</> : 'غير محدد؛ أدخل الإجمالي وتاريخه ومصدره من إعدادات إدارة تحسيب.'}</p>
+      <p>الإيداعات الموجّهة لحساب السداد {liabilities.baseline ? 'بعد نقطة البداية' : 'من بداية التسجيل'}: <Money value={liabilities.directed}/></p>
+      <p data-k="liability-remaining">رصيد الالتزام المتبقي: {liabilities.signedRemaining == null ? 'غير محدد' : <Money value={liabilities.signedRemaining}/>}</p>
+      <Note>{liabilities.confirmed ? 'السالب هو الالتزام المتبقي. وفق آلية الخصم الآلي المؤكدة، كل إيداع معتمد بعد نقطة البداية يقلّل الالتزام حتى الصفر. الرصيد المرجعي يشمل الحركات السابقة فلا تُخصم مرة أخرى. لا يُنشئ هذا العرض قيود سداد أو مصروفات.' : 'الإيداع وحده ليس إثبات سداد. لا يُخصم من الالتزام دون تأكيد آلية الخصم الآلي أو تحديث الرصيد المرجعي.'}</Note>
       {liabilities.excess > 0 && <p>إيداعات تتجاوز رصيد الالتزام: <Money value={liabilities.excess}/>؛ تحتاج مراجعة.</p>}
       {liabilities.accountId && <Link to={'/accounts?account=bank:'+liabilities.accountId}>عرض حركات حساب السداد</Link>}
     </div></Panel>}

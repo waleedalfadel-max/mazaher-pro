@@ -64,6 +64,13 @@ try {
   await page.locator('input').last().fill('no matching description');assert.equal(await number(loc('account-closing')),1170);assert.equal(await loc('account-movements').locator('tbody tr').count(),0);await page.locator('input').last().fill('');check('search does not change statement balance')
   const xlsxPromise=page.waitForEvent('download');await page.getByRole('button',{name:'Excel',exact:true}).click();const xlsx=await xlsxPromise;const xlsxPath=await xlsx.path();const xml=(await readFile(xlsxPath)).toString('utf8');assert.ok(xml.includes('1170'));assert.ok(xml.includes('نطاق الحسابات'));assert.ok(xml.includes('الصندوق'));check('Excel includes the same closing balance and scope')
   const pdfPromise=page.waitForEvent('download');await page.getByRole('button',{name:'PDF',exact:true}).click();const pdf=await pdfPromise;const bytes=await readFile(await pdf.path());assert.equal(bytes.subarray(0,4).toString(),'%PDF');assert.ok(bytes.length>1000);check('PDF export completes for the cash statement')
+  settings.account_dashboard.liability_account_id='restricted'
+  settings.account_dashboard.liabilities={balance:500,date:'2026-10-25',reference:'Synthetic owner statement',automatic_sweep:true}
+  await home();assert.equal(await number(loc('overview-liabilities')),-500);assert.ok(await loc('overview-liabilities').evaluate(e=>e.classList.contains('account-card-negative')));check('current liability displays negative without deducting previous deposits again')
+  assert.match(await loc('liquidity-excluded').innerText(),/بطاقة «التزامات أخرى»/);assert.equal((await loc('liquidity-excluded').innerText()).includes('400.00'),false);check('restricted historical movements are not presented as spendable balance')
+  entries.push(row('7','restricted',100,{date:'2026-10-26',type:'مبيعات شبكة'}),row('8','restricted',900,{date:'2026-10-26',status:'pending'}))
+  await home();assert.equal(await number(loc('overview-liabilities')),-400);assert.equal(await number(loc('overview-liquidity')),1170);check('new approved network deposit reduces debt; pending deposit and available cash stay unaffected')
+  await loc('overview-liabilities').click();await loc('liability-remaining').waitFor();assert.equal(await number(loc('liability-remaining')),-400);check('liability details match the negative dashboard balance')
   assert.deepEqual(errors,[]);check('no browser errors')
   console.log(JSON.stringify({checks,output,status:'PASS'}))
 } finally {await browser.close()}

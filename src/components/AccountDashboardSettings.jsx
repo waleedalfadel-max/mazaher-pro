@@ -33,13 +33,13 @@ export default function AccountDashboardSettings({ settings, banks, onSaved }) {
     <div className="ts-form-grid">
       <Field label="حساب المشتريات الحالي" hint="يُعاد تسميته حساب العهدة، ويُقترح للمشتريات بنفس المعرّف والحركات؛ لا يُنشأ حساب جديد."><Select value={value.custody_account_id||''} placeholder="اختر الحساب" options={options} onChange={e=>set('custody_account_id',e.target.value)}/></Field>
       <Field label="حساب سداد الالتزامات"><Select value={value.liability_account_id||''} placeholder="اختر الحساب" options={options} onChange={e=>set('liability_account_id',e.target.value)}/></Field>
-      <Field label="الالتزام المتبقي في الكشف (اختياري)" hint="اتركه فارغًا لعرض غير محدد؛ لا تفترضه صفرًا."><Input numeric value={balance} onChange={e=>setBalance(e.target.value)}/></Field>
-      <Field label="رصيد الالتزام بعد نهاية يوم"><Input type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field>
+      <Field label="الالتزام المتبقي (اختياري)" hint="أدخل مقدار الالتزام موجبًا؛ يظهر سالبًا في اللوحة المختصرة. اتركه فارغًا لعرض غير محدد."><Input numeric value={balance} onChange={e=>setBalance(e.target.value)}/></Field>
+      <Field label="آخر يوم يشمله الرصيد المرجعي"><Input type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field>
       <Field label="مصدر المبلغ وتفصيل الالتزامات"><Input value={reference} maxLength={500} onChange={e=>setReference(e.target.value)}/></Field>
       <Field label="سبب التعديل"><Input value={reason} maxLength={500} onChange={e=>setReason(e.target.value)}/></Field>
     </div>
-    <label><input type="checkbox" checked={sweep} onChange={e=>setSweep(e.target.checked)}/> تحققت من كشف الجهة: كل إيداع في حساب السداد يُخصم آليًا من الالتزام، بلا رسوم أو استثناءات غير مسجلة</label>
-    <Note>بلا هذا التأكيد تُعرض الإيداعات كمبالغ موجّهة للسداد فقط. مع التأكيد يُحسب المتبقي بعد تاريخ الكشف؛ لا تُسجّل مصروفات أو قيود سداد جديدة، ولا يتغير إجمالي المبيعات. يلزم تحديث الكشف عند إضافة التزامات أو رسوم جديدة.</Note>
+    <label><input type="checkbox" checked={sweep} onChange={e=>setSweep(e.target.checked)}/> أؤكد أن كل إيداع في حساب السداد يُخصم آليًا من الالتزام، بلا رسوم أو استثناءات غير مسجلة</label>
+    <Note>بلا هذا التأكيد تُعرض الإيداعات كمبالغ موجّهة للسداد فقط. مع التأكيد يُحسب المتبقي بعد نقطة البداية؛ لا تُسجّل مصروفات أو قيود سداد جديدة، ولا يتغير إجمالي المبيعات. يلزم تحديث الرصيد المرجعي عند إضافة التزامات أو رسوم جديدة.</Note>
     {error&&<Note tone="error">{error}</Note>}
     <Button disabled={busy||!reason.trim()} onClick={save}>حفظ إعداد اللوحة والحساب</Button>
   </fieldset></div></Panel>
