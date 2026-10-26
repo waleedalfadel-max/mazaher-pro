@@ -84,7 +84,8 @@ export function liabilityFigures(entries, settings, to) {
   const confirmed = baselineKnown && rule.automatic_sweep === true
   const remaining = confirmed ? Math.max(0, cents(rule.balance) - credits) / 100 : baselineKnown ? rule.balance : null
   return { accountId: id, baseline: baselineKnown ? rule : null, directed: credits / 100, confirmed,
-    remaining, excess: confirmed ? Math.max(0, credits - cents(rule.balance)) / 100 : 0 }
+    remaining, signedRemaining: remaining == null ? null : remaining === 0 ? 0 : -remaining,
+    excess: confirmed ? Math.max(0, credits - cents(rule.balance)) / 100 : 0 }
 }
 
 export function suppliersOutstanding(suppliers, transactions, ledger, to) {

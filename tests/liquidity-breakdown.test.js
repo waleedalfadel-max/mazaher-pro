@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { accountBalances, accountOptions, balanceCards, buildAccountStatement, liquidityBreakdown, netLiquidity } from '../src/lib/accountStatement.js'
+import { accountBalances, accountOptions, balanceCards, buildAccountStatement, liabilityFigures, liquidityBreakdown, netLiquidity } from '../src/lib/accountStatement.js'
 
 const settings = { account_dashboard: { enabled: true, custody_account_id: 'held' }, bank_workflow: { accounts: { restricted: { operating_available: false, purpose: 'مخصص للالتزامات' } } } }
 const banks = [{ id: 'main', name: 'Main' }, { id: 'second', name: 'Second' }, { id: 'held', name: 'حساب العهدة' }, { id: 'restricted', name: 'Restricted' }, { id: 'closed', name: 'Closed', is_active: false }]
@@ -61,4 +61,17 @@ test('existing booked balances, all-bank statements and non-feature account choi
   assert.equal(statement('bank').closing,1680)
   assert.equal(accountOptions(banks,{}).some(o=>o.value==='liquidity'),false)
   assert.deepEqual(balanceCards({...b,custody:12},{}).map(c=>c.value),[1680,50,12])
+})
+
+test('a current liability checkpoint excludes old deposits; new approved network receipts reduce its negative balance', () => {
+  const cfg={...settings,account_dashboard:{...settings.account_dashboard,liability_account_id:'restricted',liabilities:{balance:500,date:'2026-10-25',reference:'Synthetic owner statement',automatic_sweep:true}}}
+  const before=liabilityFigures(entries,cfg,to)
+  assert.deepEqual([before.remaining,before.signedRemaining,before.directed],[500,-500,0])
+  const added=[...entries,row('10','restricted',100,{date:'2026-10-26',type:'مبيعات شبكة'}),row('11','restricted',900,{date:'2026-10-26',status:'pending'}),row('12','main',800,{date:'2026-10-26'})]
+  const after=liabilityFigures(added,cfg,to)
+  assert.deepEqual([after.remaining,after.signedRemaining,after.directed],[400,-400,100])
+  assert.equal(liabilityFigures(added,cfg,'2026-10-24').signedRemaining,null)
+  const paid=liabilityFigures([...added,row('13','restricted',450,{date:'2026-10-27'})],cfg,to)
+  assert.deepEqual([paid.remaining,paid.signedRemaining,paid.excess],[0,0,50])
+  assert.equal(Object.is(paid.signedRemaining,-0),false)
 })
