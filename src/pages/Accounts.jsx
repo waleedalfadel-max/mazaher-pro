@@ -41,7 +41,9 @@ function AccountPage() {
   useEffect(() => { if (projectId) load(); return () => { seq.current++ } }, [projectId, sessionEpoch])
   const options = accountOptions(data?.banks, data?.settings)
   const selected = options.find(o => o.value === key)
-  const statement = useMemo(() => data && valid && selected ? buildAccountStatement(data.entries,key,{from,to,settings:data.settings,search}) : null,[data,key,from,to,valid,!!selected,search])
+  const statement = useMemo(() => data && valid && selected ? buildAccountStatement(data.entries,key,{from,to,settings:data.settings,search,banks:data.banks}) : null,[data,key,from,to,valid,!!selected,search])
+  const liquidityScope = ['available-bank','available-custody','liquidity'].includes(key)
+    ? 'يشمل الحسابات المتاحة حاليًا فقط بإشاراتها، ويستبعد الحسابات الموقوفة والمخصصة للالتزامات والحركات البنكية بلا حساب معروف. الكاش الفعلي يجمع البنوك المتاحة والصندوق وحساب العهدة مرة واحدة؛ الرصيد السالب يُخصم.' : ''
   useEffect(() => {setPage(1)},[key,from,to])
   const liabilities = data ? liabilityFigures(data.entries,data.settings,to) : null
   async function exportAs(kind) {
@@ -50,7 +52,7 @@ function AccountPage() {
     try {
       const generated = new Date()
       const model = { tab:'account', title: `كشف ${selected.label}`, org:projectName, from:from || statement.rows[0]?.date || to, to, branch:'all', branchText:'المنشأة كاملة', rangeText:`${from || 'من بداية التسجيل'} — ${to}`, generatedAt:generated.toISOString(), generatedText:generated.toLocaleString('ar-SA'),
-        intro:'الحركات المعتمدة والتلقائية فقط. الرصيد دفتري وليس اتصالًا مباشرًا بالبنك.', scope:[], blocks:[
+        intro:'الحركات المعتمدة والتلقائية فقط. الرصيد دفتري وليس اتصالًا مباشرًا بالبنك.', scope:liquidityScope ? [['نطاق الحسابات',liquidityScope]] : [], blocks:[
           {kind:'calc',id:'account.summary',title:'ملخص الحساب',rows:[{label:'رصيد بداية الفترة من القيود السابقة',value:statement.opening},{label:'داخل',value:statement.incoming},{label:'خارج',value:statement.outgoing},{label:'رصيد نهاية الفترة',value:statement.closing}]},
           ...(search ? [{kind:'note',id:'account.search',text:`الصفوف المعروضة بعد البحث: ${search}. الأرصدة والملخص يشملان كامل الفترة.`}] : []),
           {kind:'table',id:'account.movements',title:selected.label,columns:[{label:'التاريخ',type:'date'},{label:'القيد'},{label:'البيان'},{label:'داخل',type:'money'},{label:'خارج',type:'money'},{label:'الرصيد',type:'money'},{label:'المنفذ'}],rows:statement.rows.map(r=>[r.date,r.journal_number,r.description||r.type,r.incoming,r.outgoing,r.balance,r.created_by_name||'غير مسجل'])},
@@ -71,7 +73,7 @@ function AccountPage() {
       <Field label="بحث بالبيان أو القيد أو المنفذ"><Input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} /></Field>
     </div>{!valid && <Note tone="error">اختر فترة صحيحة.</Note>}{!selected && data && <Note tone="error">الحساب غير موجود في هذه المنشأة؛ اختر حسابًا من القائمة.</Note>}
     {error && <Note tone="error">{error}</Note>}{loading && <p>جارٍ تحميل الكشف…</p>}
-    {statement && <><div className="account-card-row"><div>رصيد بداية الفترة<Money value={statement.opening}/></div><div>إجمالي الداخل<Money value={statement.incoming}/></div><div>إجمالي الخارج<Money value={statement.outgoing}/></div></div>
+    {statement && <>{liquidityScope && <Note>{liquidityScope}</Note>}<div className="account-card-row"><div>رصيد بداية الفترة<Money value={statement.opening}/></div><div>إجمالي الداخل<Money value={statement.incoming}/></div><div>إجمالي الخارج<Money value={statement.outgoing}/></div></div>
       <p data-k="account-closing"><strong>رصيد نهاية الفترة: <Money value={statement.closing}/></strong></p>
       <Note>رصيد البداية من القيود السابقة المسجلة فقط. لا يفترض وجود رصيد افتتاحي بنكي غير مسجل. التحويل الداخلي يظهر خروجًا من المصدر ودخولًا للوجهة.</Note>
       <Button disabled={exporting} onClick={()=>exportAs('xlsx')}>Excel</Button> <Button disabled={exporting} onClick={()=>exportAs('pdf')}>PDF</Button>

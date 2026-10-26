@@ -318,7 +318,7 @@ export default function Dashboard() {
       const countedBalances = cfg ? accountBalances(rows,r.to) : null
       setBalances({
         liquidity: countedBalances && !banksResult.error ? netLiquidity(countedBalances, banksResult.data, settingsResult?.settings) : null,
-        settings: settingsResult?.settings, supplierBalance, liabilities: liabilityFigures(rows,settingsResult?.settings,r.to),
+        banks: banksResult.data || [], settings: settingsResult?.settings, supplierBalance, liabilities: liabilityFigures(rows,settingsResult?.settings,r.to),
         ...(countedBalances || {}),
         operating: banksResult.error ? null : operatingBankFigures(banksResult.data,bankByAccount,settingsResult?.settings),
         cash: cfg ? countedBalances.cash : rows.reduce((s,r) => s + (r.cash_in ||0) - (r.cash_out ||0), 0),

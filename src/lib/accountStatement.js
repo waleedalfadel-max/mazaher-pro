@@ -9,14 +9,22 @@ const order = (a, b) => String(a.date).localeCompare(String(b.date)) || String(a
 export function accountOptions(banks, settings) {
   const cfg = accountDashboard(settings)
   return [{ value: 'cash', label: 'الصندوق' }, { value: 'bank', label: cfg ? 'جميع الحسابات البنكية (يشمل حساب العهدة)' : 'جميع الحسابات البنكية' },
-    ...(cfg ? [{ value: 'other-bank', label: 'البنوك الأخرى — دون حساب العهدة' }] : []),
+    ...(cfg ? [{ value: 'available-bank', label: 'البنوك المتاحة — دون حساب العهدة' }, { value: 'available-custody', label: 'حساب العهدة المتاح' }, { value: 'liquidity', label: 'الكاش الفعلي — البنوك المتاحة والصندوق وحساب العهدة' }, { value: 'other-bank', label: 'البنوك الأخرى — دون حساب العهدة' }] : []),
     ...(banks || []).map(a => ({ value: `bank:${a.id}`, label: bankAccountLabel(a) + (a.is_active === false ? ' (موقوف)' : '') })),
     { value: 'bank:unassigned', label: 'حركات بنك بلا حساب محدد' },
     { value: 'custody', label: cfg ? 'عهدة موظفين سابقة (إن وجدت)' : 'العهدة' }]
 }
 
-export function accountMovement(row, key, settings) {
+const availableBank = (bank, settings) => bank && bank.is_active !== false && settings?.bank_workflow?.accounts?.[bank.id]?.operating_available !== false
+
+export function accountMovement(row, key, settings, banks = []) {
   const cfg = accountDashboard(settings)
+  if (['available-bank', 'available-custody', 'liquidity'].includes(key)) {
+    const bank = banks.find(a => a.id === row.bank_account_id)
+    const held = cfg && bank?.id === cfg.custody_account_id
+    const included = availableBank(bank, settings) && (key === 'liquidity' || (key === 'available-custody' ? held : !held))
+    return { incoming: (included ? cents(row.bank_in) : 0) + (key === 'liquidity' ? cents(row.cash_in) : 0), outgoing: (included ? cents(row.bank_out) : 0) + (key === 'liquidity' ? cents(row.cash_out) : 0) }
+  }
   if (key === 'cash' || key === 'custody') return { incoming: cents(row[`${key}_in`]), outgoing: cents(row[`${key}_out`]) }
   const match = key === 'bank' || (key === 'other-bank' && cfg && row.bank_account_id !== cfg.custody_account_id)
     || (key === 'bank:unassigned' && !row.bank_account_id) || key === `bank:${row.bank_account_id}`
@@ -25,12 +33,12 @@ export function accountMovement(row, key, settings) {
 
 // Account statements and cards share integer-halalah arithmetic and approved/auto status rules.
 // Search filters display rows only, never recomputes the running balance from a partial ledger.
-export function buildAccountStatement(entries, key, { from = '', to = '', settings = {}, search = '' } = {}) {
+export function buildAccountStatement(entries, key, { from = '', to = '', settings = {}, search = '', banks = [] } = {}) {
   let opening = 0, balance = 0, incoming = 0, outgoing = 0
   const rows = []
   for (const e of (entries || []).filter(isCounted).slice().sort(order)) {
     if (to && e.date > to) continue
-    const m = accountMovement(e, key, settings)
+    const m = accountMovement(e, key, settings, banks)
     if (!m.incoming && !m.outgoing) continue
     balance += m.incoming - m.outgoing
     if (from && e.date < from) { opening = balance; continue }
@@ -94,7 +102,29 @@ export function suppliersOutstanding(suppliers, transactions, ledger, to) {
 // Booked net liquidity: include overdrafts, count the purchasing bank once,
 // and exclude restricted/inactive banks and movements without an account.
 export function netLiquidity(balances, banks, settings) {
-  const rules = settings?.bank_workflow?.accounts || {}
-  return (banks || []).filter(a => a.is_active !== false && rules[a.id]?.operating_available !== false)
-    .reduce((sum, a) => sum + (balances.bankByAccount?.[a.id] || 0), cents(balances.cash)) / 100
+  return liquidityBreakdown(balances, banks, settings).total
+}
+
+// The home cards and their statements use the same account scope and signed balances.
+// Restricted balances remain visible separately; they are not spendable cash.
+export function liquidityBreakdown(balances, banks = [], settings = {}) {
+  const cfg = accountDashboard(settings), known = new Set()
+  let bank = 0, custody = 0
+  const cash = cents(balances.cash), excluded = []
+  for (const a of banks) {
+    known.add(a.id)
+    const value = balances.bankByAccount?.[a.id] || 0
+    if (availableBank(a, settings)) {
+      if (a.id === cfg?.custody_account_id) custody += value
+      else bank += value
+    } else if (value) excluded.push({ account: `bank:${a.id}`, label: a.name, value: value / 100, reason: a.is_active === false ? 'حساب موقوف' : settings?.bank_workflow?.accounts?.[a.id]?.purpose || 'غير متاح للتشغيل' })
+  }
+  const unknown = Object.entries(balances.bankByAccount || {}).filter(([id]) => !known.has(id)).reduce((s, [, v]) => s + v, 0)
+  if (unknown) excluded.push({ account: 'bank', label: 'حركات بلا حساب بنكي معروف', value: unknown / 100, reason: 'يلزم تحديد الحساب' })
+  return { bank: bank / 100, cash: cash / 100, custody: custody / 100, total: (bank + cash + custody) / 100, excluded,
+    cards: [
+      { label: 'رصيد البنوك المتاحة', value: bank / 100, account: 'available-bank', hint: 'دون حساب العهدة والمبالغ المقيّدة' },
+      { label: 'رصيد الصندوق', value: cash / 100, account: 'cash', hint: 'النقد المسجل في الدفتر' },
+      { label: 'رصيد حساب العهدة', value: custody / 100, account: 'available-custody', hint: 'ضمن الكاش الفعلي؛ السالب يُخصم' },
+    ] }
 }
