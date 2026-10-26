@@ -112,6 +112,7 @@ test('internal transfer is excluded from revenue and expense classification',()=
 test('export uses exactly the operating figures shown on the balance screen',()=>{
  const by={main:10000,purchase:2500,restricted:-50000}
  const model=reportModel({tab:'balance',from:'2026-10-01',to:'2026-10-21',branch:'all',branches:[],generatedAt:new Date('2026-10-21T00:00:00Z'),balances:{cash:0,bank:-375,custody:0,bankByAccount:by},data:{totalIn:0,totalOut:0},bankAccounts:accounts,projectSettings:settings})
- assert.deepEqual(model.blocks.find(b=>b.id==='balance.operating').rows,operatingBankRows(accounts,by,settings))
- assert.equal(model.blocks.find(b=>b.id==='balance.cards').items.find(i=>i.key==='balance.bank').value,-375)
+ assert.equal(model.blocks.find(b=>b.id==='balance.liquidity').rows.at(-1).value,125)
+ assert.equal(model.blocks.find(b=>b.id==='balance.excluded').rows[0].value,-500)
+ assert.equal(model.blocks.find(b=>b.id==='balance.cards').items.find(i=>i.key==='balance.bank').value,125)
 })

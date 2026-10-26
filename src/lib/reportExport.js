@@ -1,11 +1,9 @@
-import { balanceCards, accountDashboard } from './accountStatement.js'
-import { operatingBankRows, OPERATING_BALANCE_NOTE } from './paymentWorkflow.js'
+import { balanceOverview } from './accountStatement.js'
 // تصدير صفحة التقارير — وحدة خالصة (تُختبر في Node).
 // reportModel يبني وصف القسم المختار (المؤشرات والجداول وصفوف الحساب والملاحظات) من أرقام الشاشة نفسها
 // (salesFigures وexpenseFigures في reportFigures.js، وvatFigures في vatTreatment.js، والأرصدة)، فيُبنى منه ملف PDF (reportPdf.js)
 // وملف Excel (modelToXlsx هنا) دون أي حساب آخر. قالب PDF القديم (صافي الربح والاسم القديم) لا يُستعمل.
 import { uncountedText } from './financeRules.js'
-import { bankAccountRows } from './branchSetup.js'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
 
 export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقرير المصروفات', vat: 'تقرير ضريبة القيمة المضافة', balance: 'تقرير الأرصدة', apps: 'كشف حساب التطبيقات' }
@@ -32,8 +30,8 @@ export const SCOPE = {
     [null, 'للمتابعة الداخلية وليس إقرارًا ضريبيًا؛ لا يُحسب «متبقٍ للسداد» لأن الدفعات قد تخص فترات سابقة.'],
   ],
   balance: [
-    ['الأرصدة', 'تراكمية من أول قيد حتى نهاية الفترة، وتشمل التحويلات الداخلية.'],
-    ['ملخص الفترة', 'الداخل والخارج من الصندوق والبنك والعهدة خلال الفترة وحدها.'],
+    ['الأرصدة', 'للمنشأة كاملة، من القيود المعتمدة والتلقائية حتى نهاية الفترة؛ السالب يُخصم والحسابات المقيّدة خارج السيولة.'],
+    ['ملخص الفترة', 'حركة السيولة المتاحة خلال الفترة. التحويل بين حسابين متاحين يظهر في الداخل والخارج ولا يغيّر الصافي.'],
   ],
   apps: [
     ['الرصيد الدفتري', 'من قيود تحسيب وحدها: مبيعات التطبيق (مدين) ناقص تحصيلاته وتسوياته (دائن)، تراكميًا حتى نهاية الفترة. لا رصيد افتتاحي تقديري.'],
@@ -217,25 +215,26 @@ export function reportModel(ctx) {
   }
 
   if (tab === 'balance') {
-    const b = ctx.balances, d = ctx.data, cards = balanceCards(b,ctx.projectSettings)
-    const toText = formatDate(to, { year: true })
-    blocks.push({ kind: 'metrics', id: 'balance.cards', items: [
-      { key: 'balance.cash', label: 'رصيد الصندوق', type: 'money', value: b.cash, foot: b.cash < 0 ? 'رصيد سالب' : `حتى ${toText}` },
-      { key: 'balance.bank', label: 'رصيد البنك', type: 'money', value: cards[0].value, foot: (cards[0].value < 0 ? 'رصيد سالب · ' : '') + cards[0].hint + ` · حتى ${toText}` },
-      { key: 'balance.custody', label: accountDashboard(ctx.projectSettings) ? 'رصيد حساب العهدة' : 'رصيد العهدة', type: 'money', value: cards[2].value, foot: (cards[2].value < 0 ? 'رصيد سالب · ' : '') + cards[2].hint + ` · حتى ${toText}` },
-    ] })
-    if (accountDashboard(ctx.projectSettings)) blocks.push({kind:'note',id:'balance.companyScope',text:'أرصدة الحسابات للمنشأة كاملة. بطاقة البنك لا تشمل حساب العهدة؛ التفصيل يشمل جميع البنوك. حساب العهدة يُحتسب مرة واحدة في الإجمالي.'})
-    // رصيد كل حساب بنكي (منشأة بحسابات فقط) بالصفوف نفسها التي تعرضها الشاشة (bankAccountRows)
-    const byAccount = bankAccountRows(ctx.bankAccounts, b.bankByAccount, b.bank)
-    if (byAccount.length) blocks.push({ kind: 'calc', id: 'balance.byAccount', title: 'رصيد البنك حسب الحساب', rows: byAccount.map(({ label, value, strong }) => ({ label, value, strong })) })
-    const operating = operatingBankRows(ctx.bankAccounts, b.bankByAccount, ctx.projectSettings)
-    if (operating.length) blocks.push({ kind: 'calc', id: 'balance.operating', title: 'الأرصدة البنكية المتاحة للتشغيل', rows: operating }, { kind: 'note', id: 'balance.operatingNote', text: OPERATING_BALANCE_NOTE })
-    blocks.push({ kind: 'calc', id: 'balance.calc', title: 'ملخص الفترة', rows: [
-      { label: 'إجمالي المدين (الدخل)', value: d.totalIn, strong: true },
-      { label: 'إجمالي الدائن (الخروج)', value: d.totalOut, strong: true },
-      { label: 'صافي الفترة', value: d.totalIn - d.totalOut, strong: true },
-      { label: 'إجمالي الأرصدة النقدية', value: b.cash + b.bank + b.custody, strong: true },
-    ] })
+    const view = balanceOverview(ctx.balances, ctx.bankAccounts, ctx.projectSettings, ctx.balances.entries, to, from)
+    const keys = ['balance.bank','balance.cash','balance.custody']
+    blocks.push({ kind:'metrics', id:'balance.cards', items:view.cards.map((c,i)=>({ key:keys[i], label:c.label, value:c.value, type:'money', account:c.account, foot:c.hint + ` · حتى ${formatDate(to,{year:true})}` })) })
+    blocks.push({kind:'note',id:'balance.companyScope',text:view.scope})
+    blocks.push({kind:'calc',id:'balance.byAccount',title:'البنوك المتاحة حسب الحساب',rows:view.bankRows})
+    blocks.push({kind:'calc',id:'balance.liquidity',title:'الكاش الفعلي',rows:[
+      ...view.cards.map(c=>({label:c.label,value:c.value})),
+      {label:'الكاش الفعلي',value:view.total,strong:true},
+    ]})
+    if (view.liability.accountId) blocks.push(view.liability.signedRemaining == null
+      ? {kind:'note',id:'balance.liabilities',text:'التزامات أخرى: غير محدد؛ حساب السداد مستبعد من السيولة.'}
+      : {kind:'calc',id:'balance.liabilities',title:'التزامات أخرى — خارج السيولة',rows:[{label:'الالتزام المتبقي',value:view.liability.signedRemaining,strong:true}]},
+      {kind:'note',id:'balance.liabilityScope',text:'الرصيد المرجعي يشمل الحركات حتى تاريخه. الإيداعات المعتمدة اللاحقة تقلّل الالتزام عند تأكيد الخصم الآلي؛ لا تُخصم الحركات القديمة مرة أخرى.'})
+    if (view.excludedRows.length) blocks.push({kind:'calc',id:'balance.excluded',title:'حركات دفترية خارج السيولة',rows:view.excludedRows})
+    blocks.push({kind:'calc',id:'balance.calc',title:'حركة السيولة خلال الفترة',rows:[
+      {label:'الداخل للحسابات المتاحة والصندوق والعهدة',value:view.period.incoming},
+      {label:'الخارج من الحسابات المتاحة والصندوق والعهدة',value:view.period.outgoing},
+      {label:'صافي حركة الفترة',value:Math.round((view.period.incoming-view.period.outgoing)*100)/100,strong:true},
+      {label:'الكاش الفعلي حتى نهاية الفترة',value:view.total,strong:true},
+    ]})
   }
 
   // القيود غير المحتسبة (معلق/مرفوض/بلا حالة) — القاعدة نفسها في الشاشة والتحليل (financeRules)

@@ -54,7 +54,7 @@ export function chosenBankAccount(accounts, branch, selectedId) {
 
 export const bankAccountLabel = a => (a ? [a.name, a.bank && !String(a.name || '').includes(a.bank) ? a.bank : null].filter(Boolean).join(' — ') : '')
 
-/** صفوف «رصيد البنك حسب الحساب» — مصدر واحد للشاشة وللتصدير (PDF وExcel)، فلا يختلفان (R1-05).
+/** صفوف الحركات البنكية الدفترية القديمة (R1-05). الأرصدة المتاحة للشاشة والتصدير تستخدم balanceOverview في accountStatement.
  *  byAccount بالهللة: { معرّف الحساب: صافٍ، '': صافي حركات البنك بلا حساب }. منشأة بلا حسابات ⇒ لا صفوف. */
 export function bankAccountRows(accounts, byAccount, bankTotal) {
   if (!accounts?.length) return []

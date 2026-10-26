@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Money } from '../ui/components.jsx'
-import { accountHref, balanceCards, liquidityBreakdown } from '../lib/accountStatement.js'
+import { accountHref, liquidityBreakdown } from '../lib/accountStatement.js'
 
 export function CompactCard({ label, value, hint, to, id }) {
   return <Link className={`account-card${value < 0 ? ' account-card-negative' : ''}`} to={to} data-k={id}>
@@ -13,18 +13,18 @@ export function CompactCard({ label, value, hint, to, id }) {
 export default function AccountCards({ stats, balances, settings, receivables, supplierBalance, liabilities, from, to, compactHome = false }) {
   const report = tab => '/reports?' + new URLSearchParams({ tab, from, to, period: 'custom' })
   const appBalance = receivables ? Object.values(receivables.balances).reduce((s, v) => s + Math.round(v * 100), Math.round(receivables.unassigned * 100)) / 100 : 0
-  const liquidity = compactHome ? liquidityBreakdown(balances, balances.banks, settings) : null
+  const liquidity = liquidityBreakdown(balances, balances.banks, settings)
   return <div className={`account-overview${compactHome ? ' account-overview-compact' : ''}`} data-k="account-overview">
     <div className="account-card-row">
       <CompactCard id="overview-sales" label="المبيعات" value={stats.totalSales} hint="قبل الضريبة · خلال الفترة" to={report('sales')} />
       <CompactCard id="overview-expenses" label="المصروفات" value={stats.totalExpenses} hint="المشتريات والتشغيل · قبل الضريبة" to={report('purchases')} />
       <CompactCard id="overview-profit" label="صافي الربح" value={stats.profit} hint="المبيعات − المصروفات · بلا تسوية مخزون" to={'/analysis?'+new URLSearchParams({period:'custom',from,to})} />
     </div>
-    <div className="account-card-row">{(liquidity?.cards || balanceCards(balances, settings)).map(c => <CompactCard key={c.account} id={`overview-${c.account}`} {...c} hint={`${c.hint} · حتى ${to}`} to={accountHref(c.account, to)} />)}</div>
+    <div className="account-card-row">{liquidity.cards.map(c => <CompactCard key={c.account} id={`overview-${c.account}`} {...c} hint={`${c.hint} · حتى ${to}`} to={accountHref(c.account, to)} />)}</div>
     <div className="account-card-row">
       <CompactCard id="overview-apps" label="ذمم التطبيقات" value={appBalance} hint="لنا على التطبيقات · صافي دفتري" to={report('apps')} />
       <CompactCard id="overview-suppliers" label="ذمم الموردين" value={supplierBalance} hint="علينا للموردين" to="/suppliers" />
-      <CompactCard id="overview-liabilities" label="التزامات أخرى" value={compactHome ? liabilities.signedRemaining : liabilities.remaining} hint={liabilities.confirmed ? 'السالب التزام متبقٍ؛ إيداعات حساب السداد تقلّله' : liabilities.baseline ? `حسب الرصيد المرجعي في ${liabilities.baseline.date}` : 'يلزم تحديد الرصيد وتاريخه ومصدره'} to={'/accounts?'+new URLSearchParams({section:'liabilities',to})} />
+      <CompactCard id="overview-liabilities" label="التزامات أخرى" value={liabilities.signedRemaining} hint={liabilities.confirmed ? 'السالب التزام متبقٍ؛ إيداعات حساب السداد تقلّله' : liabilities.baseline ? `حسب الرصيد المرجعي في ${liabilities.baseline.date}` : 'يلزم تحديد الرصيد وتاريخه ومصدره'} to={'/accounts?'+new URLSearchParams({section:'liabilities',to})} />
     </div>
     {compactHome && <div className="account-card-row account-card-row-two">
       <CompactCard id="overview-gross-sales" label="المبيعات شامل الضريبة" value={stats.grossSales} hint="خلال الفترة · تشمل المبيعات الآجلة" to={report('sales')} />

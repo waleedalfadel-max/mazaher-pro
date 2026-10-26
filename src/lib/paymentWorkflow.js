@@ -106,7 +106,7 @@ export function operatingBankFigures(accounts, byAccount = {}, settings) {
     const cents = Number(byAccount[a.id] || 0)
     const blocked = a.is_active === false || policy.accounts?.[a.id]?.operating_available === false
     if (blocked) restricted += cents
-    else if (cents > 0) available += cents
+    else available += cents
     if (cents < 0) overdrafts += cents
     return { id: a.id, label: bankAccountLabel(a), value: cents / 100, blocked, purpose: policy.accounts?.[a.id]?.purpose || '' }
   })
@@ -118,11 +118,11 @@ export function operatingBankRows(accounts, byAccount, settings) {
   const f = operatingBankFigures(accounts, byAccount, settings)
   if (!f) return []
   return [
-    { label: 'أرصدة بنكية موجبة متاحة للتشغيل حسب الدفتر', value: f.available, strong: true },
+    { label: 'صافي الأرصدة البنكية المتاحة (يشمل العهدة البنكية)', value: f.available, strong: true },
     { label: 'صافي حسابات غير متاحة للتشغيل', value: f.restricted },
     { label: 'الأرصدة البنكية السالبة (ضمن الأرصدة أعلاه)', value: f.overdrafts },
     ...(f.unassigned ? [{ label: 'رصيد بلا حساب محدد — خارج المتاح للتشغيل', value: f.unassigned }] : []),
   ]
 }
 
-export const OPERATING_BALANCE_NOTE = 'المتاح للتشغيل هو مجموع الأرصدة الدفترية الموجبة للحسابات المتاحة فقط. يستبعد الحسابات المخصصة للالتزامات والموقوفة والحركات بلا حساب. لا يثبت الرصيد القابل للسحب في البنك؛ يُراجع مع كشف الحساب. لا تُنشأ تسديدات تلقائية من هذه الأرقام.'
+export const OPERATING_BALANCE_NOTE = 'المتاح للتشغيل هو مجموع الأرصدة الدفترية للحسابات المتاحة بإشاراتها؛ الأرصدة السالبة تُخصم. يستبعد الحسابات المخصصة للالتزامات والموقوفة والحركات بلا حساب. لا يثبت الرصيد القابل للسحب في البنك؛ يُراجع مع كشف الحساب. لا تُنشأ تسديدات تلقائية من هذه الأرقام.'

@@ -382,7 +382,7 @@ export default function BankReconciliation() {
             <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 space-y-2">
               <div className="font-bold text-red-800 flex items-center gap-2">⚠️ فرق في مبيعات الشبكة</div>
               <div className="grid grid-cols-3 gap-2 text-sm">
-                <div><span className="text-slate-400 text-xs block">إجمالي البنك</span><span className="font-semibold">{fmt(result.network.bankTotal)}</span></div>
+                <div><span className="text-slate-400 text-xs block">تحصيلات الشبكة في كشف البنك</span><span className="font-semibold">{fmt(result.network.bankTotal)}</span></div>
                 <div><span className="text-slate-400 text-xs block">إجمالي تحسيب</span><span className="font-semibold">{fmt(result.network.systemTotal)}</span></div>
                 <div><span className="text-slate-400 text-xs block">الفرق</span><span className="font-bold text-red-700">{fmt(result.network.diff)}</span></div>
               </div>

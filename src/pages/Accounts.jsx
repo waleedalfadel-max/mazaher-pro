@@ -3,7 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { fetchEveryRow } from '../lib/fetchAll.js'
-import { accountDashboard, accountOptions, buildAccountStatement, liabilityFigures } from '../lib/accountStatement.js'
+import { accountDashboard, accountOptions, buildAccountStatement, liabilityFigures, accountHref, BALANCE_SCOPE } from '../lib/accountStatement.js'
 import { Button, Field, Input, Money, Note, Panel, Select } from '../ui/components.jsx'
 import { formatDate } from '../ui/format.js'
 import { exportFileName, modelToXlsx } from '../lib/reportExport.js'
@@ -21,7 +21,7 @@ function AccountPage() {
   const [data, setData] = useState(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [exporting, setExporting] = useState(false)
   const [search, setSearch] = useState(''), [page, setPage] = useState(1)
   const seq = useRef(0)
-  const from = params.get('from') || '', to = params.get('to') || today(), key = params.get('account') || (params.get('section')==='liabilities' && data?.settings?.account_dashboard?.liability_account_id ? 'bank:'+data.settings.account_dashboard.liability_account_id : 'bank')
+  const from = params.get('from') || '', to = params.get('to') || today(), key = params.get('account') || (params.get('section')==='liabilities' && data?.settings?.account_dashboard?.liability_account_id ? 'bank:'+data.settings.account_dashboard.liability_account_id : 'liquidity')
   const iso = v => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v
   const valid = iso(to) && (!from || iso(from) && from <= to)
   const set = (k,v) => { const next = new URLSearchParams(params); if (v) next.set(k,v); else next.delete(k); setParams(next); setPage(1) }
@@ -43,17 +43,22 @@ function AccountPage() {
   const selected = options.find(o => o.value === key)
   const statement = useMemo(() => data && valid && selected ? buildAccountStatement(data.entries,key,{from,to,settings:data.settings,search,banks:data.banks}) : null,[data,key,from,to,valid,!!selected,search])
   const liquidityScope = ['available-bank','available-custody','liquidity'].includes(key)
-    ? 'يشمل الحسابات المتاحة حاليًا فقط بإشاراتها، ويستبعد الحسابات الموقوفة والمخصصة للالتزامات والحركات البنكية بلا حساب معروف. الكاش الفعلي يجمع البنوك المتاحة والصندوق وحساب العهدة مرة واحدة؛ الرصيد السالب يُخصم.' : ''
+    ? BALANCE_SCOPE : ''
   useEffect(() => {setPage(1)},[key,from,to])
   const liabilities = data ? liabilityFigures(data.entries,data.settings,to) : null
+  const trackedLiability = liabilities?.accountId && key === 'bank:'+liabilities.accountId
+  const bookOnly = key === 'bank' || key === 'other-bank' || trackedLiability || data?.banks.some(a=>key==='bank:'+a.id && (a.is_active===false || data.settings?.bank_workflow?.accounts?.[a.id]?.operating_available===false))
+  const closingLabel = trackedLiability ? 'رصيد الالتزام المتبقي' : bookOnly ? 'صافي الحركات الدفترية — خارج عرض السيولة' : 'رصيد نهاية الفترة'
+  const closingValue = trackedLiability ? liabilities.signedRemaining : statement?.closing
   async function exportAs(kind) {
     if (!statement || exporting) return
     setExporting(true); setError('')
     try {
       const generated = new Date()
       const model = { tab:'account', title: `كشف ${selected.label}`, org:projectName, from:from || statement.rows[0]?.date || to, to, branch:'all', branchText:'المنشأة كاملة', rangeText:`${from || 'من بداية التسجيل'} — ${to}`, generatedAt:generated.toISOString(), generatedText:generated.toLocaleString('ar-SA'),
-        intro:'الحركات المعتمدة والتلقائية فقط. الرصيد دفتري وليس اتصالًا مباشرًا بالبنك.', scope:liquidityScope ? [['نطاق الحسابات',liquidityScope]] : [], blocks:[
-          {kind:'calc',id:'account.summary',title:'ملخص الحساب',rows:[{label:'رصيد بداية الفترة من القيود السابقة',value:statement.opening},{label:'داخل',value:statement.incoming},{label:'خارج',value:statement.outgoing},{label:'رصيد نهاية الفترة',value:statement.closing}]},
+        intro:'الحركات المعتمدة والتلقائية فقط. الرصيد دفتري وليس اتصالًا مباشرًا بالبنك.', scope:liquidityScope ? [['نطاق الحسابات',liquidityScope]] : bookOnly ? [['نطاق الحسابات','هذا كشف للحركات الدفترية؛ إجماليها ليس رصيدًا متاحًا للسحب. الالتزام المتبقي يُحسب منفصلًا من الرصيد المرجعي.']] : [], blocks:[
+          {kind:'calc',id:'account.summary',title:'ملخص الحساب',rows:[{label:'رصيد بداية الفترة من القيود السابقة',value:statement.opening},{label:'داخل',value:statement.incoming},{label:'خارج',value:statement.outgoing},{label:bookOnly?'صافي الحركات الدفترية المسجلة':'رصيد نهاية الفترة',value:statement.closing}]},
+          ...(trackedLiability ? [{kind:'note',id:'account.liability',text:closingValue==null?'رصيد الالتزام: غير محدد':closingLabel},...(closingValue==null?[]:[{kind:'calc',id:'account.liabilityBalance',rows:[{label:closingLabel,value:closingValue}]}])] : []),
           ...(search ? [{kind:'note',id:'account.search',text:`الصفوف المعروضة بعد البحث: ${search}. الأرصدة والملخص يشملان كامل الفترة.`}] : []),
           {kind:'table',id:'account.movements',title:selected.label,columns:[{label:'التاريخ',type:'date'},{label:'القيد'},{label:'البيان'},{label:'داخل',type:'money'},{label:'خارج',type:'money'},{label:'الرصيد',type:'money'},{label:'المنفذ'}],rows:statement.rows.map(r=>[r.date,r.journal_number,r.description||r.type,r.incoming,r.outgoing,r.balance,r.created_by_name||'غير مسجل'])},
         ] }
@@ -73,8 +78,8 @@ function AccountPage() {
       <Field label="بحث بالبيان أو القيد أو المنفذ"><Input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} /></Field>
     </div>{!valid && <Note tone="error">اختر فترة صحيحة.</Note>}{!selected && data && <Note tone="error">الحساب غير موجود في هذه المنشأة؛ اختر حسابًا من القائمة.</Note>}
     {error && <Note tone="error">{error}</Note>}{loading && <p>جارٍ تحميل الكشف…</p>}
-    {statement && <>{liquidityScope && <Note>{liquidityScope}</Note>}<div className="account-card-row"><div>رصيد بداية الفترة<Money value={statement.opening}/></div><div>إجمالي الداخل<Money value={statement.incoming}/></div><div>إجمالي الخارج<Money value={statement.outgoing}/></div></div>
-      <p data-k="account-closing"><strong>رصيد نهاية الفترة: <Money value={statement.closing}/></strong></p>
+    {statement && <>{liquidityScope && <Note>{liquidityScope}</Note>}<div className="account-card-row"><div>رصيد بداية الفترة من القيود<Money value={statement.opening}/></div><div>إجمالي الداخل<Money value={statement.incoming}/></div><div>إجمالي الخارج<Money value={statement.outgoing}/></div></div>
+      <p data-k="account-closing"><strong>{closingLabel}: {closingValue==null ? 'غير محدد' : <Money value={closingValue}/>}</strong></p>{bookOnly && <Note>الأرقام في جدول الحركات هي صافي ما سُجل في الدفتر وليست سيولة متاحة. <Link to={accountHref('liquidity',to,from)}>عرض الكاش الفعلي</Link></Note>}
       <Note>رصيد البداية من القيود السابقة المسجلة فقط. لا يفترض وجود رصيد افتتاحي بنكي غير مسجل. التحويل الداخلي يظهر خروجًا من المصدر ودخولًا للوجهة.</Note>
       <Button disabled={exporting} onClick={()=>exportAs('xlsx')}>Excel</Button> <Button disabled={exporting} onClick={()=>exportAs('pdf')}>PDF</Button>
       {search && <p>البحث يرشّح الصفوف فقط؛ الرصيد والملخص يشملان كل حركات الفترة.</p>}
@@ -90,7 +95,7 @@ function AccountPage() {
       <p data-k="liability-remaining">رصيد الالتزام المتبقي: {liabilities.signedRemaining == null ? 'غير محدد' : <Money value={liabilities.signedRemaining}/>}</p>
       <Note>{liabilities.confirmed ? 'السالب هو الالتزام المتبقي. وفق آلية الخصم الآلي المؤكدة، كل إيداع معتمد بعد نقطة البداية يقلّل الالتزام حتى الصفر. الرصيد المرجعي يشمل الحركات السابقة فلا تُخصم مرة أخرى. لا يُنشئ هذا العرض قيود سداد أو مصروفات.' : 'الإيداع وحده ليس إثبات سداد. لا يُخصم من الالتزام دون تأكيد آلية الخصم الآلي أو تحديث الرصيد المرجعي.'}</Note>
       {liabilities.excess > 0 && <p>إيداعات تتجاوز رصيد الالتزام: <Money value={liabilities.excess}/>؛ تحتاج مراجعة.</p>}
-      {liabilities.accountId && <Link to={'/accounts?account=bank:'+liabilities.accountId}>عرض حركات حساب السداد</Link>}
+      {liabilities.accountId && <Link to={accountHref('bank:'+liabilities.accountId,to,from)}>عرض حركات حساب السداد</Link>}
     </div></Panel>}
   </div>
 }

@@ -55,11 +55,11 @@ test('a restricted custody bank is excluded consistently from the cards and thei
   assert.equal(statement('liquidity',entries,{settings:restricted}).closing,1250)
 })
 
-test('existing booked balances, all-bank statements and non-feature account choices are unchanged', () => {
+test('booked movement history remains accessible; all businesses get available account choices', () => {
   const b=accountBalances(entries,to)
-  assert.deepEqual(balanceCards(b,settings).map(c=>c.value),[1760,50,-80])
+  assert.deepEqual(balanceCards(b,settings,banks).map(c=>c.value),[1200,50,-80])
   assert.equal(statement('bank').closing,1680)
-  assert.equal(accountOptions(banks,{}).some(o=>o.value==='liquidity'),false)
+  assert.equal(accountOptions(banks,{}).some(o=>o.value==='liquidity'),true)
   assert.deepEqual(balanceCards({...b,custody:12},{}).map(c=>c.value),[1680,50,12])
 })
 

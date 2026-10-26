@@ -677,9 +677,9 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 @media(max-width:480px){.account-card{padding:11px 7px;gap:6px}.account-card-label{font-size:12px}.account-card-value .ts-currency{font-size:10px}.account-card small{font-size:10px}}
 
 .account-card-row-two{grid-template-columns:repeat(2,minmax(0,1fr))}
-.account-overview-compact .account-card{text-align:center;align-items:center}
-.account-overview-compact .account-card-value{width:100%}
-.account-overview-compact .account-card-value .ts-money{justify-content:center}
+.account-card{text-align:center;align-items:center}
+.account-card-value{width:100%}
+.account-card-value .ts-money{justify-content:center}
 
 .credit-invoice-summary { display:flex; flex-direction:column; align-items:flex-start; gap:5px; white-space:normal; margin-top:8px; min-width:190px; }
 .credit-invoice-summary > strong { color:var(--ts-ink,#15313e); }
@@ -693,3 +693,23 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 .credit-invoice-line dt { font-size: 12px; color: var(--ts-muted); }
 .credit-invoice-line dd { margin: 4px 0 0; }
 .credit-invoice-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Shared alignment: card contents and every tab, including legacy screens. */
+.ts-metric, .account-card, .fa-card, .sls-card, .lns-card, .ldg-card, .rp-card, .account-card-row > div { text-align:center; }
+.ts-metric-top, .fa-card-top, .rp-card-top, .rp-card-meta, .rp-card-bottom, .ldg-card-head, .lns-card-head { justify-content:center; }
+.ts-metric-value .ts-money, .account-card-row > div .ts-money, .sls-card .ts-money, .rp-card .ts-money { justify-content:center; }
+.ts-metric-tag { margin-inline-start:0; }
+.ts-metric-value { width:100%; }
+.ts-tabs, .ts-segment { justify-content:safe center; }
+.ts-tab, .ts-segment button, [role="tab"], .ts-nav-text { text-align:center; justify-content:center; }
+.ts-panel-head { justify-content:center; text-align:center; }
+.ts-panel-head > div:first-child { flex:1; }
+.ts-panel-head h2 { justify-content:center; }
+.ts-choice { text-align:center; justify-content:center; }
+.ldg-card .ldg-actions, .jrl-card-actions { justify-content:center; }
+.ldg-card-moves > div, .ldg-card-bals > div { flex-direction:column; align-items:center; text-align:center; }
+.rp-card--button { text-align:center; }
+/* Grid/flex children must be allowed to shrink so centered tabs scroll inside the page. */
+.rpt-page { min-width:0; grid-template-columns:minmax(0,1fr); }
+.rpt-page > *, .rpt-body, .rpt-tabs, .ts-tabs { min-width:0; max-width:100%; }
+.fa-card .ts-money, .lns-card .ts-money, .ldg-card .ts-money { justify-content:center; }
