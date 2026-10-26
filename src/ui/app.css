@@ -677,6 +677,9 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 @media(max-width:480px){.account-card{padding:11px 7px;gap:6px}.account-card-label{font-size:12px}.account-card-value .ts-currency{font-size:10px}.account-card small{font-size:10px}}
 
 .account-card-row-two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.account-overview-compact .account-card{text-align:center;align-items:center}
+.account-overview-compact .account-card-value{width:100%}
+.account-overview-compact .account-card-value .ts-money{justify-content:center}
 
 .credit-invoice-summary { display:flex; flex-direction:column; align-items:flex-start; gap:5px; white-space:normal; margin-top:8px; min-width:190px; }
 .credit-invoice-summary > strong { color:var(--ts-ink,#15313e); }
