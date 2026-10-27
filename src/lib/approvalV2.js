@@ -1,3 +1,4 @@
+import { isOwnerWithdrawal, withdrawalBlockReason } from './ownerWithdrawal.js'
 import { categoryChoice } from './categoryLinks.js'
 // الاعتماد الجديد (v2): العمليات كلها في الخادم (دوال approval_* في قاعدة البيانات، معاملة واحدة لكل اعتماد).
 // هذه الوحدة تبني البيانات المرسلة وتفحص المبالغ بالهللة قبل الإرسال وتترجم رموز الخادم إلى رسائل.
@@ -138,6 +139,8 @@ export function reviewChanges(original, final) {
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
   inv = bankTransferPayment(inv)
+  const withdrawal = isOwnerWithdrawal(inv)
+  if (withdrawal) { const reason = withdrawalBlockReason(inv, transTypes); if (reason) throw new Error(reason) }
   const loan = isLoanRepayment(inv)
   if (loan) {
     const reason = loanBlockReason(inv, transTypes)
@@ -159,7 +162,7 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
   const payload = { ...inv, transType: effectiveType, items, category_main: invCat?.name || invoiceName || null, category_id: invCat?.id || null, subcategory_id: categoryChoice(categories, { ...inv, category_main: invCat?.name || inv.category_main }, transType).subcategory_id }
-  if (loan) {
+  if (loan || withdrawal) {
     // The server's transfer path reads amount first: send exactly the visible amount, even for an older saved draft.
     payload.amount = fromHalalas(toHalalas(loanAmount(inv)))
     payload.totalAmount = payload.amount

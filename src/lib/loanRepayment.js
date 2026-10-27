@@ -1,3 +1,4 @@
+import { isOwnerWithdrawal, WITHDRAWAL_OPTION } from './ownerWithdrawal.js'
 import { isDebt } from './financeRules.js'
 import { toLatinNumber } from './amountInput.js'
 
@@ -5,7 +6,7 @@ import { toLatinNumber } from './amountInput.js'
 export const LOAN_OPTION = { value: 'loan_repayment', label: 'سداد قرض / قسط' }
 export const loanTypes = types => (types || []).filter(isDebt)
 export const isLoanRepayment = inv => inv?.type === 'transfer' && (inv.transferPurpose === LOAN_OPTION.value || isDebt(inv.transType))
-export const reviewDocumentType = inv => isLoanRepayment(inv) ? LOAN_OPTION.value : inv?.type || ''
+export const reviewDocumentType = inv => isOwnerWithdrawal(inv) ? WITHDRAWAL_OPTION.value : isLoanRepayment(inv) ? LOAN_OPTION.value : inv?.type || ''
 export const loanAmount = inv => inv?.totalAmount ?? inv?.amount ?? ''
 export const LOAN_NOTE = 'هذا المسار لسداد أصل القرض أو القسط الرأسمالي. راجع كشف الجهة الممولة وافصل أرباح التمويل والرسوم إن وجدت في فاتورة مصروف مستقلة؛ لا يُستنتج توزيعها من إجمالي الخصم.'
 export const LOAN_CONFIRMATION_LABEL = 'راجعت كشف التمويل وأؤكد أن المبلغ المحدد أصل قرض فقط، دون أرباح تمويل أو رسوم.'
