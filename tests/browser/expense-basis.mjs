@@ -39,6 +39,7 @@ await build({ stdin: { contents: `
       setup={{settings:{},bankAccounts:[{id:'bank-a',name:'Bank A',is_active:true},{id:'bank-b',name:'Bank B',is_active:true}]}} onEdit={(k,v)=>edit(0,k,v)} onEditInvoice={edit}
       onEditItem={(i,patch)=>edit(0,'items',rows[0].items.map((it,j)=>j===i?{...it,...patch}:it))}
       onDeleteItem={i=>edit(0,'items',rows[0].items.filter((_,j)=>i!==j))}
+      onReplaceInvoice={(i,next)=>setRows(rows.map((r,j)=>(i??0)===j?next:r))}
       onApprove={()=>rows.forEach((_,i)=>capture(i))} onApproveInvoice={capture} />
   }
   window.render=(kind='single',readOnly=false,manual=false)=>{
@@ -47,6 +48,10 @@ await build({ stdin: { contents: `
     const second={...structuredClone(base),_id:'two',amountsBasis:'exclusive',items:[{description:'C',amount:92},{description:'D',amount:138}]};
     const sales={_id:'sales',type:'sales',date:'2026-01-02',description:'Synthetic report',cashSales:10,networkSales:20,transferSales:0,totalSales:999,salesReadingVersion:2,unknownPayments:[{label:'Unreadable',amount:30}],bankAccounts:{network:'bank-a'}};
     const transfer={_id:'transfer',type:'transfer',date:'2026-01-03',description:'Synthetic transfer',amount:999,totalAmount:999,vatAmount:0,paySource:'cash',transType:'إيداع نقدي',bankAccountId:'bank-a'};
+    // 2026-10-28: three-row products read as nets but labelled inclusive (synthetic); nets + invoice VAT are one halala over.
+    const nets={...structuredClone(base),_id:'nets',amountsBasis:'inclusive',totalAmount:30,vatAmount:3.91,items:['P1','P2','P3'].map(d=>({description:d,amount:8.7,printedLineTotal:8.7,printedLineBasis:'inclusive'}))};
+    const small={...nets,_id:'small',items:[{description:'P1',amount:10},{description:'P2',amount:10},{description:'P3',amount:9.99}]};
+    if(kind==='nets'||kind==='small'){root.render(<Fixture key={Math.random()} invoices={[kind==='nets'?nets:small]} readOnly={readOnly} manual={manual}/>);return}
     const rows=kind==='multi'?[first,second]:[kind==='sales'?sales:kind==='transfer'?transfer:kind==='duplicate'?{...first,items:[...first.items,{description:'Unit price duplicated',amount:60}]}:first];
     root.render(<Fixture key={Math.random()} invoices={rows} readOnly={readOnly} manual={manual}/>);
   };
@@ -55,7 +60,7 @@ await build({ stdin: { contents: `
   define: { 'import.meta.env': '{}', 'process.env.NODE_ENV': '"production"' },
   plugins: [{ name: 'isolated-review', setup(b) {
     b.onLoad({ filter: /[\\/]contexts[\\/]AuthContext\.jsx$/ }, () => ({ contents: 'export const useAuth=()=>({});', loader: 'js' }))
-    b.onLoad({ filter: /[\\/]lib[\\/]supabase\.js$/ }, () => ({ contents: 'export const supabase={};', loader: 'js' }))
+    b.onLoad({ filter: /[\\/]lib[\\/]supabase\.js$/ }, () => ({ contents: "export const supabase={rpc:async()=>({data:{ok:true,readings:[]},error:null})};", loader: 'js' }))
     b.onLoad({ filter: /[\\/]pages[\\/]PendingDocuments\.jsx$/ }, async args => ({ contents: (await readFile(args.path, 'utf8')) + '\nexport {DocCard};', loader: 'jsx' }))
   } }], logLevel: 'warning' })
 const browser = await playwright.chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
@@ -191,6 +196,44 @@ try {
   const transfer=await page.evaluate(()=>window.payloads[0])
   assert.equal(transfer.amount,'55.00');assert.equal(transfer.transType,'إيداع نقدي');assert.equal(transfer.paySource,'cash');assert.equal(transfer.bankAccountId,'bank-b')
   check('manual transfer keeps transaction routing and sends confirmed amount and displayed bank')
+  await render('nets')
+  await page.getByText('راجع أساس المبالغ وإجمالي كل صنف في الصورة',{exact:true}).waitFor()
+  let body=await page.locator('.rp-form').innerText()
+  assert.match(body,/يبقى فرق 0\.01 ر\.س\. هذا الفرق وحده لا يثبت أنه تقريب/)
+  assert.doesNotMatch(body,/وقد يكون تقريبًا/)
+  assert.equal(await page.getByRole('button',{name:'تأكيد تسوية الفرق على البند المحدد'}).count(),0)
+  assert.equal(await approve.isDisabled(),true)
+  assert.deepEqual(await page.evaluate(()=>window.draft[0].items.map(i=>i.amount)),[8.7,8.7,8.7])
+  check('nets labelled inclusive: residual is explained as unproven, nothing is changed or offered as rounding')
+  for(let n=1;n<=3;n++)await page.getByLabel('مبلغ البند '+n,{exact:true}).fill('10')
+  assert.equal(await approve.isEnabled(),true)
+  await approve.click()
+  let p=await page.evaluate(()=>window.payloads.at(-1))
+  assert.deepEqual(p.items.map(i=>Number(i.amount)),[10,10,10]);assert.equal(p.amountsBasis,'inclusive');assert.equal(p.vatAmount,3.91);assert.equal(p.totalAmount,30)
+  assert.equal(p.roundingReview,undefined);assert.equal(p.basisReview,undefined)
+  check('entering the printed inclusive line totals matches exactly with VAT counted once and no adjustment')
+  await render('nets')
+  await page.getByRole('button',{name:'راجعت الصورة: البنود قبل الضريبة',exact:true}).click()
+  await page.getByLabel('البند الذي راجعته',{exact:true}).waitFor()
+  assert.equal(await approve.isDisabled(),true)
+  await page.getByLabel('البند الذي راجعته',{exact:true}).selectOption('2');await page.getByLabel('سبب تسوية الفرق',{exact:true}).fill('Checked every printed line')
+  await page.getByRole('button',{name:'تأكيد تسوية الفرق على البند المحدد'}).click()
+  await approve.click()
+  p=await page.evaluate(()=>window.payloads.at(-1))
+  assert.equal(p.amountsBasis,'exclusive');assert.deepEqual(p.basisReview,{basis:'exclusive',from:'inclusive'})
+  assert.deepEqual(p.roundingReview,{line:2,basis:'exclusive',from:'8.70',to:'8.69',difference:'-0.01',reason:'Checked every printed line'})
+  assert.ok(p.review_changes.some(s=>s.includes('أكد المراجع أساس مبالغ البنود')));assert.ok(!p.review_changes.some(s=>s.includes('تقريب')))
+  check('residual correction only after explicit basis confirmation, original amount kept in the audit')
+  await render('small')
+  await page.getByText('فرق صغير غير مفسّر؛ لا يُعدّ تقريبًا قبل التحقق',{exact:true}).waitFor()
+  assert.equal(await page.getByLabel('البند الذي راجعته',{exact:true}).count(),0)
+  await page.getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).click()
+  await page.getByLabel('البند الذي راجعته',{exact:true}).waitFor()
+  await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود قبل الضريبة',exact:true}).click()
+  assert.equal(await page.getByLabel('البند الذي راجعته',{exact:true}).count(),0)
+  await render('small',true)
+  assert.equal(await page.getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).isDisabled(),true)
+  check('one-halala difference needs basis confirmation before any line correction; changing basis closes it; read-only cannot confirm')
   assert.deepEqual(errors,[]);assert.deepEqual(network,[])
   check('no page errors or network calls')
   console.log(JSON.stringify({passed:passed.length,failed:0}))

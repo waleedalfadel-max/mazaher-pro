@@ -104,3 +104,19 @@ test('multiline receipt evidence uses the printed full-quantity total without in
   assert.match(prompt, /لا تنشئ صنفًا من فرق الإجمالي/)
   assert.match(prompt, /لا تقلب اليوم والسنة/)
 })
+
+test('three-row products: the reading path keeps printed inclusive line totals that match the invoice and asks for every row', async () => {
+  // Synthetic: nets plus invoice VAT are one halala over; the printed inclusive line totals match exactly.
+  const item = d => ({ description: d, quantity: 1, unitPrice: 10, amount: 8.7, lineNet: 8.7, lineVat: 1.3, printedLineTotal: 10, printedLineBasis: 'inclusive' })
+  const invoice = { type: 'expense', totalAmount: 30, vatAmount: 3.91, amountsBasis: 'exclusive', items: ['P1', 'P2', 'P3'].map(item) }
+  const { result, prompt } = await captureReading('purchasing', {}, [invoice])
+  const out = result.invoices[0]
+  assert.equal(out.amountsBasis, 'inclusive')
+  assert.deepEqual(out.items.map(i => [i.amount, i.readingAmount]), [['10.00', 8.7], ['10.00', 8.7], ['10.00', 8.7]])
+  assert.equal(out.readingBasis, 'exclusive')
+  assert.equal(exactTotals(out).status, 'match')
+  assert.match(prompt, /"lineNet":null,"lineVat":null/)
+  assert.match(prompt, /لا تصف الصافي قبل الضريبة بأنه شامل/)
+  assert.match(prompt, /lineNet \+ lineVat = printedLineTotal/)
+  assert.match(prompt, /لا تعدّل رقمًا ليتحقق الفحص/)
+})

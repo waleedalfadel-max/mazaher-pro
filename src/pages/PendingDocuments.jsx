@@ -18,9 +18,10 @@ import { matchSupplier } from '../lib/supplierMatching'
 import { compareItemsToTotal } from '../lib/documentTotals'
 import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
-import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
+import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, expenseBasisNearMatch, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
 import ExpenseReadingHelp from '../components/ExpenseReadingHelp.jsx'
+import { confirmExpenseBasis } from '../lib/expenseReading.js'
 import { accountDashboard } from '../lib/accountStatement.js'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
@@ -1747,6 +1748,7 @@ function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
   const id = useId()
   const totalKey = res.totalAmount != null ? 'totalAmount' : 'amount'
   const suggestedBasis = exact ? expenseBasisSuggestion(res) : null
+  const nearBasis = exact && !suggestedBasis ? expenseBasisNearMatch(res) : null
   if (exact) return (
     <div className="rp-totals">
       <ExpenseReadingHelp invoice={res} exact={exact} onReplace={onReplace} readOnly={readOnly}/>
@@ -1781,6 +1783,16 @@ function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
           {suggestedBasis === 'exclusive'
             ? 'مجموع البنود بعد خصم الفاتورة، مضافًا إليه الضريبة، يطابق الإجمالي بالهللة. إن كانت البنود مطبوعة قبل الضريبة، أكّد ذلك دون تغيير الأرقام.'
             : 'مجموع البنود بعد خصم الفاتورة يطابق الإجمالي بالهللة دون إضافة الضريبة مرة أخرى. إن كانت البنود مطبوعة شاملة الضريبة، أكّد ذلك دون تغيير الأرقام.'}
+        </Note>
+      ) : nearBasis ? (
+        <Note tone="warning" title="راجع أساس المبالغ وإجمالي كل صنف في الصورة"
+          action={<Button size="sm" disabled={readOnly || !onReplace} onClick={() => { const next = confirmExpenseBasis(res, nearBasis.basis); if (next) onReplace(next) }}>
+            {nearBasis.basis === 'exclusive' ? 'راجعت الصورة: البنود قبل الضريبة' : 'راجعت الصورة: البنود شاملة الضريبة'}
+          </Button>}>
+          {`على أساس «${nearBasis.basis === 'exclusive' ? 'البنود قبل الضريبة' : 'البنود شاملة الضريبة'}» يبقى فرق ${money(Math.abs(nearBasis.diff) / 100)} ر.س. هذا الفرق وحده لا يثبت أنه تقريب. `}
+          {nearBasis.basis === 'exclusive'
+            ? 'إذا كانت الفاتورة تطبع لكل صنف إجماليًا شاملًا للضريبة، فأدخل تلك الإجماليات مكان المبالغ الحالية وأبقِ «البنود شاملة الضريبة». وإن كانت البنود مطبوعة قبل الضريبة فعلًا فأكّد ذلك، ثم فسّر الفرق الباقي من الصورة.'
+            : 'تأكد من الصورة أن مبالغ البنود شاملة الضريبة قبل تأكيدها، ثم فسّر الفرق الباقي من الصورة.'}
         </Note>
       ) : <Note tone="warning" title="طابق كل صنف مرة واحدة">
         قد يظهر سعر الوحدة والمبلغ قبل الضريبة والإجمالي في أسطر متتابعة للصنف نفسه. تأكد أنها لم تُقرأ كبنود إضافية، وأن مبلغ البند هو إجمالي الكمية لا سعر الوحدة. لا تضف بندًا لتغطية الفرق.

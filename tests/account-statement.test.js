@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { accountBalances, balanceCards, buildAccountStatement, liabilityFigures, suppliersOutstanding, accountOptions } from '../src/lib/accountStatement.js'
 import { exactTotals, buildInvoicePayload } from '../src/lib/approvalV2.js'
-import { confirmExpenseRounding, normalizeExpenseReading } from '../src/lib/expenseReading.js'
+import { confirmExpenseBasis, confirmExpenseRounding, normalizeExpenseReading } from '../src/lib/expenseReading.js'
 import { suggestInvoicePayment, BANK_TRANSFER_TYPE } from '../src/lib/paymentWorkflow.js'
 import { reportModel } from '../src/lib/reportExport.js'
 const banks=[{id:'m',name:'Main'},{id:'p',name:'Custody'},{id:'l',name:'Other'}]
@@ -49,7 +49,9 @@ test('expense reading: printed quantity total replaces unit price once, never gu
  const wrongBasis=normalizeExpenseReading({...raw,items:[{amount:8,printedLineTotal:24,printedLineBasis:'exclusive'}]});assert.equal(wrongBasis.items[0].amount,8)
 })
 test('rounding: explicit reason and selected line, max two halalas, exact server payload, original preserved',()=>{
- const inv={type:'expense',amountsBasis:'inclusive',totalAmount:30,vatAmount:0,items:[{amount:10},{amount:19.99}]}
+ const read={type:'expense',amountsBasis:'inclusive',totalAmount:30,vatAmount:0,items:[{amount:10},{amount:19.99}]}
+ // 2026-10-28: a small difference is not called rounding until the reviewer confirms the amounts basis from the image
+ assert.equal(confirmExpenseRounding(read,1,'reviewed'),null);const inv=confirmExpenseBasis(read,'inclusive')
  assert.equal(confirmExpenseRounding(inv,0,''),null);assert.equal(confirmExpenseRounding(inv,5,'reviewed'),null)
  const fixed=confirmExpenseRounding(inv,1,'راجعت التقريب');assert.equal(fixed.items[1].amount,'20.00');assert.equal(fixed.items.length,2);assert.equal(exactTotals(fixed).status,'match');assert.equal(inv.items[1].amount,19.99)
  const payload=buildInvoicePayload(fixed,{original:inv,categories:[],transTypes:[]});assert.equal(payload.roundingReview.reason,'راجعت التقريب')
