@@ -52,6 +52,7 @@ await build({ stdin: { contents: `
     const nets={...structuredClone(base),_id:'nets',amountsBasis:'inclusive',totalAmount:30,vatAmount:3.91,items:['P1','P2','P3'].map(d=>({description:d,amount:8.7,printedLineTotal:8.7,printedLineBasis:'inclusive'}))};
     const small={...nets,_id:'small',items:[{description:'P1',amount:10},{description:'P2',amount:10},{description:'P3',amount:9.99}]};
     if(kind==='nets'||kind==='small'){root.render(<Fixture key={Math.random()} invoices={[kind==='nets'?nets:small]} readOnly={readOnly} manual={manual}/>);return}
+    if(kind==='small2'){root.render(<Fixture key={Math.random()} invoices={[{...small,_id:'small-a'},{...structuredClone(small),_id:'small-b'}]} readOnly={readOnly} manual={manual}/>);return}
     const rows=kind==='multi'?[first,second]:[kind==='sales'?sales:kind==='transfer'?transfer:kind==='duplicate'?{...first,items:[...first.items,{description:'Unit price duplicated',amount:60}]}:first];
     root.render(<Fixture key={Math.random()} invoices={rows} readOnly={readOnly} manual={manual}/>);
   };
@@ -220,8 +221,9 @@ try {
   await page.getByRole('button',{name:'تأكيد تسوية الفرق على البند المحدد'}).click()
   await approve.click()
   p=await page.evaluate(()=>window.payloads.at(-1))
-  assert.equal(p.amountsBasis,'exclusive');assert.deepEqual(p.basisReview,{basis:'exclusive',from:'inclusive'})
-  assert.deepEqual(p.roundingReview,{line:2,basis:'exclusive',from:'8.70',to:'8.69',difference:'-0.01',reason:'Checked every printed line'})
+  assert.equal(p.amountsBasis,'exclusive');assert.equal(p.basisReview.basis,'exclusive');assert.equal(p.basisReview.from,'inclusive')
+  const {key,...rounding}=p.roundingReview;assert.equal(key,p.basisReview.key)
+  assert.deepEqual(rounding,{line:2,basis:'exclusive',from:'8.70',to:'8.69',difference:'-0.01',reason:'Checked every printed line'})
   assert.ok(p.review_changes.some(s=>s.includes('أكد المراجع أساس مبالغ البنود')));assert.ok(!p.review_changes.some(s=>s.includes('تقريب')))
   check('residual correction only after explicit basis confirmation, original amount kept in the audit')
   await render('small')
@@ -231,6 +233,28 @@ try {
   await page.getByLabel('البند الذي راجعته',{exact:true}).waitFor()
   await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود قبل الضريبة',exact:true}).click()
   assert.equal(await page.getByLabel('البند الذي راجعته',{exact:true}).count(),0)
+  await render('small')
+  await page.getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).click()
+  await page.getByLabel('البند الذي راجعته',{exact:true}).waitFor()
+  await page.getByLabel('مبلغ البند 2',{exact:true}).fill('9.99')
+  await page.getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).waitFor()
+  assert.equal(await page.getByLabel('البند الذي راجعته',{exact:true}).count(),0)
+  check('editing an amount after confirming the basis cancels the confirmation on screen')
+  await render('small2')
+  await page.locator('details').evaluateAll(nodes=>nodes.forEach(n=>n.open=true))
+  const sub=page.locator('.rp-subinv')
+  await sub.nth(0).getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).click()
+  await sub.nth(0).getByLabel('البند الذي راجعته',{exact:true}).waitFor()
+  assert.equal(await sub.nth(1).getByLabel('البند الذي راجعته',{exact:true}).count(),0)
+  assert.equal(await sub.nth(1).getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).count(),1)
+  await sub.nth(0).getByLabel('البند الذي راجعته',{exact:true}).selectOption('2');await sub.nth(0).getByLabel('سبب تسوية الفرق',{exact:true}).fill('First invoice only')
+  await sub.nth(0).getByRole('button',{name:'تأكيد تسوية الفرق على البند المحدد'}).click()
+  assert.equal(await sub.nth(1).getByRole('button',{name:'اعتماد هذه الفاتورة وحدها'}).isDisabled(),true)
+  await sub.nth(0).getByRole('button',{name:'اعتماد هذه الفاتورة وحدها'}).click()
+  const both=await page.evaluate(()=>({payloads:window.payloads,draft:window.draft}))
+  assert.deepEqual(both.payloads.map(x=>[x._id,x.roundingReview?.reason]),[['small-a','First invoice only']])
+  assert.equal(both.draft[1].basisReview,undefined);assert.equal(both.draft[1].roundingReview,undefined)
+  check('each invoice in one image needs its own basis confirmation and correction')
   await render('small',true)
   assert.equal(await page.getByRole('button',{name:'راجعت الصورة: البنود شاملة الضريبة',exact:true}).isDisabled(),true)
   check('one-halala difference needs basis confirmation before any line correction; changing basis closes it; read-only cannot confirm')

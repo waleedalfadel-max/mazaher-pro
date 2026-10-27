@@ -21,7 +21,9 @@ import { plural } from '../ui/format.js'
 import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, expenseBasisNearMatch, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
 import ExpenseReadingHelp from '../components/ExpenseReadingHelp.jsx'
-import { confirmExpenseBasis } from '../lib/expenseReading.js'
+import { confirmExpenseBasis, withoutReviewConfirmations } from '../lib/expenseReading.js'
+// نسخة المراجعة من القراءة: بلا تأكيدات مراجع جاهزة (تأكيد أصل القرض، تأكيد الأساس، تسوية الفرق)
+const readingForReview = r => withoutReviewConfirmations(withoutLoanPrincipalConfirmation(r))
 import { accountDashboard } from '../lib/accountStatement.js'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
@@ -122,7 +124,7 @@ const rereadError = code => REREAD_ERRORS[code] || 'تعذّر حفظ القرا
 // التعديلات اليدوية على القراءة: الفرق بين نسخة المراجعة والقراءة المحفوظة بعد إهمال علامات العرض (حقول _)
 const withoutMarks = v => Array.isArray(v) ? v.map(withoutMarks) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => !k.startsWith('_')).map(([k, x]) => [k, withoutMarks(x)])) : v
 const hasManualEdits = doc => !!doc._dirty || !!doc._draftSavedAt
-  || JSON.stringify(withoutMarks(doc._edit || null)) !== JSON.stringify(withoutMarks(withoutLoanPrincipalConfirmation(doc.analysis_result || null)))
+  || JSON.stringify(withoutMarks(doc._edit || null)) !== JSON.stringify(withoutMarks(readingForReview(doc.analysis_result || null)))
 
 // مسودة المراجعة: تُحفظ بزر «حفظ مسودة» في هذه النافذة فقط (sessionStorage)، معزولة حسب المنشأة
 // والمستخدم والمستند، ولا تُطبَّق إن تغيّرت حالة المستند أو قراءته (src/lib/reviewDraft.js).
@@ -301,7 +303,7 @@ export default function PendingDocuments() {
     const extras = ok ? Object.fromEntries(DRAFT_EXTRAS.filter(k => k in saved.extras).map(k => [k, saved.extras[k]])) : {}
     return {
       ...d, ...extras,
-      _state: 'idle', _error: '', _edit: withoutLoanPrincipalConfirmation(ok ? saved.edit : (d.analysis_result || null)),
+      _state: 'idle', _error: '', _edit: ok ? withoutLoanPrincipalConfirmation(saved.edit) : readingForReview(d.analysis_result || null),
       _dirty: false, _draftSavedAt: ok ? saved.savedAt : null, _draftStale: !!saved?.stale,
       _origBranch: d.branch, _branchEditable: !d.branch,
       _imageData: null, _showImage: false, _isUrl: false,
@@ -343,7 +345,7 @@ export default function PendingDocuments() {
     const store = draftStore()
     if (store) dropDraft(store, scopeOf(doc), doc.id)
     updateDoc(doc.id, {
-      _state: doc._state, _edit: withoutLoanPrincipalConfirmation(doc.analysis_result || null), _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
+      _state: doc._state, _edit: readingForReview(doc.analysis_result || null), _dirty: false, _draftSavedAt: null, _validationError: null, _rulesFor: null, _dictionaryApplied: null,
       branch: doc._origBranch, _supplierId: undefined, _supplierName: undefined, _supplierResolution: undefined, _matchedSupplierId: undefined,
     })
   }
@@ -435,7 +437,7 @@ export default function PendingDocuments() {
       await supabase.from('documents').update({ status: 'analyzed', analysis_result: result }).eq('id', doc.id)
       updateDoc(doc.id, {
         _state: 'analyzed', status: 'analyzed',
-        analysis_result: result, _edit: withoutLoanPrincipalConfirmation(result),
+        analysis_result: result, _edit: readingForReview(result),
         _aiSuggestedType: true,
         _imageData: signedFileUrl || fileBase64,
         _isUrl: !!signedFileUrl,
@@ -881,10 +883,10 @@ export default function PendingDocuments() {
       if (readingReplaced(d.analysis_result, ar)) {
         clearDraftOf(d)
         return { ...resetReplacedReview(d, ar), status: data.status,
-          _edit: withoutLoanPrincipalConfirmation(ar),
+          _edit: readingForReview(ar),
           _v2: { version: data.version, invoices: data.invoices, mode: data.mode } }
       }
-      const src = d._edit || withoutLoanPrincipalConfirmation(ar)
+      const src = d._edit || readingForReview(ar)
       let edit = src
       if (src && ar?.invoices) {   // معرّفات الفواتير من الخادم تُنقل إلى نسخة المراجعة دون فقد التعديلات
         const list = src.invoices?.length ? src.invoices : [src]

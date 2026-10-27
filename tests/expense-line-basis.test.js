@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { approvalMessage, buildInvoicePayload, callError, exactTotals, expenseBasisNearMatch, expenseBasisSuggestion } from '../src/lib/approvalV2.js'
-import { basisConfirmed, confirmExpenseBasis, confirmExpenseRounding, normalizeExpenseReading } from '../src/lib/expenseReading.js'
+import { basisConfirmed, confirmExpenseBasis, confirmExpenseRounding, normalizeExpenseReading, validExpenseReviews, withoutReviewConfirmations } from '../src/lib/expenseReading.js'
+import { resetReplacedReview } from '../src/lib/documentReread.js'
 
 // Synthetic receipts only. Each product is printed on three rows: net before tax, its tax, and the inclusive line total.
 // The store computes VAT once on the invoice total, so the printed nets plus invoice VAT miss the total by one halala.
@@ -29,7 +30,8 @@ test('printed inclusive line totals win over nets when they match the invoice to
   assert.deepEqual(raw, before)
   assert.equal(out.amountsBasis, 'inclusive')
   assert.equal(out.readingBasis, 'exclusive')
-  assert.equal(out.lineBasisReading, 'inclusive')
+  assert.deepEqual(out.readingCorrection, { rule: 'printed_line_column', from: { basis: 'exclusive', field: 'amount' },
+    to: { basis: 'inclusive', field: 'printedLineTotal' }, lines: [0, 1, 2].map(line => ({ line, from: 8.7, to: '10.00' })) })
   assert.deepEqual(out.items.map(i => i.amount), ['10.00', '10.00', '10.00'])
   assert.deepEqual(out.items.map(i => i.readingAmount), [8.7, 8.7, 8.7])
   assert.equal(out.items.length, 3)
@@ -61,7 +63,7 @@ test('invoice discount and a VAT-exempt product survive unchanged', () => {
   assert.equal(out.invoiceDiscount, 1)
   assert.equal(out.items[0].amount, '23.00')
   assert.equal(out.items[0].discount, 0.5)
-  assert.equal(out.items[1], raw.items[1])           // exempt line already equal: same object, nothing recorded
+  assert.deepEqual(out.items[1], raw.items[1])       // exempt line already equal: unchanged, no readingAmount recorded
   assert.equal(exactTotals(out).status, 'match')
 })
 
@@ -106,13 +108,17 @@ test('small difference correction needs an explicit basis confirmation first and
   assert.equal(basisConfirmed(switched), false)
   assert.equal(confirmExpenseRounding(switched, 2, 'Checked image'), null)
   const confirmed = confirmExpenseBasis(read, 'exclusive')
-  assert.deepEqual(confirmed.basisReview, { basis: 'exclusive', from: 'inclusive' })
+  assert.equal(confirmed.basisReview.basis, 'exclusive')
+  assert.equal(confirmed.basisReview.from, 'inclusive')
   assert.deepEqual(confirmed.items, read.items)
   assert.equal(basisConfirmed(confirmed), true)
   assert.equal(basisConfirmed({ ...confirmed, amountsBasis: 'inclusive' }), false)                  // basis changed again: gate closes
   assert.equal(confirmExpenseRounding(confirmed, 2, '  '), null)
   const fixed = confirmExpenseRounding(confirmed, 2, 'Checked image')
-  assert.deepEqual(fixed.roundingReview, { line: 2, basis: 'exclusive', from: '8.70', to: '8.69', difference: '-0.01', reason: 'Checked image' })
+  const { key, ...rounding } = fixed.roundingReview
+  assert.deepEqual(rounding, { line: 2, basis: 'exclusive', from: '8.70', to: '8.69', difference: '-0.01', reason: 'Checked image' })
+  assert.equal(key, fixed.basisReview.key)
+  assert.equal(basisConfirmed(fixed), true)                 // the reviewer's own correction keeps the confirmation
   assert.equal(exactTotals(fixed).status, 'match')
   assert.equal(read.items[2].amount, 8.7)
   const changes = buildInvoicePayload(fixed, { original: read, categories: [], transTypes: [] }).review_changes
@@ -130,4 +136,109 @@ test('replaced-reading rejection (P0023) is explained on every action path; othe
   assert.deepEqual(callError({ code: 'APP_VERSION_STALE' }), { code: 'app_version_stale' })
   assert.deepEqual(callError({ code: '57014' }), { code: 'network' })
   assert.deepEqual(callError(null), { code: 'network' })
+})
+
+// ── 2026-10-28 review round: confirmations are tied to what was confirmed, never taken from a reading ──
+const nets = () => receipt({ amountsBasis: 'inclusive', items: three.map(it => ({ description: it.description, amount: it.lineNet })) })
+
+test('a basis confirmation lapses when basis, any amount, VAT, total or discount changes; stale ones are not sent', () => {
+  const confirmed = confirmExpenseBasis(nets(), 'exclusive')
+  assert.equal(basisConfirmed(confirmed), true)
+  const changed = {
+    basis: { ...confirmed, amountsBasis: 'inclusive' },
+    amount: { ...confirmed, items: confirmed.items.map((it, i) => i ? it : { ...it, amount: '8.71' }) },
+    vat: { ...confirmed, vatAmount: 3.9 },
+    total: { ...confirmed, totalAmount: 30.01 },
+    discount: { ...confirmed, invoiceDiscount: 0.01 },
+    removedLine: { ...confirmed, items: confirmed.items.slice(1) },
+  }
+  for (const [name, inv] of Object.entries(changed)) {
+    assert.equal(basisConfirmed(inv), false, name)
+    assert.equal(confirmExpenseRounding(inv, 0, 'Checked image'), null, name)
+    assert.equal(validExpenseReviews(inv).basisReview, undefined, name)
+  }
+  assert.equal(basisConfirmed({ ...confirmed, items: confirmed.items.map(it => ({ ...it, amount: Number(it.amount) })) }), true) // same value, other format
+  // A correction made, then amounts edited afterwards: neither the confirmation nor the correction survives into the payload.
+  const fixed = confirmExpenseRounding(confirmed, 2, 'Checked image')
+  const edited = { ...fixed, items: fixed.items.map((it, i) => i === 0 ? { ...it, amount: '8.69' } : i === 2 ? { ...it, amount: '8.70' } : it) }
+  assert.equal(exactTotals(edited).status, 'match')
+  const payload = buildInvoicePayload(edited, { original: nets(), categories: [], transTypes: [] })
+  assert.equal(payload.basisReview, undefined)
+  assert.equal(payload.roundingReview, undefined)
+  assert.ok(!payload.review_changes.some(s => s.includes('تسوية فرق') || s.includes('أكد المراجع أساس')))
+  assert.ok(payload.review_changes.some(s => s.includes('بند 1 — المبلغ')))   // the amount edits themselves stay in the trail
+  const kept = buildInvoicePayload(fixed, { original: nets(), categories: [], transTypes: [] })
+  assert.equal(kept.roundingReview.reason, 'Checked image')
+  // Re-confirming after a change starts again and drops the old correction.
+  assert.equal(confirmExpenseBasis(fixed, 'exclusive').roundingReview, undefined)
+})
+
+test('confirmations supplied by a reading are discarded, at read time and when the review copy is made', () => {
+  const confirmed = confirmExpenseRounding(confirmExpenseBasis(nets(), 'exclusive'), 2, 'Model says rounding')
+  const fromModel = { ...confirmed, readingCorrection: { rule: 'printed_line_column' }, readingBasis: 'inclusive',
+    items: confirmed.items.map(it => ({ ...it, readingAmount: 1 })) }
+  const out = normalizeExpenseReading(fromModel)
+  for (const k of ['basisReview', 'roundingReview', 'readingCorrection', 'readingBasis']) assert.equal(k in out, false, k)
+  assert.ok(out.items.every(it => !('readingAmount' in it)))
+  assert.equal(basisConfirmed(out), false)
+  const stored = { invoices: [confirmed, { ...confirmed, _id: 'second' }] }
+  const review = withoutReviewConfirmations(stored)
+  assert.ok(review.invoices.every(inv => !inv.basisReview && !inv.roundingReview))
+  assert.ok(stored.invoices.every(inv => inv.basisReview))        // the stored reading itself is not modified
+})
+
+test('a replaced reading drops every earlier confirmation from the working copy', () => {
+  const doc = { id: 'd', status: 'analyzed', analysis_result: { invoices: [nets()] },
+    _edit: { invoices: [confirmExpenseRounding(confirmExpenseBasis(nets(), 'exclusive'), 2, 'Checked image')] }, _draftSavedAt: 'x' }
+  const next = resetReplacedReview(doc, { _readingId: 'new', invoices: [nets()] })
+  assert.equal(next._edit, undefined)
+  assert.equal(next._readingReviewRequired, true)
+  assert.ok(next.analysis_result.invoices.every(inv => !inv.basisReview && !inv.roundingReview))
+})
+
+test('each invoice in an image needs its own confirmation', () => {
+  const a = nets(), b = receipt({ totalAmount: 60, vatAmount: 7.82, amountsBasis: 'inclusive', items: [17.4, 17.4, 17.4].map((amount, i) => ({ description: 'Other ' + i, amount })) })
+  const confirmedA = confirmExpenseBasis(a, 'exclusive')
+  assert.equal(basisConfirmed({ ...b, amountsBasis: 'exclusive', basisReview: confirmedA.basisReview }), false)
+  assert.equal(confirmExpenseRounding({ ...b, amountsBasis: 'exclusive', basisReview: confirmedA.basisReview }, 0, 'copied'), null)
+  assert.equal(basisConfirmed({ ...b, amountsBasis: 'exclusive' }), false)
+  assert.equal(basisConfirmed(confirmExpenseBasis(b, 'exclusive')), true)
+})
+
+test('printed totals: the invoice discount is deducted once and the source of old and new numbers is kept', () => {
+  const items = [line('Synthetic taxable', 20, 3, 23, { amount: 20 }), line('Synthetic exempt', 10, 0, 10, { amount: 10 })]
+  const once = normalizeExpenseReading({ type: 'expense', totalAmount: 32, vatAmount: 2.87, invoiceDiscount: 1, amountsBasis: 'exclusive', items })
+  assert.equal(once.amountsBasis, 'inclusive')
+  assert.equal(exactTotals(once).itemsTotal - exactTotals(once).discount, 3200)
+  assert.deepEqual(once.readingCorrection.lines, [{ line: 0, from: 20, to: '23.00' }])
+  assert.equal(once.readingCorrection.from.field, 'amount')
+  assert.equal(once.readingCorrection.to.field, 'printedLineTotal')
+  const changes = buildInvoicePayload(once, { original: once, categories: [], transTypes: [] }).review_changes
+  assert.ok(changes.some(s => s.includes('صحّح التطبيق القراءة الأولى') && s.includes('البند 1: 20 ← 23.00')))
+  // A total that would only match if the discount were taken twice is not accepted.
+  const twice = { type: 'expense', totalAmount: 31, vatAmount: 2.87, invoiceDiscount: 1, amountsBasis: 'exclusive', items }
+  assert.deepEqual(normalizeExpenseReading(structuredClone(twice)), twice)
+})
+
+test('a matching sum is not enough: every line must be backed by its own printed rows, and the printed item count must agree', () => {
+  const base = { type: 'expense', totalAmount: 30, vatAmount: 3.91, amountsBasis: 'exclusive' }
+  // Line totals with no net/VAT rows and no quantity x unit price: unproven, left as read.
+  const bare = { ...base, items: three.map(it => ({ description: it.description, amount: it.lineNet, printedLineTotal: 10, printedLineBasis: 'inclusive' })) }
+  assert.deepEqual(normalizeExpenseReading(structuredClone(bare)), bare)
+  // A line whose own rows disagree (net + VAT is not its total) blocks the correction even though the sum matches.
+  const inconsistent = { ...base, items: three.map((it, i) => ({ ...it, amount: it.lineNet, unitPrice: null, quantity: null, lineVat: i ? 1.3 : 1.2 })) }
+  assert.deepEqual(normalizeExpenseReading(structuredClone(inconsistent)), inconsistent)
+  // Quantity x unit price backs a line without net/VAT rows (weighed item, one halala of rounding).
+  const weighed = { ...base, items: [line('Synthetic A', 8.7, 1.3, 10, { amount: 8.7 }), line('Synthetic B', 8.7, 1.3, 10, { amount: 8.7 }),
+    { description: 'Synthetic weighed', amount: 8.7, quantity: 0.8, unitPrice: 12.49, printedLineTotal: 10, printedLineBasis: 'inclusive' }] }
+  assert.equal(normalizeExpenseReading(weighed).amountsBasis, 'inclusive')
+  // One line repeated and another missing: the printed item count catches it; nothing is changed, a warning is shown.
+  const repeated = { ...base, printedItemCount: 4, items: three.map(it => ({ ...it, amount: it.lineNet })) }
+  const out = normalizeExpenseReading(structuredClone(repeated))
+  assert.equal(out.amountsBasis, 'exclusive')
+  assert.deepEqual(out.items, repeated.items)
+  assert.match(out.readingWarnings.join(' '), /عدد الأصناف المطبوع 4 لا يساوي عدد البنود المقروءة 3/)
+  // Genuinely repeated purchases with a count of lines or of pieces are accepted.
+  assert.equal(normalizeExpenseReading({ ...repeated, printedItemCount: 3 }).amountsBasis, 'inclusive')
+  assert.equal(normalizeExpenseReading({ ...repeated, printedItemCount: 6, items: repeated.items.map(it => ({ ...it, quantity: 2 })) }).amountsBasis, 'inclusive')
 })

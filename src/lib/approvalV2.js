@@ -6,6 +6,7 @@ import { categoryChoice } from './categoryLinks.js'
 import { STALE_MESSAGE } from './appVersion.js'
 import { isLoanRepayment, loanAmount, loanBlockReason, hasLoanPrincipalConfirmation } from './loanRepayment.js'
 import { bankTransferPayment } from './paymentWorkflow.js'
+import { validExpenseReviews } from './expenseReading.js'
 
 /** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
 // P0023: حارس الخادم رفض الاعتماد لأن قراءة المستند استُبدلت بعد فتحه (approval_private.reject_replaced_invoice)؛ الحماية في الخادم.
@@ -131,6 +132,8 @@ export function reviewChanges(original, final) {
   const out = original ? [] : ['فاتورة أضافها المراجع (لم تكن في القراءة)']
   if (hasLoanPrincipalConfirmation(final)) out.push(`أكد المراجع بعد مراجعة كشف التمويل أن مبلغ ${final.loanPrincipalConfirmation.amount} لـ«${final.transType}» أصل قرض فقط، دون أرباح تمويل أو رسوم.`)
   if (!original) return out
+  const fix = final.readingCorrection
+  if (fix?.rule === 'printed_line_column') out.push(`صحّح التطبيق القراءة الأولى: ${fix.to.field === 'printedLineTotal' ? 'إجمالي كل صنف الشامل المطبوع' : 'صافي كل صنف المطبوع'} بدل المبالغ المقروءة (${fix.lines.map(l => `البند ${l.line + 1}: ${l.from} ← ${l.to}`).join('، ') || 'دون تغيير المبالغ'})، أساس ${fix.from.basis === 'exclusive' ? 'قبل الضريبة' : 'شامل'} ← ${fix.to.basis === 'exclusive' ? 'قبل الضريبة' : 'شامل'}؛ لأنه يطابق الإجمالي بالهللة ومؤيَّد بأسطر كل صنف.`)
   if (final.basisReview && !same(final.basisReview,original.basisReview)) out.push(`أكد المراجع أساس مبالغ البنود من الصورة: ${final.basisReview.basis === 'exclusive' ? 'قبل الضريبة' : 'شاملة الضريبة'}`)
   if (final.roundingReview && !same(final.roundingReview,original.roundingReview)) out.push(`تسوية فرق صغير أكدها المراجع للبند ${final.roundingReview.line+1}: ${final.roundingReview.from} ← ${final.roundingReview.to}؛ ${final.roundingReview.reason}`)
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
@@ -154,7 +157,7 @@ export function reviewChanges(original, final) {
  * الخادم يحسب القيود والضريبة ويرفض الفرق.
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
-  inv = bankTransferPayment(inv)
+  inv = validExpenseReviews(bankTransferPayment(inv))   // تأكيد سقط بتغيير لاحق لا يُرسل
   const withdrawal = isOwnerWithdrawal(inv)
   if (withdrawal) { const reason = withdrawalBlockReason(inv, transTypes); if (reason) throw new Error(reason) }
   const loan = isLoanRepayment(inv)

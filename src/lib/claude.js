@@ -209,6 +209,7 @@ ${lines.join('\n')}
 - قد تمتد بيانات الصنف الواحد على عدة أسطر: وصف، كمية، سعر وحدة، مبلغ قبل الضريبة، ضريبة، وإجمالي شامل. هذه بيانات item واحد وليست أصنافاً مستقلة.
 - اقرأ مفتاح الأعمدة أعلى جدول الأصناف أولاً، ثم اربط كل وصف بجميع أسطره الرقمية حتى يبدأ الصنف التالي. قد يطبع السطر الأول سعر الوحدة والكمية، والثاني صافي الكمية وضريبتها، والثالث إجماليها الشامل؛ لا تأخذ أول رقم أو أكبر رقم تلقائيًا.
 - ابدأ بأول صنف بعد رأس الجدول، ولو كان اسمه قصيرًا أو وزنه كسريًا، وانتهِ بآخر صنف قبل ملخص الضريبة. إذا تعذر اسم صنف فلا تحذفه: احتفظ بسطره ووصف غير واضح (?) ومبلغه المطبوع إن كان مقروءًا. لا تنشئ صنفًا من فرق الإجمالي.
+- إن طبعت الفاتورة عدد الأصناف أو القطع فانسخه في printedItemCount كما هو، وإلا فاكتب null. لا تعدّه بنفسك.
 - لا تكرر الصنف بسبب التفاف اسمه أو تعدد مبالغه. وإن تكرر الصنف فعلاً في سطر شراء مستقل فاحتفظ بالسطرين.
 - انسخ مبالغ الأصناف المطبوعة فقط. لا تخترع بنداً باسم "الباقي"، ولا تعدّل مبلغاً أو إجمالياً لتجعل المجموع يتوازن.
 
@@ -283,7 +284,7 @@ ${categorySection}
 {"type":"transfer","transType":"${bankCustody ? BANK_TRANSFER_TYPE : 'تحويل داخلي — صرف عهدة أو تحويل داخلي — إيداع نقدي'}","date":"YYYY-MM-DD","amount":0.00,"description":"وصف التحويل"}
 
 ٣. أي مستند آخر (فاتورة شراء، إيصال، سند، كشف) — فكّك لبنود:
-{"type":"expense","date":"YYYY-MM-DD","totalAmount":0.00,"vatAmount":0.00,"amountsBasis":"inclusive أو exclusive بحسب مبالغ البنود المطبوعة","transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"اسم المورد أو وصف الفاتورة","invoiceNumber":"رقم الفاتورة كما هو مطبوع أو null"${supplierNameField},"items":[{"description":"وصف البند","amount":0.00,"quantity":null,"unitPrice":null,"lineNet":null,"lineVat":null,"printedLineTotal":null,"printedLineBasis":"inclusive أو exclusive","category_main":"التصنيف الرئيسي","category_sub":"التصنيف الفرعي"}]}
+{"type":"expense","date":"YYYY-MM-DD","totalAmount":0.00,"vatAmount":0.00,"amountsBasis":"inclusive أو exclusive بحسب مبالغ البنود المطبوعة","transType":"اختر من القائمة أعلاه","paySource":"cash أو bank أو custody","description":"اسم المورد أو وصف الفاتورة","invoiceNumber":"رقم الفاتورة كما هو مطبوع أو null","printedItemCount":null${supplierNameField},"items":[{"description":"وصف البند","amount":0.00,"quantity":null,"unitPrice":null,"lineNet":null,"lineVat":null,"printedLineTotal":null,"printedLineBasis":"inclusive أو exclusive","category_main":"التصنيف الرئيسي","category_sub":"التصنيف الفرعي"}]}
 
 ٤. سداد مورد — دفعة لمورد مقابل مستحق عليه (إيصال حوالة أو سند صرف أو سند قبض صادر من المورد)، لا شراء جديد:
 {"type":"supplier_payment","date":"YYYY-MM-DD","amount":0.00,"beneficiary":"اسم المستفيد/المورد كما طُبع حرفيًا","reference":"رقم العملية أو المرجع أو السند كما طُبع أو null","paySource":"cash أو bank","description":"وصف قصير","paymentEvidence":"النص المطبوع الذي يدل على أنه سداد لمورد، حرفيًا"}

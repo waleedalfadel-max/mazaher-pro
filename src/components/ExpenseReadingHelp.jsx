@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button, Field, Input, Note, Select } from '../ui/components.jsx'
-import { basisConfirmed, confirmExpenseBasis, confirmExpenseRounding } from '../lib/expenseReading.js'
+import { basisConfirmed, confirmExpenseBasis, confirmExpenseRounding, validExpenseReviews } from '../lib/expenseReading.js'
 
 const BASIS_TEXT = { inclusive: 'شاملة الضريبة', exclusive: 'قبل الضريبة' }
 
@@ -9,10 +9,11 @@ export default function ExpenseReadingHelp({ invoice, exact, onReplace, readOnly
   if (!invoice) return null
   const small = invoice.items?.length>0 && exact?.status==='mismatch' && Math.abs(exact.diff)<=2
   const confirmed = basisConfirmed(invoice)
+  const rounding = validExpenseReviews(invoice).roundingReview
   return <>
     {Array.isArray(invoice.readingWarnings) && invoice.readingWarnings.length>0 && <Note tone="warning">{invoice.readingWarnings.join("؛ ")}</Note>}
-    {invoice.lineBasisReading && <p className="ts-field-hint">
-      {invoice.lineBasisReading==='inclusive' ? 'استُخدم إجمالي كل صنف الشامل للضريبة كما طُبع' : 'استُخدم صافي كل صنف قبل الضريبة كما طُبع'}، لأن مجموعه يطابق إجمالي الفاتورة بالهللة. القراءة الأولى محفوظة في دليل القراءة.
+    {invoice.readingCorrection?.to && <p className="ts-field-hint">
+      {invoice.readingCorrection.to.basis==='inclusive' ? 'استُخدم إجمالي كل صنف الشامل للضريبة كما طُبع' : 'استُخدم صافي كل صنف قبل الضريبة كما طُبع'}، لأن مجموعه يطابق إجمالي الفاتورة بالهللة. القراءة الأولى محفوظة في دليل القراءة.
     </p>}
     {invoice.items?.some(it=>it.quantity!=null||it.unitPrice!=null||it.printedLineTotal!=null||it.lineNet!=null)&&<details><summary>دليل قراءة الكمية وسعر الوحدة وإجمالي الصنف</summary><ul>{invoice.items.map((it,i)=><li key={i}>{it.description}: الكمية {it.quantity??'غير مقروءة'} · سعر الوحدة {it.unitPrice??'غير مقروء'}{it.lineNet!=null?` · الصافي قبل الضريبة ${it.lineNet}`:''}{it.lineVat!=null?` · ضريبة الصنف ${it.lineVat}`:''} · إجمالي الصنف المطبوع {it.printedLineTotal??'غير مقروء'} · المبلغ الحالي {it.amount??'غير مقروء'}{it.readingAmount!=null?` · القراءة الأولى ${it.readingAmount}`:''}</li>)}</ul>{invoice.readingBasis&&<p className="ts-field-hint">أساس القراءة الأولى: {BASIS_TEXT[invoice.readingBasis]||invoice.readingBasis}</p>}</details>}
     {small && <Note tone="warning" title="فرق صغير غير مفسّر؛ لا يُعدّ تقريبًا قبل التحقق">
@@ -28,6 +29,7 @@ export default function ExpenseReadingHelp({ invoice, exact, onReplace, readOnly
         <Button disabled={readOnly||line===''||!reason.trim()||!onReplace} onClick={()=>{const next=confirmExpenseRounding(invoice,Number(line),reason);if(next){onReplace(next);setLine('');setReason('')}}}>تأكيد تسوية الفرق على البند المحدد</Button>
       </>}
     </Note>}
-    {invoice.roundingReview && <p className="ts-field-hint">تسوية فرق مسجّلة على البند {invoice.roundingReview.line+1}: {invoice.roundingReview.from} ← {invoice.roundingReview.to} ({invoice.roundingReview.difference} ر.س)؛ {invoice.roundingReview.reason}.</p>}
+    {rounding && <p className="ts-field-hint">تسوية فرق مسجّلة على البند {rounding.line+1}: {rounding.from} ← {rounding.to} ({rounding.difference} ر.س)؛ {rounding.reason}.</p>}
+    {invoice.roundingReview && !rounding && <Note tone="warning">أُلغيت تسوية الفرق السابقة لأن الأساس أو المبالغ تغيّرت بعدها؛ راجع من جديد.</Note>}
   </>
 }
