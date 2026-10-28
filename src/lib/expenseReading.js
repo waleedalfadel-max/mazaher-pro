@@ -30,26 +30,34 @@ export function normalizeExpenseReading(inv) {
   return printedLineColumn(read) || read
 }
 
-// سطر الصنف مؤيَّد من أرقامه المطبوعة الأخرى: الصافي + الضريبة = الإجمالي الشامل بالهللة، أو الكمية × سعر الوحدة يقارب
-// المبلغ (هللة واحدة للتقريب). أي تعارض بين الأرقام المطبوعة يُسقط التأييد.
+// سطر الصنف مؤيَّد من أرقامه المطبوعة الأخرى، على أساس العمود نفسه:
+// - الصافي + الضريبة = الإجمالي الشامل بالهللة؛ أو
+// - الكمية × سعر الوحدة − خصم الصنف = المبلغ (هللة واحدة للتقريب)، بشرط أن يكون أساس سعر الوحدة مقروءًا صراحةً ومطابقًا
+//   لأساس العمود (unitPriceBasis). تطابق الضرب وحده لا يثبت أن السعر شامل الضريبة، والخصم يُطرح مرة واحدة فقط.
+// أي تعارض بين الأرقام المطبوعة يُسقط التأييد.
 function lineSupported(it, basis, h) {
   const net = positive(it.lineNet), vat = toHalalas(it.lineVat), gross = it.printedLineBasis === 'inclusive' ? positive(it.printedLineTotal) : null
   const pair = net != null && vat != null && Number.isFinite(vat) && vat >= 0 && gross != null
   if (pair && net + vat !== gross) return false
-  const q = number(it.quantity), u = number(it.unitPrice)
-  const product = q != null && u != null && q > 0 && u > 0 ? Math.round(q * u * 100) : null
-  const near = target => product != null && target != null && Math.abs(product - target) <= 1
-  if (basis === 'inclusive') return pair || near(h)
-  return pair || near(h) || near(gross)
+  if (pair) return true
+  if (it.unitPriceBasis !== basis) return false
+  const q = number(it.quantity), u = number(it.unitPrice), d = it.discount == null || it.discount === '' ? 0 : toHalalas(it.discount)
+  if (q == null || u == null || q <= 0 || u <= 0 || d == null || !Number.isFinite(d) || d < 0) return false
+  return Math.abs(Math.round(q * u * 100) - d - h) <= 1
 }
 
-// عدد الأصناف إن طُبع: يطابق عدد البنود المقروءة أو مجموع الكميات (بعض الفواتير تعدّ القطع). وإلا فقد نقص صنف أو تكرر.
+// العدد المطبوع: «عدد الأصناف» يُقارن بعدد البنود المقروءة، و«مجموع الكميات/القطع» بمجموع الكميات المقروءة؛ لا يُقبل أحدهما
+// مكان الآخر. أي اختلاف، أو مجموع كميات تعذّر حسابه لنقص كمية، يمنع التصحيح الآلي.
 function countMismatch(inv) {
-  const n = number(inv.printedItemCount)
-  if (n == null) return null
-  const qty = inv.items.map(it => number(it.quantity))
-  const pieces = qty.every(q => q != null) ? qty.reduce((a, b) => a + b, 0) : null
-  return n === inv.items.length || (pieces != null && Math.abs(n - pieces) < 1e-9) ? null : n
+  const out = [], lines = number(inv.printedItemCount), pieces = number(inv.printedQuantityTotal)
+  if (lines != null && lines !== inv.items.length) out.push(`عدد الأصناف المطبوع ${lines} لا يساوي عدد البنود المقروءة ${inv.items.length}؛ قد يكون صنف ناقصًا أو مكررًا`)
+  if (pieces != null) {
+    const qty = inv.items.map(it => number(it.quantity))
+    const sum = qty.every(q => q != null) ? qty.reduce((a, b) => a + b, 0) : null
+    if (sum == null) out.push(`مجموع الكميات المطبوع ${pieces} لا يمكن مطابقته لأن كمية بعض البنود غير مقروءة`)
+    else if (Math.abs(sum - pieces) > 1e-9) out.push(`مجموع الكميات المطبوع ${pieces} لا يساوي مجموع الكميات المقروءة ${Math.round(sum * 1000) / 1000}`)
+  }
+  return out.length ? out : null
 }
 
 // كل صنف يُطبع أحيانًا بثلاثة أسطر: صافي قبل الضريبة، وضريبته، وإجماليه الشامل. إذا لم تطابق القراءة الإجمالي بالهللة،
@@ -70,7 +78,7 @@ function printedLineColumn(inv) {
       : { ...it, readingAmount: it.readingAmount ?? it.amount, amount: fromHalalas(amounts[i]) }) }
     if (exactTotals(next).status !== 'match') continue
     const missing = countMismatch(inv)
-    if (missing != null) return { ...inv, readingWarnings: [...(inv.readingWarnings || []), `عدد الأصناف المطبوع ${missing} لا يساوي عدد البنود المقروءة ${inv.items.length}؛ قد يكون صنف ناقصًا أو مكررًا`] }
+    if (missing != null) return { ...inv, readingWarnings: [...(inv.readingWarnings || []), ...missing] }
     if (!inv.items.every((it, i) => lineSupported(it, basis, amounts[i]))) return null
     if (basis !== inv.amountsBasis) next.readingBasis = inv.amountsBasis ?? null
     next.readingCorrection = { rule: 'printed_line_column',

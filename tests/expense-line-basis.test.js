@@ -69,8 +69,8 @@ test('invoice discount and a VAT-exempt product survive unchanged', () => {
 
 test('printed nets are used only when they, plus printed VAT, match exactly', () => {
   const raw = { type: 'expense', totalAmount: 230, vatAmount: 30, amountsBasis: 'inclusive',
-    items: [{ description: 'Synthetic X', amount: 40, quantity: 2, unitPrice: 40, lineNet: 80 },
-      { description: 'Synthetic Y', amount: 60, quantity: 2, unitPrice: 60, lineNet: 120 }] }
+    items: [{ description: 'Synthetic X', amount: 40, quantity: 2, unitPrice: 40, unitPriceBasis: 'exclusive', lineNet: 80 },
+      { description: 'Synthetic Y', amount: 60, quantity: 2, unitPrice: 60, unitPriceBasis: 'exclusive', lineNet: 120 }] }
   const out = normalizeExpenseReading(raw)
   assert.equal(out.amountsBasis, 'exclusive')
   assert.equal(out.readingBasis, 'inclusive')
@@ -230,7 +230,7 @@ test('a matching sum is not enough: every line must be backed by its own printed
   assert.deepEqual(normalizeExpenseReading(structuredClone(inconsistent)), inconsistent)
   // Quantity x unit price backs a line without net/VAT rows (weighed item, one halala of rounding).
   const weighed = { ...base, items: [line('Synthetic A', 8.7, 1.3, 10, { amount: 8.7 }), line('Synthetic B', 8.7, 1.3, 10, { amount: 8.7 }),
-    { description: 'Synthetic weighed', amount: 8.7, quantity: 0.8, unitPrice: 12.49, printedLineTotal: 10, printedLineBasis: 'inclusive' }] }
+    { description: 'Synthetic weighed', amount: 8.7, quantity: 0.8, unitPrice: 12.49, unitPriceBasis: 'inclusive', printedLineTotal: 10, printedLineBasis: 'inclusive' }] }
   assert.equal(normalizeExpenseReading(weighed).amountsBasis, 'inclusive')
   // One line repeated and another missing: the printed item count catches it; nothing is changed, a warning is shown.
   const repeated = { ...base, printedItemCount: 4, items: three.map(it => ({ ...it, amount: it.lineNet })) }
@@ -240,5 +240,44 @@ test('a matching sum is not enough: every line must be backed by its own printed
   assert.match(out.readingWarnings.join(' '), /عدد الأصناف المطبوع 4 لا يساوي عدد البنود المقروءة 3/)
   // Genuinely repeated purchases with a count of lines or of pieces are accepted.
   assert.equal(normalizeExpenseReading({ ...repeated, printedItemCount: 3 }).amountsBasis, 'inclusive')
-  assert.equal(normalizeExpenseReading({ ...repeated, printedItemCount: 6, items: repeated.items.map(it => ({ ...it, quantity: 2 })) }).amountsBasis, 'inclusive')
+  assert.equal(normalizeExpenseReading({ ...repeated, printedItemCount: null, printedQuantityTotal: 6, items: repeated.items.map(it => ({ ...it, quantity: 2 })) }).amountsBasis, 'inclusive')
+})
+
+// ── 2026-10-28 round 3: quantity x unit price proves a line only with an explicitly read price basis and one discount;
+//    the printed line count and the printed quantity total are separate checks ──
+const priced = (patch = {}) => ({ type: 'expense', totalAmount: 30, vatAmount: 3.91, amountsBasis: 'exclusive',
+  items: [line('Synthetic A', 8.7, 1.3, 10, { amount: 8.7 }), line('Synthetic B', 8.7, 1.3, 10, { amount: 8.7 }),
+    { description: 'Synthetic priced', amount: 8.7, quantity: 2, unitPrice: 6, discount: 2, printedLineTotal: 10, printedLineBasis: 'inclusive', ...patch }] })
+
+test('quantity x unit price backs a line only when the price is read as VAT-inclusive and the line discount is taken once', () => {
+  const ok = normalizeExpenseReading(priced({ unitPriceBasis: 'inclusive' }))                 // 2 x 6 - 2 = 10
+  assert.equal(ok.amountsBasis, 'inclusive')
+  assert.equal(exactTotals(ok).status, 'match')
+  for (const [name, patch] of Object.entries({
+    noPriceBasis: {},                                                                          // product matches, basis unknown
+    netPrice: { unitPriceBasis: 'exclusive' },                                                 // a net price cannot back an inclusive total
+    discountIgnored: { unitPriceBasis: 'inclusive', unitPrice: 5 },                            // 2 x 5 = 10 only if the discount is skipped
+    discountTwice: { unitPriceBasis: 'inclusive', unitPrice: 7 },                              // 14 - 2 = 12 would need a second discount
+    badDiscount: { unitPriceBasis: 'inclusive', discount: 'x' },
+  })) {
+    const raw = priced(patch)
+    assert.deepEqual(normalizeExpenseReading(structuredClone(raw)), raw, name)
+  }
+})
+
+test('the printed line count and the printed quantity total are checked separately, never one for the other', () => {
+  const read = (patch, qty = 2) => ({ type: 'expense', totalAmount: 30, vatAmount: 3.91, amountsBasis: 'exclusive', ...patch,
+    items: three.map(it => ({ ...it, amount: it.lineNet, quantity: qty })) })
+  // 3 lines of 2 pieces each: lines = 3, pieces = 6
+  assert.equal(normalizeExpenseReading(read({ printedItemCount: 3, printedQuantityTotal: 6 })).amountsBasis, 'inclusive')
+  const piecesAsLines = normalizeExpenseReading(read({ printedItemCount: 6 }))
+  assert.equal(piecesAsLines.amountsBasis, 'exclusive')
+  assert.match(piecesAsLines.readingWarnings.join(' '), /عدد الأصناف المطبوع 6 لا يساوي عدد البنود المقروءة 3/)
+  const linesAsPieces = normalizeExpenseReading(read({ printedQuantityTotal: 3 }))
+  assert.equal(linesAsPieces.amountsBasis, 'exclusive')
+  assert.match(linesAsPieces.readingWarnings.join(' '), /مجموع الكميات المطبوع 3 لا يساوي مجموع الكميات المقروءة 6/)
+  const unknownQty = normalizeExpenseReading(read({ printedQuantityTotal: 6 }, null))
+  assert.equal(unknownQty.amountsBasis, 'exclusive')
+  assert.match(unknownQty.readingWarnings.join(' '), /لا يمكن مطابقته لأن كمية بعض البنود غير مقروءة/)
+  assert.ok(unknownQty.items.every((it, i) => it.amount === three[i].lineNet))
 })

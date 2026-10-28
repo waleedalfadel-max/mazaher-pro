@@ -119,4 +119,8 @@ test('three-row products: the reading path keeps printed inclusive line totals t
   assert.match(prompt, /لا تصف الصافي قبل الضريبة بأنه شامل/)
   assert.match(prompt, /lineNet \+ lineVat = printedLineTotal/)
   assert.match(prompt, /لا تعدّل رقمًا ليتحقق الفحص/)
+  assert.match(prompt, /"unitPriceBasis":null/)
+  assert.match(prompt, /"printedItemCount":null,"printedQuantityTotal":null/)
+  assert.match(prompt, /لا تضع أحدهما مكان الآخر/)
+  assert.match(prompt, /لا تستنتجه من نتيجة الضرب/)
 })
