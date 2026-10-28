@@ -6,9 +6,11 @@ import { categoryChoice } from './categoryLinks.js'
 import { STALE_MESSAGE } from './appVersion.js'
 import { isLoanRepayment, loanAmount, loanBlockReason, hasLoanPrincipalConfirmation } from './loanRepayment.js'
 import { bankTransferPayment } from './paymentWorkflow.js'
+import { validExpenseReviews } from './expenseReading.js'
 
 /** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
-export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : 'network' })
+// P0023: حارس الخادم رفض الاعتماد لأن قراءة المستند استُبدلت بعد فتحه (approval_private.reject_replaced_invoice)؛ الحماية في الخادم.
+export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : error?.code === 'P0023' ? 'reading_replaced' : 'network' })
 
 const LATIN = { '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9', '٫': '.' }
@@ -64,6 +66,20 @@ export function expenseBasisSuggestion(inv) {
   return exactTotals({ ...inv, amountsBasis: basis }).status === 'match' ? basis : null
 }
 
+/**
+ * الأساس الآخر يقترب من الإجمالي ويبقى فرق هللة أو هللتين: إرشاد للمراجع فقط. الفرق الباقي لا يُسمّى تقريبًا ولا يُسوّى
+ * تلقائيًا؛ قد يكون سببه أن الفاتورة تطبع إجمالي كل صنف شاملًا للضريبة وقُرئ الصافي بدله.
+ */
+export function expenseBasisNearMatch(inv) {
+  if (inv?.type !== 'expense' || expenseBasisSuggestion(inv)) return null
+  const current = exactTotals(inv)
+  if (current.status !== 'mismatch' || current.vat <= 0 || current.total <= 0 || Math.abs(current.diff) <= 2) return null
+  if (inv.items.some(item => toHalalas(item.amount) == null)) return null
+  const basis = current.basis === 'inclusive' ? 'exclusive' : 'inclusive'
+  const other = exactTotals({ ...inv, amountsBasis: basis })
+  return other.status === 'mismatch' && Math.abs(other.diff) <= 2 ? { basis, diff: other.diff } : null
+}
+
 /** توزيع الضريبة على البنود بالهللة بطريقة الباقي الأكبر (مطابق لـ approval_private.allocate). للعرض. */
 export function allocateHalalas(weights, amount) {
   const sum = weights.reduce((a, b) => a + b, 0)
@@ -116,7 +132,10 @@ export function reviewChanges(original, final) {
   const out = original ? [] : ['فاتورة أضافها المراجع (لم تكن في القراءة)']
   if (hasLoanPrincipalConfirmation(final)) out.push(`أكد المراجع بعد مراجعة كشف التمويل أن مبلغ ${final.loanPrincipalConfirmation.amount} لـ«${final.transType}» أصل قرض فقط، دون أرباح تمويل أو رسوم.`)
   if (!original) return out
-  if (final.roundingReview && !same(final.roundingReview,original.roundingReview)) out.push(`تسوية تقريب مؤكدة للبند ${final.roundingReview.line+1}: ${final.roundingReview.from} ← ${final.roundingReview.to}؛ ${final.roundingReview.reason}`)
+  const fix = final.readingCorrection
+  if (fix?.rule === 'printed_line_column') out.push(`صحّح التطبيق القراءة الأولى: ${fix.to.field === 'printedLineTotal' ? 'إجمالي كل صنف الشامل المطبوع' : 'صافي كل صنف المطبوع'} بدل المبالغ المقروءة (${fix.lines.map(l => `البند ${l.line + 1}: ${l.from} ← ${l.to}`).join('، ') || 'دون تغيير المبالغ'})، أساس ${fix.from.basis === 'exclusive' ? 'قبل الضريبة' : 'شامل'} ← ${fix.to.basis === 'exclusive' ? 'قبل الضريبة' : 'شامل'}؛ لأنه يطابق الإجمالي بالهللة ومؤيَّد بأسطر كل صنف.`)
+  if (final.basisReview && !same(final.basisReview,original.basisReview)) out.push(`أكد المراجع أساس مبالغ البنود من الصورة: ${final.basisReview.basis === 'exclusive' ? 'قبل الضريبة' : 'شاملة الضريبة'}`)
+  if (final.roundingReview && !same(final.roundingReview,original.roundingReview)) out.push(`تسوية فرق صغير أكدها المراجع للبند ${final.roundingReview.line+1}: ${final.roundingReview.from} ← ${final.roundingReview.to}؛ ${final.roundingReview.reason}`)
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
     if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${fieldText(original[k] ?? '—')}» ← «${fieldText(final[k] ?? '—')}»`)
@@ -138,7 +157,7 @@ export function reviewChanges(original, final) {
  * الخادم يحسب القيود والضريبة ويرفض الفرق.
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
-  inv = bankTransferPayment(inv)
+  inv = validExpenseReviews(bankTransferPayment(inv))   // تأكيد سقط بتغيير لاحق لا يُرسل
   const withdrawal = isOwnerWithdrawal(inv)
   if (withdrawal) { const reason = withdrawalBlockReason(inv, transTypes); if (reason) throw new Error(reason) }
   const loan = isLoanRepayment(inv)
@@ -241,7 +260,7 @@ export function approvalMessage(res) {
     already_approved: `اعتُمد هذا المستند مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. لم يُسجَّل شيء جديد.`,
     invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
     stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
-    reading_replaced: 'استُبدلت قراءة المستند؛ راجع القراءة الجديدة قبل الاعتماد.',
+    reading_replaced: 'استُبدلت قراءة هذا المستند بقراءة أحدث، فلم يُنفَّذ الإجراء ولم يُسجَّل شيء. راجع القراءة الجديدة (أعد فتح المستند إن لم تظهر) ثم أعد المحاولة.',
     bad_status: 'حالة المستند لا تسمح بالاعتماد.',
     empty: 'لا فواتير للاعتماد.',
     duplicate_in_batch: 'في المستند فاتورتان بالرقم نفسه للمورد نفسه.',
