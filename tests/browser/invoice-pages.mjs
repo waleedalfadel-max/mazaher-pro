@@ -52,6 +52,7 @@ const stubs = {
   auth: `export const useAuth = () => ({ role: 'purchasing', userName: 'Synthetic buyer', projectId: 'p1', projectName: 'Synthetic Co', branch: null })`,
   settings: `export const getProjectSettings = async () => ({ settings: {} }); export const getTransactionTypes = async () => ['🛒 مصروفات تشغيلية']`,
   analyze: `export const createAnalyzeFetch = () => async init => { const body = JSON.parse(init.body); window.readings.push(body)
+    const queued = window.replies && window.replies.shift(); if (queued) return { ok: true, status: 200, json: async () => queued }
     return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: JSON.stringify(window.reply) }], stop_reason: 'end_turn' }) } }
     export const AUTH_ERROR_CODES = new Set(); export class AnalysisAuthError extends Error {}`,
 }
@@ -170,6 +171,24 @@ try {
   assert.equal(await page.locator('[data-k="invoice-pages"] li').count(), 5)
   assert.match(await page.locator('.ts-note--error').innerText(), /الحد 5 صفحات للفاتورة الواحدة؛ لم تُضف 1 صورة/)
   check('at most five pages')
+
+  // 6. Together with the reading-failure fix (#35): an invalid reply twice while uploading grouped pages or separate files
+  //    stores each document exactly once, saves no reading, shows no reply text, and the retry is a single extra request.
+  const bad = { error: 'JSON_PARSE_ERROR', reason: 'invalid', stopReason: 'end_turn', outputTokens: 200, length: 990, position: 992 }
+  await page.evaluate(() => window.mountUpload()); await page.evaluate(b => { window.replies = [b, b] }, bad)
+  await page.getByRole('group', { name: 'طريقة الرفع' }).getByRole('button', { name: 'صور صفحات فاتورة واحدة' }).click()
+  await page.locator('input[type=file]').setInputFiles(files([['p1.png', png(600, 800, 1)], ['p2.png', png(600, 800, 2)]]))
+  await page.getByRole('button', { name: 'رفع الفاتورة (2 صفحات)' }).click()
+  await page.getByText('حُفظ 1 مستند للمراجعة').waitFor()
+  let fail = await page.evaluate(() => ({ docs: window.db.documents.map(d => [d.file_type, d.status, d.analysis_result ?? null]), stored: window.stored.length, readings: window.readings.length, deleted: window.deleted.length, text: document.body.innerText }))
+  assert.deepEqual(fail.docs, [['application/pdf', 'uploaded', null]]); assert.equal(fail.stored, 1); assert.equal(fail.readings, 2); assert.equal(fail.deleted, 0)
+  assert.match(fail.text, /محفوظ للمراجعة/); assert.doesNotMatch(fail.text, /JSON|النص الخام|position/)
+  await page.evaluate(() => window.mountUpload()); await page.evaluate(b => { window.replies = [b, b, b, b] }, bad)
+  await page.locator('input[type=file]').setInputFiles(files([['a.png', png(500, 700, 1)], ['b.png', png(500, 700, 2)]]))
+  await page.getByRole('button', { name: 'رفع 2 مستندات' }).click(); await page.getByText('حُفظ 2 مستند للمراجعة').waitFor()
+  fail = await page.evaluate(() => ({ docs: window.db.documents.map(d => [d.status, d.analysis_result ?? null]), stored: window.stored.length, readings: window.readings.length }))
+  assert.deepEqual(fail, { docs: [['uploaded', null], ['uploaded', null]], stored: 2, readings: 4 })
+  check('with #35: invalid replies store each document once, save no reading, show no reply text; one retry per reading')
 
   // 5. Review card: page count with a button per page; split suspicion warning; VAT counted twice blocks approval.
   const pdf = state.pdf
