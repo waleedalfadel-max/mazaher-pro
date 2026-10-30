@@ -142,6 +142,12 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 .rp-upload-warn { color: #6B4412 !important; }
 .rp-upload-file { display: block; font-size: 12.5px; color: var(--ts-muted); }
 .rp-upload-go { min-height: 48px; font-size: 15px; font-weight: 600; }
+.rp-pages { list-style: none; margin: 0; padding: 0; }
+.rp-page { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--ts-line-soft); }
+.rp-page:first-child { border-top: 0; }
+.rp-page-thumb { width: 56px; height: 72px; object-fit: contain; background: #fff; border: 1px solid var(--ts-line-soft); border-radius: 6px; flex: none; }
+.rp-page-name { flex: 1; min-width: 0; display: grid; overflow-wrap: anywhere; }
+.rp-page-actions { display: flex; gap: 2px; flex: none; }
 .rp-upload-picked { display: grid; gap: 12px; }
 .rp-upload-preview { width: 100%; max-height: 280px; object-fit: contain; border-radius: 10px; background: #F4F6F5; border: 1px solid var(--ts-line); }
 .rp-upload-branch { margin-top: 8px; }
@@ -713,3 +719,6 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 .rpt-page { min-width:0; grid-template-columns:minmax(0,1fr); }
 .rpt-page > *, .rpt-body, .rpt-tabs, .ts-tabs { min-width:0; max-width:100%; }
 .fa-card .ts-money, .lns-card .ts-money, .ldg-card .ts-money { justify-content:center; }
+.rp-pdf-pages { display: grid; gap: 10px; justify-items: center; text-align: center; }
+.rp-pdf-count { margin: 0; }
+.rp-pdf-page-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }

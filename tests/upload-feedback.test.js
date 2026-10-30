@@ -24,6 +24,7 @@ const mocks = {
     export const Note = ({ title, children, action }) => h('div', {}, title, children, action);
     export const Panel = ({ title, action, children }) => h('section', {}, title, action, children);
     export const Status = ({ children }) => h('span', {}, children);
+    export const Segment = ({ label, options = [], value, onChange }) => h('div', { 'aria-label': label }, ...options.map(o => h('button', { onClick: () => onChange(o.value), 'aria-pressed': o.value === value }, o.label)));
     export const Chip = ({ children }) => h('span', {}, children);
     export const Field = ({ label, hint, children }) => h('div', {}, label, children, hint);
     export const Select = ({ options = [], placeholder, ...p }) => h('select', p, ...options.map(o => h('option', { value: o.value }, o.label)));`,
@@ -31,7 +32,7 @@ const mocks = {
     export const DropZone = ({ onFiles, inputProps = {}, title }) => h('div', {}, title, h('input', { type: 'file', ...inputProps, onChange: e => onFiles(e.target.files) }));
     export const MyUploads = () => h('div', {});
     export const fileIcon = () => () => null;`,
-  'lucide-react': ['Ban', 'Building2', 'Camera', 'CircleAlert', 'CircleCheck', 'FileText', 'Info', 'LoaderCircle', 'Plus', 'RotateCcw', 'ShoppingCart', 'Upload', 'X']
+  'lucide-react': ['ArrowDown', 'ArrowUp', 'Ban', 'Building2', 'Camera', 'CircleAlert', 'CircleCheck', 'FileText', 'Info', 'LoaderCircle', 'Plus', 'RotateCcw', 'ShoppingCart', 'Trash2', 'Upload', 'X']
     .map(n => `export const ${n} = () => null;`).join('\n'),
 }
 for (const page of pages) {

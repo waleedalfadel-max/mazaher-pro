@@ -18,9 +18,11 @@ import { matchSupplier } from '../lib/supplierMatching'
 import { compareItemsToTotal } from '../lib/documentTotals'
 import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
-import { approvalMessage, buildInvoicePayload, exactTotals, expenseBasisSuggestion, expenseBasisNearMatch, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
+import { approvalMessage, buildInvoicePayload, exactTotals, vatExcess, expenseBasisSuggestion, expenseBasisNearMatch, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
 import ExpenseReadingHelp from '../components/ExpenseReadingHelp.jsx'
+import PdfPages from '../components/PdfPages.jsx'
+import { splitSuspicion } from '../lib/invoicePages.js'
 import { confirmExpenseBasis, withoutReviewConfirmations } from '../lib/expenseReading.js'
 // نسخة المراجعة من القراءة: بلا تأكيدات مراجع جاهزة (تأكيد أصل القرض، تأكيد الأساس، تسوية الفرق)
 const readingForReview = r => withoutReviewConfirmations(withoutLoanPrincipalConfirmation(r))
@@ -925,6 +927,7 @@ export default function PendingDocuments() {
       if (inv.type === 'expense' && inv.items?.length) {
         const t = exactTotals(inv)
         if (t.status !== 'match') { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: t.status === 'invalid' ? 'invalid_amount' : 'amounts_mismatch', difference: t.diff / 100, invoice_id: inv._id } }); return }
+        if (vatExcess(inv)) { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'vat_excess', invoice_id: inv._id } }); return }
       }
       if (inv.type === 'sales') {
         const c = salesReportCheck(inv)
@@ -1449,13 +1452,16 @@ function DocImagePanel({ doc, isImage, onOpenFile }) {
           <div className="rp-image-scale" style={{ transform: `scale(${zoom})` }}><img src={src} alt={doc.file_name} className="rp-doc-image" /></div>
         )}
         {!doc._loadingImg && src && !isImage && (
-          <div className="ts-empty"><Button variant="primary" icon={FileText} onClick={() => { if (doc._isUrl) window.open(doc._imageData, '_blank'); else openPdfBlob(doc._imageData, doc.file_name) }}>فتح الملف</Button></div>
+          <div className="ts-empty">{isPdfDoc(doc) ? <PdfPages data={doc._imageData} isUrl={doc._isUrl} fileName={doc.file_name} />
+            : <Button variant="primary" icon={FileText} onClick={() => { if (doc._isUrl) window.open(doc._imageData, '_blank'); else openPdfBlob(doc._imageData, doc.file_name) }}>فتح الملف</Button>}</div>
         )}
         {!doc._loadingImg && !src && <div className="ts-empty"><Button onClick={onOpenFile}>عرض الملف</Button></div>}
       </div>
     </Panel>
   )
 }
+
+const isPdfDoc = doc => doc.file_type === 'application/pdf' || /\.pdf$/i.test(doc.file_name || '')
 
 function openPdfBlob(base64, fileName) {
   const bytes = atob(base64)
@@ -1802,6 +1808,9 @@ function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
       {exact.status === 'invalid' && (
         <div className="rp-total-row rp-total-row--diff" role="status"><span>في المبالغ قيمة غير صالحة (رقم بأكثر من هللتين أو نص).</span></div>
       )}
+      {vatExcess(res) && (
+        <div className="rp-total-row rp-total-row--diff" role="status" data-k="vat-excess"><span>الضريبة أكبر مما يمكن لهذا الإجمالي بنسبة 15% (الحد {money(vatExcess(res).max / 100)}). قد تكون مكررة من عدة صفحات؛ طابقها مع ملخص الفاتورة. لا يُعتمد بها.</span><Money value={vatExcess(res).vat / 100} /></div>
+      )}
     </div>
   )
   return (
@@ -1945,9 +1954,9 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
   const canManual = !!onManualApprove && !readOnly && isV2 && !paused && !preparing && !busy && !doc._readingReviewRequired
   const invStatus = id => v2?.invoices?.find(i => i.id === id)
   const exact = isV2 && res?.type === 'expense' ? exactTotals(res) : null
-  const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid')
+  const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid' || !!vatExcess(res))
     : isV2 && isMultiInvoice && rawRes.invoices.some(x => (invStatus(x._id)?.status ?? 'pending') === 'pending'
-      && x.type === 'expense' && x.items?.length && ['mismatch', 'invalid'].includes(exactTotals(x).status))
+      && x.type === 'expense' && x.items?.length && (['mismatch', 'invalid'].includes(exactTotals(x).status) || !!vatExcess(x)))
   // الآجل لكل فاتورة في الصورة متعددة الفواتير: مورد من القائمة مطلوب، والاسم المشابه لمورد مسجل يُؤكَّد قبل الاعتماد
   const supplierBlocked = isMultiInvoice && rawRes.invoices.some(x => (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && (() => {
     const ctx = invoiceSupplierContext(null, x, true)
@@ -2093,6 +2102,14 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
         </Note>
       )}
       {/* فواتير متعددة في صورة واحدة */}
+      {analyzed && isMultiInvoice && splitSuspicion(rawRes.invoices) && (() => {
+        const [a, b] = splitSuspicion(rawRes.invoices).invoices
+        return <div data-k="split-suspicion"><Note tone="warning" icon={CircleAlert} title="قد تكون هذه صفحات فاتورة واحدة قُسّمت إلى عدة فواتير">
+          الفاتورتان {a + 1} و{b + 1} من المورد نفسه ومعهما دليل استمرار (الرقم نفسه، أو غياب الرقم أو الإجمالي في إحداهما). راجع كل صفحات
+          المستند قبل الاعتماد. لا يُدمج شيء تلقائيًا، وتبقى فحوص المطابقة كما هي: إن كانت فاتورة واحدة فصحّح البنود يدويًا أو أعد قراءة المستند،
+          ولا تعتمد الأجزاء منفصلة.
+        </Note></div>
+      })()}
       {analyzed && isMultiInvoice && (
         <Panel title={`${plural(rawRes.invoices.length, 'فاتورة واحدة', 'فاتورتان', 'فواتير', 'فاتورة')} في هذه الصورة`} icon={Layers} subtitle="افتح كل فاتورة لتعديلها. تُعتمد كلها معًا، أو كل فاتورة وحدها.">
           {expensesAtProjectLevel(setup?.settings) && doc._branchEditable && branches.length > 0 && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
@@ -2118,6 +2135,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                 approving={busy || doc._readingReviewRequired}
                 blocked={isV2 ? (decisionPending && (!doc._v2Error?.invoice_id || doc._v2Error.invoice_id === inv._id) ? decisionPending
                   : inv.type === 'expense' && inv.items?.length && ['mismatch', 'invalid'].includes(exactTotals(inv).status) ? 'البنود لا تطابق إجمالي هذه الفاتورة بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.'
+                  : inv.type === 'expense' && vatExcess(inv) ? approvalMessage({ code: 'vat_excess' })
                   : inv.type === 'sales' && !salesReportCheck(inv).ok ? salesReportCheck(inv).reasons[0] : null)
                   : inv.type === 'sales' && !salesReportCheck(inv).ok ? salesReportCheck(inv).reasons[0] : null} />
             ))}
