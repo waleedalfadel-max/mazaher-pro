@@ -203,6 +203,32 @@ test('رد غير قابل للتحليل يُعاد كخطأ JSON_PARSE_ERROR �
   assert.equal(calls.length, 1)
   assert.equal(res.statusCode, 200)
   assert.equal(res.body.error, 'JSON_PARSE_ERROR')
+  // 2026-10-30: لا يُعاد نص الرد ولا رسالة المحلّل (قد تضمّن مقتطفًا)؛ تشخيص بلا محتوى فقط
+  assert.equal(res.body.rawText, undefined)
+  assert.equal(res.body.parseError, undefined)
+  assert.equal(res.body.reason, 'invalid')
+  assert.ok(!JSON.stringify(res.body).includes('SECRET-INVOICE'))
+  assert.ok(!logs.join('\n').includes('SECRET-INVOICE'))
+})
+
+test('رد كامل بعلامة تنصيص غير مهرّبة داخل نص: invalid مع موضع الخطأ، دون أي نص من الرد', async () => {
+  const text = `{"rotation":0,"invoices":[{"type":"expense","items":[{"description":"${INVOICE_TEXT} 250"مل","amount":34.5}]}]}`
+  const { res } = await run({ provider: makeProvider({ content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: { output_tokens: 70 } }) })
+  assert.equal(res.body.error, 'JSON_PARSE_ERROR')
+  const { position, ...rest } = res.body
+  assert.deepEqual(rest, { error: 'JSON_PARSE_ERROR', reason: 'invalid', stopReason: 'end_turn', outputTokens: 70, length: text.length })
+  assert.ok(position === null || Number.isInteger(position))
+  assert.ok(!JSON.stringify(res.body).includes('SECRET-INVOICE') && !logs.join('\n').includes('SECRET-INVOICE'))
+})
+
+test('رد منقطع عند حد الطول يُوصف truncated ولا يُعاد منه شيء', async () => {
+  const text = `{"rotation":0,"invoices":[{"type":"expense","description":"${INVOICE_TEXT}","items":[{"amount":1`
+  const { res } = await run({ provider: makeProvider({ content: [{ type: 'text', text }], stop_reason: 'max_tokens', usage: { output_tokens: 4000 } }) })
+  assert.equal(res.body.error, 'JSON_PARSE_ERROR')
+  assert.equal(res.body.reason, 'truncated')
+  assert.equal(res.body.stopReason, 'max_tokens')
+  assert.equal(res.body.position, null)
+  assert.ok(!JSON.stringify(res.body).includes('SECRET-INVOICE'))
 })
 
 test('نقطة chat تحمل نفس الاشتراط', async () => {
