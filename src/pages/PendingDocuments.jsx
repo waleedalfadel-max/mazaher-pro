@@ -9,7 +9,7 @@ import { ArrowRight, Ban, Check, CircleAlert, FileSearch, FileText, FlaskConical
 import { Button, Chip, DateInput, Dialog, EmptyState, Field, GrowInput, IconButton, Input, Money, Note, Panel, SearchBox, Segment, Select, Status, Tabs, Textarea } from '../ui/components.jsx'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { analyzeDocument } from '../lib/claude'
+import { analyzeDocument, ReadingReplyError } from '../lib/claude'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
@@ -24,6 +24,13 @@ import ExpenseReadingHelp from '../components/ExpenseReadingHelp.jsx'
 import { confirmExpenseBasis, withoutReviewConfirmations } from '../lib/expenseReading.js'
 // نسخة المراجعة من القراءة: بلا تأكيدات مراجع جاهزة (تأكيد أصل القرض، تأكيد الأساس، تسوية الفرق)
 const readingForReview = r => withoutReviewConfirmations(withoutLoanPrincipalConfirmation(r))
+// فشل القراءة على الشاشة: رسالة عربية قصيرة وطريقة إعادة المحاولة. رد خدمة القراءة غير الصالح لا يُعرض؛ تشخيصه (بلا نص الرد)
+// في سجل المتصفح للدعم فقط.
+function readingFailure(e, retry) {
+  if (!(e instanceof ReadingReplyError)) return e?.message || 'تعذّرت القراءة.'
+  console.warn('[reading] رد غير صالح من خدمة القراءة', e.attempts)
+  return `${e.message} ${retry}`
+}
 import { accountDashboard } from '../lib/accountStatement.js'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
@@ -443,7 +450,7 @@ export default function PendingDocuments() {
         _isUrl: !!signedFileUrl,
         _showImage: true,
       })
-    } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: e.message }) }
+    } catch(e) { updateDoc(doc.id, { _state: 'idle', _error: readingFailure(e, 'اضغط «قراءة المستند» لإعادة المحاولة.') }) }
   }
 
   // إعادة قراءة مستند مقروء لم يُعتمد (20261025120000): قراءة جديدة للصورة الأصلية، ثم حفظ في الخادم يحتفظ بالقراءة السابقة
@@ -474,7 +481,7 @@ export default function PendingDocuments() {
       setDocs(ds => ds.map(d => d.id !== doc.id ? d : { ...next, _imageData: d._imageData, _isUrl: d._isUrl, _showImage: d._showImage }))
       if (modeOf(next) !== 'legacy') await prepareV2(next)
       updateDoc(doc.id, { _state: 'analyzed' }, true)
-    } catch (e) { updateDoc(doc.id, { _state: before === 'rereading' ? 'idle' : before, _error: e.message }, true) }
+    } catch (e) { updateDoc(doc.id, { _state: before === 'rereading' ? 'idle' : before, _error: readingFailure(e, 'بقيت القراءة السابقة كما هي؛ يمكنك إعادة المحاولة.') }, true) }
     finally { rereadLocks.current.delete(doc.id) }
   }
 

@@ -60,6 +60,21 @@ export function tryParseJSON(text) {
   throw new Error('No JSON object found')
 }
 
+/**
+ * وصف رد غير قابل للتحليل دون أي نص منه: هل انقطع عند حد الطول (stop_reason=max_tokens) أم وصل كاملًا لكنه JSON غير صالح،
+ * وطوله وموضع الخطأ (رقم فقط؛ رسائل V8 قد تضمّن مقتطفًا من النص فلا تُعاد).
+ */
+export function replyDiagnostic(data, rawText, parseError) {
+  const position = Number(String(parseError?.message || '').match(/position (\d+)/)?.[1])
+  return {
+    reason: data?.stop_reason === 'max_tokens' ? 'truncated' : 'invalid',
+    stopReason: typeof data?.stop_reason === 'string' ? data.stop_reason : null,
+    outputTokens: Number.isFinite(data?.usage?.output_tokens) ? data.usage.output_tokens : null,
+    length: rawText.length,
+    position: Number.isFinite(position) ? position : null,
+  }
+}
+
 function readApiKey() {
   return (process.env.CLAUDE_API_KEY || '').replace(/^﻿/, '').trim()
 }
@@ -126,13 +141,10 @@ export function createClaudeProxyHandler({
         try {
           tryParseJSON(rawText)
         } catch (parseError) {
-          logger.warn(`${tag} رد المزوّد غير قابل للتحليل كـJSON`)
-          // يُعاد للمستخدم الموثّق نفسه كما كان — المحتوى محتوى مستنده هو
-          return res.status(200).json({
-            error: 'JSON_PARSE_ERROR',
-            rawText: rawText.substring(0, 1000),
-            parseError: parseError.message,
-          })
+          // بيانات تشخيص بلا أي نص من الرد (محتوى فاتورة عميل): لا يُعاد الرد الخام للشاشة ولا يُسجَّل
+          const diagnostic = replyDiagnostic(data, rawText, parseError)
+          logger.warn(`${tag} رد المزوّد غير قابل للتحليل كـJSON`, diagnostic)
+          return res.status(200).json({ error: 'JSON_PARSE_ERROR', ...diagnostic })
         }
         res.setHeader('Content-Type', 'application/json; charset=utf-8')
       }
