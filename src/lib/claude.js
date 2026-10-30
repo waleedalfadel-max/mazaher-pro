@@ -28,6 +28,28 @@ const CLASSIFICATION_RULES = `قبل أي شيء آخر، اتبع هذه الق
 هذه القاعدة أقوى من أي شيء آخر في هذه التعليمات.
 لا تختار "مصروفات تشغيلية" لأي فاتورة فيها الكلمات أعلاه.`
 
+// حد طول رد القراءة، وحد إعادة الطلب الوحيدة بعد رد انقطع عنده
+const READ_MAX_TOKENS = 4000, READ_MAX_TOKENS_RETRY = 8000
+
+/**
+ * رد خدمة القراءة لا يُحلَّل (غير صالح، أو انقطع عند حد الطول): لا يُحفظ منه شيء ولا يُكمَّل. الرسالة عربية قصيرة للشاشة؛
+ * diagnostic بيانات تشخيص بلا أي نص من الرد (السبب والطول وموضع الخطأ) وattempts لكل محاولة.
+ */
+export class ReadingReplyError extends Error {
+  constructor(diagnostic, attempts = [diagnostic]) {
+    super(attempts.length > 1 ? 'وصل من خدمة القراءة رد غير صالح مرتين، ولم يُحفظ منه شيء.'
+      : diagnostic?.reason === 'truncated' ? 'انقطع رد خدمة القراءة قبل اكتماله، ولم يُحفظ منه شيء.'
+      : 'وصل من خدمة القراءة رد غير صالح، ولم يُحفظ منه شيء.')
+    this.name = 'ReadingReplyError'
+    this.diagnostic = diagnostic
+    this.attempts = attempts
+  }
+}
+const replyDiagnostic = data => ({ source: 'server', reason: data?.reason === 'truncated' ? 'truncated' : 'invalid',
+  stopReason: data?.stopReason ?? null, outputTokens: data?.outputTokens ?? null, length: data?.length ?? null, position: data?.position ?? null })
+const clientDiagnostic = (data, text) => ({ source: 'client', reason: data?.stop_reason === 'max_tokens' ? 'truncated' : 'invalid',
+  stopReason: data?.stop_reason ?? null, outputTokens: data?.usage?.output_tokens ?? null, length: text.length, position: null })
+
 function extractJSON(text) {
   let clean = text
     .replace(/```json\s*/gi, '')
@@ -335,8 +357,18 @@ ${paymentSourceRule}
 - المفتاح الخارجي دائماً هو "invoices" وهو مصفوفة حتى لو عنصر واحد — لا تُعد JSON مجرد object بدون invoices
 - JSON فقط بدون أي نص قبله أو بعده`
 
-  // قراءة واحدة لصورة/ملف؛ تُكرَّر مرة واحدة فقط للصورة المدوّرة بعد تدويرها مستقيمة (src/lib/readingImage.js)
+  // قراءة واحدة لصورة/ملف؛ تُكرَّر مرة واحدة فقط للصورة المدوّرة بعد تدويرها مستقيمة (src/lib/readingImage.js).
+  // رد لا يُحلَّل يُعاد طلبه مرة واحدة فقط (قراءة فقط، لا حفظ بينهما)؛ المنقطع عند حد الطول يُعاد بحد أعلى. لا يُكمَّل رد ناقص.
   async function readOnce(block) {
+    try { return await readAttempt(block, READ_MAX_TOKENS) }
+    catch (e) {
+      if (!(e instanceof ReadingReplyError)) throw e
+      try { return await readAttempt(block, e.diagnostic.reason === 'truncated' ? READ_MAX_TOKENS_RETRY : READ_MAX_TOKENS) }
+      catch (again) { throw again instanceof ReadingReplyError ? new ReadingReplyError(again.diagnostic, [e.diagnostic, again.diagnostic]) : again }
+    }
+  }
+
+  async function readAttempt(block, maxTokens) {
   const res = await analyzeFetch({
     method: 'POST',
     headers: {
@@ -344,7 +376,7 @@ ${paymentSourceRule}
     },
     body: await prepareReadingRequest({
       model: MODEL,
-      max_tokens: 4000,
+      max_tokens: maxTokens,
       system: `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
       messages: [{
         role: 'user',
@@ -369,16 +401,14 @@ ${paymentSourceRule}
     throw new Error(`خطأ من Claude API: ${msg}`)
   }
 
-  // فشل JSON parsing في الـ server
-  if (data.error === 'JSON_PARSE_ERROR') {
-    throw new Error(`خطأ في تحليل الرد:\n${data.parseError}\n\nالنص الخام:\n${data.rawText}`)
-  }
+  // فشل JSON parsing في الـ server: بلا نص الرد، بيانات تشخيص فقط
+  if (data.error === 'JSON_PARSE_ERROR') throw new ReadingReplyError(replyDiagnostic(data))
 
   const text = data.content[0].text.trim()
 
   const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim()
   const result = extractJSON(clean)
-  if (!result) throw new Error('لا يوجد JSON صالح في الرد')
+  if (!result) throw new ReadingReplyError(clientDiagnostic(data, clean))
   return result
   }
 
@@ -468,7 +498,7 @@ JSON فقط بدون أي نص أو markdown قبله أو بعده.`
     throw new Error(`خطأ من Claude API: ${msg}`)
   }
   if (data.error === 'JSON_PARSE_ERROR') {
-    throw new Error(`خطأ في تحليل رد الصفحة${pageLabel ? ` (${pageLabel})` : ''}:\n${data.parseError}`)
+    throw Object.assign(new Error(`تعذّر تحليل رد الصفحة${pageLabel ? ` (${pageLabel})` : ''}، ولم يُحفظ منه شيء.`), { diagnostic: replyDiagnostic(data) })
   }
 
   const text  = data.content[0].text.trim()
@@ -533,7 +563,7 @@ JSON فقط بدون أي نص أو markdown قبله أو بعده.`
     throw new Error(`خطأ من Claude API: ${msg}`)
   }
   if (data.error === 'JSON_PARSE_ERROR') {
-    throw new Error(`خطأ في تحليل رد كشف التطبيق:\n${data.parseError}`)
+    throw Object.assign(new Error('تعذّر تحليل رد كشف التطبيق، ولم يُحفظ منه شيء.'), { diagnostic: replyDiagnostic(data) })
   }
 
   const text  = data.content[0].text.trim()

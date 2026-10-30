@@ -162,12 +162,14 @@ const failures = [
 for (const page of pages) {
   for (const [name, response] of failures) {
     test(`${page}: ${name} يحفظ المستند للمراجعة دون إظهار نجاح التحليل`, async () => {
-      const app = harness(page, { responses: [response] })
+      // 2026-10-30: only an unparseable reply is requested once more (read-only, limited); every other failure is not retried
+      const unparseable = response.body?.error === 'JSON_PARSE_ERROR'
+      const app = harness(page, { responses: unparseable ? [response, response] : [response] })
       const output = text(await app.upload())
       assert.equal(app.uploadCount, 1)
       assert.equal(app.documents.length, 1)
       assert.equal(app.documents[0].status, 'uploaded')
-      assert.equal(app.calls.length, 1)
+      assert.equal(app.calls.length, unparseable ? 2 : 1)
       assert.match(output, /محفوظ للمراجعة/)
       assert.match(output, /لا حاجة لرفعه مرة أخرى/)
       assert.doesNotMatch(output, /تم التحليل|تم استلام المستند|تعذّر حفظ المستندات|PRIVATE_|CLAUDE_API_KEY/)

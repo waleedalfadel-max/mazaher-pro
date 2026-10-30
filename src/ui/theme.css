@@ -191,7 +191,7 @@ select.ts-input {
 /* ── التنبيهات ───────────────────────────────────────────────────────────── */
 .ts-note { display: flex; gap: 10px; align-items: flex-start; border: 1px solid #DCEBE5; background: #F4F9F6; border-radius: 9px; padding: 11px 13px; color: #3F6A60; font-size: 13px; line-height: 1.7; }
 .ts-note > svg { margin-top: 3px; }
-.ts-note-body { flex: 1; min-width: 0; }
+.ts-note-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ts-note-body strong { display: block; font-weight: 600; }
 .ts-note--info { border-color: #D3E7E8; background: #F1F8F8; color: #2F6469; }
 .ts-note--warning { border-color: #EBD9B6; background: #FBF5EA; color: #7A4F1A; }
