@@ -7,7 +7,7 @@ import { createAnalyzeFetch } from './analyzeRequest'
 import { normalizeSalesReading } from './salesReport.js'
 import { normalizeReceiptReading } from './supplierReceipts.js'
 import { normRotation, uprightImage } from './readingImage.js'
-import { prepareReadingRequest, readingSizeError } from './readingRequest.js'
+import { prepareReadingRequest, readingSizeError, READING_REQUEST_LIMIT } from './readingRequest.js'
 
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
 
@@ -113,7 +113,7 @@ function normalizeMimeType(mimeType, fileName = '') {
   return t
 }
 
-export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '', categories = [], projectName = '', transTypes = [], extractSupplierName = false, settings = {}) {
+export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy = '', categories = [], projectName = '', transTypes = [], extractSupplierName = false, settings = {}, options = {}) {
   const mime    = normalizeMimeType(mimeType, fileName)
   const isImage = VALID_IMAGE_TYPES.includes(mime)
   const isPdf   = mime === 'application/pdf'
@@ -266,6 +266,13 @@ ${lines.join('\n')}
 إذا كان هناك أكثر من مستند: أرجع كل واحد كعنصر مستقل في مصفوفة invoices.
 لا تدمج فاتورتين في فاتورة واحدة، ولا تتجاهل أي فاتورة ثانية تظهر في الصورة ولو جزئياً.
 
+مستند من عدة صفحات (ملف PDF أو صور صفحات مجمّعة):
+- الصفحات المتتالية فاتورة واحدة فقط عند وجود دليل استمرار: المورد نفسه، ومعه علامة استمرار مطبوعة مثل «صفحة 1 من 2» أو «يتبع» أو «مرحّل/منقول من الصفحة السابقة»، أو تكملة جدول الأصناف نفسه بلا ترويسة فاتورة جديدة. تطابق رقم الفاتورة وحده لا يكفي.
+- عند الاستمرار: أرجع invoice واحدًا فيه بنود كل الصفحات مرة واحدة وبترتيبها. سطر «المجموع المرحّل» أو «المنقول» أو «إجمالي الصفحة» ليس بندًا ولا يُجمع.
+- totalAmount وvatAmount من ملخص الفاتورة النهائي مرة واحدة. إن تكرر الإجمالي أو الضريبة في كل صفحة فلا تجمعهما. printedItemCount وprintedQuantityTotal من الملخص النهائي فقط.
+- صفحة مكررة (الأصناف نفسها بالأرقام نفسها مرتين) لا تُقرأ مرتين؛ اذكرها في readingWarnings. وإن دلّ الترقيم على صفحة ناقصة (مثل «صفحة 3 من 3» دون الثانية) فاذكر ذلك في readingWarnings ولا تخترع بنودها.
+- صفحات لمورد آخر، أو بترويسة فاتورة جديدة برقم مختلف بلا علامة استمرار، فاتورة مستقلة في invoices.
+
 ${transTypesSection}
 ${workflow ? `تحويل بين حسابين بنكيين تملكهما المنشأة: type="transfer" وtransType="${BANK_TRANSFER_TYPE}" وpaySource="bank"، مع amount وdate وdescription. المراجع يختار حساب الخروج وحساب الدخول من الحسابات المسجلة؛ لا تخمّن معرفاتهما. لا يكفي اسم المستفيد أو لفظ تحويل وحده لإثبات أنه تحويل داخلي.` : ''}
 ${bankCustody ? 'هذه المنشأة تستخدم حسابًا بنكيًا للمشتريات اسمه حساب العهدة. ليس عهدة موظف ولا custody. إيصال تمويله من حساب المنشأة الرئيسي تحويل بين حسابين بنكيين، وفاتورة الشراء منه expense بمصدر bank. لا تستخدم صرف عهدة الموظف لهذا الحساب.' : ''}
@@ -349,7 +356,7 @@ ${paymentSourceRule}
 - الخصم: إن طُبع خصم على سطر بعينه فمبلغ البند amount هو بعد خصمه، وضع الخصم في "discount" داخل البند. وإن طُبع خصم على إجمالي الفاتورة فضعه موجبًا في "invoiceDiscount" على مستوى الفاتورة، ولا تطرحه من البنود. لا تكتب بندًا سالبًا للخصم أبدًا. المرتجع ليس خصمًا.
 - category_main: انسخ الاسم حرفياً من القائمة أعلاه بما فيه الإيموجي — ممنوع اختراع أسماء جديدة أو تعديل الأسماء
 - category_sub: انسخ الاسم حرفياً من الفرعيات تحت category_main المختار — إذا لا يوجد فرعي مناسب اتركه فارغاً ""${supplierNameRule}
-- إذا الصورة تحتوي على أكثر من فاتورة أو إيصال منفصل (مثلاً فاتورتان في صفحة أو صور مجمّعة): استخرج كل فاتورة بشكل مستقل
+- إذا الصورة تحتوي على أكثر من فاتورة أو إيصال منفصل (مثلاً فاتورتان في صفحة أو صور مجمّعة): استخرج كل فاتورة بشكل مستقل. صفحات الفاتورة الواحدة ليست فواتير منفصلة (انظر «مستند من عدة صفحات» أعلاه)
 - في جميع الحالات أعد النتيجة بهذا الشكل الموحّد: {"rotation":0,"invoices":[{...الفاتورة الأولى بنفس الحقول المعتادة...},{...الفاتورة الثانية...}]}
 - إذا كانت فاتورة واحدة فقط: {"rotation":0,"invoices":[{...الفاتورة...}]}
 - rotation: كم درجة تُدار الصورة باتجاه عقارب الساعة ليصبح نص المستند مستقيمًا للقراءة (0 أو 90 أو 180 أو 270). مستقيم ⇒ 0.
@@ -410,6 +417,14 @@ ${paymentSourceRule}
   const result = extractJSON(clean)
   if (!result) throw new ReadingReplyError(clientDiagnostic(data, clean))
   return result
+  }
+
+  // قياس طلب القراءة الفعلي بالتعليمات نفسها دون إرساله (صفحات فاتورة مجمّعة قبل رفعها). الحقول نفسها التي يرسلها readOnce.
+  if (options.measureOnly) {
+    const body = JSON.stringify({ model: MODEL, max_tokens: 4000,
+      system: `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
+      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }] })
+    return { requestBytes: new TextEncoder().encode(body).byteLength, limit: READING_REQUEST_LIMIT }
   }
 
   let result = await readOnce(contentBlock)

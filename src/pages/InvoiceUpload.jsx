@@ -6,8 +6,9 @@ import { compressImage } from '../lib/imageCompress'
 import { analyzeDocument } from '../lib/claude'
 import { savedDocumentWarning } from '../lib/analysisFeedback'
 import { Ban, Camera, CircleAlert, CircleCheck, FileText, LoaderCircle, Plus, RotateCcw, Upload, X } from 'lucide-react'
-import { Button, IconButton, Note, Panel, Status } from '../ui/components.jsx'
+import { Button, IconButton, Note, Panel, Segment, Status } from '../ui/components.jsx'
 import { DropZone, MyUploads, fileIcon } from '../components/UploadKit.jsx'
+import InvoicePagesComposer from '../components/InvoicePagesComposer.jsx'
 import { getProjectSettings, getTransactionTypes } from '../lib/projectSettings.js'
 import { activeCategories } from '../lib/categorySettings'
 
@@ -41,6 +42,8 @@ export default function InvoiceUpload() {
   const [myDocs, setMyDocs]             = useState([])
   const [myDocsLoading, setMyDocsLoading] = useState(true)
   const [deleteError, setDeleteError]   = useState('')
+  // «files»: كل ملف مستند مستقل (الافتراضي). «pages»: صور صفحات فاتورة واحدة تُجمع في PDF واحد (InvoicePagesComposer)
+  const [mode, setMode] = useState('files')
   const inputRef = useRef()
 
   const loadMyDocs = useCallback(async () => {
@@ -93,22 +96,41 @@ export default function InvoiceUpload() {
     setFiles(prev => prev.map((f, i) => i === index ? { ...f, ...patch } : f))
   }
 
-  async function upload() {
-    if (!files.some(f => f.status === 'pending')) return
-    setUploading(true)
-
-    // القراءة الآلية تقترح من التصنيفات المتاحة للاستعمال الجديد فقط (المعطّل يبقى للقيود السابقة)
+  // القراءة الآلية تقترح من التصنيفات المتاحة للاستعمال الجديد فقط (المعطّل يبقى للقيود السابقة)
+  async function readingContext() {
     const { data: allCats } = await supabase.from('categories')
       .select('id,name,parent_id,type,sort_order,is_active')
       .eq('project_id', projectId).order('sort_order')
     const cats = activeCategories(allCats)
     const [readingSettings, readingTypes] = await Promise.all([getProjectSettings(projectId),getTransactionTypes(projectId)])
+    return { cats, readingSettings, readingTypes }
+  }
 
-    for (let i = 0; i < files.length; i++) {
-      if (files[i].status !== 'pending') continue
+  // حجم طلب القراءة الفعلي لصفحات فاتورة مجمّعة، بالتعليمات والتصنيفات نفسها، قبل رفعها (لا إرسال)
+  async function measurePages(base64, name) {
+    const { cats, readingSettings, readingTypes } = await readingContext()
+    return analyzeDocument(base64, 'application/pdf', name, role, cats || [], projectName || '', readingTypes, false, readingSettings?.settings || {}, { measureOnly: true })
+  }
+
+  async function uploadPages(file, pageCount) {
+    const list = [{ file, status: 'pending', error: '', group: true, pageCount }]
+    setFiles(list)
+    await upload(list)
+  }
+
+  async function upload(list = files) {
+    if (!list.some(f => f.status === 'pending')) return
+    setUploading(true)
+
+    const { cats, readingSettings, readingTypes } = await readingContext()
+
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].status !== 'pending') continue
+      const files = list
       updateFile(i, { status: 'uploading', error: '' })
       try {
-        const uploadFile = files[i].file.type.startsWith('image/')
+        // صفحات الفاتورة المجمّعة PDF جاهز (ضُغطت صوره عند التجهيز)
+        const uploadFile = files[i].group ? files[i].file : files[i].file.type.startsWith('image/')
           ? await compressImage(files[i].file) : files[i].file
         const fileBase64 = await toBase64(uploadFile)
 
@@ -133,7 +155,10 @@ export default function InvoiceUpload() {
           const invoiceCount = result?.invoices?.length || 0
           if (!invoiceCount) throw new Error('EMPTY_ANALYSIS')
           if (invoiceCount > 1) {
-            if (role === 'purchasing' || role === 'cashier') {
+            // صفحات فاتورة واحدة قُرئت كعدة فواتير: خطأ قراءة لا خطأ رفع؛ يبقى المستند للمراجعة مع تنبيه، ولا دمج تلقائي
+            if (files[i].group) {
+              updateFile(i, { multiInvoiceWarning: true, invoiceCount })
+            } else if (role === 'purchasing' || role === 'cashier') {
               if (docData?.id) await supabase.from('documents').delete().eq('id', docData.id)
               updateFile(i, { status: 'error', error: '', multiInvoice: true, invoiceCount })
               continue
@@ -205,10 +230,21 @@ export default function InvoiceUpload() {
           <li>صوّر كل فاتورة في صورة منفصلة.</li>
           <li>يمكنك رفع أكثر من صورة في الوقت نفسه.</li>
           <li><strong>لا تضع أكثر من فاتورة في صورة واحدة.</strong></li>
+          <li>فاتورة طويلة من عدة صفحات: اختر «صور صفحات فاتورة واحدة» وصوّر كل صفحة.</li>
         </ul>
       </Note>
 
-      {!uploading && (
+      {!uploading && !files.some(f => f.status !== 'pending') && (
+        <Segment label="طريقة الرفع" value={mode} full
+          onChange={v => { if (v !== mode) { setMode(v); setFiles([]); setAllDone(false) } }}
+          options={[{ value: 'files', label: 'ملفات مستقلة — كل ملف فاتورة' }, { value: 'pages', label: 'صور صفحات فاتورة واحدة' }]} />
+      )}
+
+      {mode === 'pages' && !allDone && (
+        <InvoicePagesComposer disabled={uploading} measure={measurePages} onSubmit={uploadPages} />
+      )}
+
+      {mode === 'files' && !uploading && (
         <DropZone inputRef={inputRef} dragOver={dragOver} setDragOver={setDragOver} onFiles={handleFiles}
           title={files.length ? 'أضف صورًا أخرى: اسحبها هنا أو اضغط للاختيار' : 'اسحب الصور هنا أو اضغط للاختيار'}
           hint="فاتورة واحدة لكل صورة — يمكن رفع عدة صور معًا"
@@ -229,9 +265,11 @@ export default function InvoiceUpload() {
                     <span className="rp-doc-icon"><Icon className="ts-icon" aria-hidden="true" /></span>
                     <span className="rp-upload-name">
                       <strong>{entry.file.name}</strong>
-                      <small className="ts-num">{(entry.file.size / 1024).toFixed(0)} KB</small>
+                      <small className="ts-num">{entry.group ? `${entry.pageCount} صفحات في ملف واحد · ` : ''}{(entry.file.size / 1024).toFixed(0)} KB</small>
                       {entry.error && <small className={entry.status === 'review' ? 'rp-upload-warn' : 'ts-field-error'}>{entry.error}</small>}
-                      {entry.multiInvoiceWarning && <small className="rp-upload-warn">اكتُشف {entry.invoiceCount} فواتير — راجع القراءة</small>}
+                      {entry.multiInvoiceWarning && <small className="rp-upload-warn">{entry.group
+                        ? `قُرئت صفحات الفاتورة كـ${entry.invoiceCount} فواتير — سيراجعها المحاسب مع الصفحات، ولن يُدمج شيء تلقائيًا`
+                        : `اكتُشف ${entry.invoiceCount} فواتير — راجع القراءة`}</small>}
                     </span>
                   </span>
                   <Status tone={st.tone} busy={st.busy}>{STATUS_LABEL[entry.status]}</Status>
@@ -263,7 +301,7 @@ export default function InvoiceUpload() {
       )}
 
       {!uploading && pendingCount > 0 && (
-        <Button variant="primary" full icon={Upload} className="rp-upload-go" onClick={upload}>
+        <Button variant="primary" full icon={Upload} className="rp-upload-go" onClick={() => upload()}>
           رفع {pendingCount} {pendingCount === 1 ? 'مستند' : 'مستندات'}
         </Button>
       )}

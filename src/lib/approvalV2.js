@@ -56,6 +56,19 @@ export function exactTotals(inv) {
   return { ...base, status: diff === 0 ? 'match' : 'mismatch', diff }
 }
 
+/**
+ * ضريبة أكبر مما يمكن لإجمالي الفاتورة بنسبة 15% (2026-10-30): مثل ضريبة مكررة من عدة صفحات أو مقروءة مرتين. مطابقة البنود
+ * الشاملة لا تفحص الضريبة، والخادم يفحص فقط ألا تتجاوز الإجمالي؛ فيُمنع الاعتماد هنا حتى تُطابق مع ملخص الفاتورة.
+ * الحد = 15/115 من الإجمالي بالهللة، وهللة لكل بند لتقريب السطور. يعيد null أو { vat, max } بالهللة.
+ */
+export function vatExcess(inv) {
+  if (inv?.type !== 'expense') return null
+  const t = exactTotals(inv)
+  if (t.status === 'invalid' || t.vat <= 0 || t.total <= 0) return null
+  const max = Math.round(t.total * 15 / 115) + Math.max(1, (inv.items || []).length)
+  return t.vat > max ? { vat: t.vat, max } : null
+}
+
 /** اقتراح للمراجع فقط؛ لا يغيّر القراءة أو المبالغ ولا يسمح بالاعتماد قبل اختياره. */
 export function expenseBasisSuggestion(inv) {
   if (inv?.type !== 'expense') return null
@@ -260,6 +273,7 @@ export function approvalMessage(res) {
     already_approved: `اعتُمد هذا المستند مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. لم يُسجَّل شيء جديد.`,
     invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
     stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
+    vat_excess: 'ضريبة القيمة المضافة أكبر مما يمكن لإجمالي هذه الفاتورة بنسبة 15%؛ قد تكون مكررة من عدة صفحات أو مقروءة مرتين. طابقها مع ملخص الفاتورة. لم يُسجَّل شيء.',
     reading_replaced: 'استُبدلت قراءة هذا المستند بقراءة أحدث، فلم يُنفَّذ الإجراء ولم يُسجَّل شيء. راجع القراءة الجديدة (أعد فتح المستند إن لم تظهر) ثم أعد المحاولة.',
     bad_status: 'حالة المستند لا تسمح بالاعتماد.',
     empty: 'لا فواتير للاعتماد.',
