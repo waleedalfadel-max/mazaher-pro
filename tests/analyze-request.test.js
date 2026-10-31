@@ -6,7 +6,8 @@ import { createAnalyzeFetch, AnalysisAuthError } from '../src/lib/analyzeRequest
 const noSleep = async () => {}
 
 function fakeResponse(status, body) {
-  return { status, ok: status >= 200 && status < 300, clone: () => ({ json: async () => body }), json: async () => body }
+  // رد حقيقي: analyzeFetch يقرأ الجسم كاملًا داخل المهلة قبل إعادته
+  return new Response(JSON.stringify(body), { status })
 }
 
 function sessionWith(token) {
@@ -85,7 +86,7 @@ test('500 AUTH_UNAVAILABLE يُظهر فشل التحقق المؤقت لشاش�
   )
 })
 
-test('500 لسبب آخر يُعاد دون استهلاك جسم الرد أو اعتباره فشل دخول', async () => {
+test('500 لسبب آخر يُعاد بجسمه كاملًا ولا يُعتبر فشل دخول', async () => {
   const response = fakeResponse(500, { error: 'UPSTREAM_FAILED' })
   const analyzeFetch = createAnalyzeFetch({
     getSession: async () => sessionWith('tok'),
@@ -93,7 +94,7 @@ test('500 لسبب آخر يُعاد دون استهلاك جسم الرد أو 
     sleep: noSleep,
   })
   const res = await analyzeFetch({})
-  assert.equal(res, response)
+  assert.equal(res.status, 500)
   assert.deepEqual(await res.json(), { error: 'UPSTREAM_FAILED' })
 })
 

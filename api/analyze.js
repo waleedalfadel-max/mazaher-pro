@@ -1,4 +1,4 @@
-import { createClaudeProxyHandler } from './_claudeProxy.js'
+import { createClaudeProxyHandler, READING_UPSTREAM_TIMEOUT_MS } from './_claudeProxy.js'
 
 export const config = {
   api: {
@@ -9,5 +9,5 @@ export const config = {
 }
 
 // تحليل المستندات والكشوف — يتطلب مستخدماً موثّقاً عضواً بمنشأة، ويتحقق من أن
-// رد المزوّد JSON قبل إعادته
-export default createClaudeProxyHandler({ name: 'analyze', validateJson: true })
+// رد المزوّد JSON قبل إعادته. المهلة منسّقة مع maxDuration في vercel.json (انظر _claudeProxy.js)
+export default createClaudeProxyHandler({ name: 'analyze', validateJson: true, upstreamTimeoutMs: READING_UPSTREAM_TIMEOUT_MS })

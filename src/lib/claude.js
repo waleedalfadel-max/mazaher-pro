@@ -4,6 +4,8 @@ import { BANK_TRANSFER_TYPE, paymentWorkflow } from './paymentWorkflow.js'
 import { normalizeExpenseReading } from './expenseReading.js'
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
+import { ReadingTimeoutError } from './readingTimeout.js'
+export { ReadingTimeoutError }
 import { normalizeSalesReading } from './salesReport.js'
 import { normalizeReceiptReading } from './supplierReceipts.js'
 import { normRotation, uprightImage } from './readingImage.js'
@@ -394,9 +396,11 @@ ${paymentSourceRule}
 
   if (!res.ok) {
     if (res.status === 413) throw readingSizeError()
+    // التفاصيل التقنية لسجل المتصفح فقط؛ الشاشة ترى رسالة عربية
     let detail = ''
-    try { const e = await res.json(); detail = e?.error?.message || JSON.stringify(e) } catch {}
-    throw new Error(`Claude API error ${res.status}: ${detail}`)
+    try { const e = await res.json(); detail = e?.error?.message || e?.error || '' } catch {}
+    console.warn('[reading] خطأ من خادم القراءة', res.status, detail)
+    throw new Error(`تعذّر الوصول إلى خدمة القراءة الآن (رمز ${res.status})، ولم يُحفظ شيء.`)
   }
 
   const data = await res.json()

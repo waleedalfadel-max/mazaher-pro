@@ -75,6 +75,15 @@ export function replyDiagnostic(data, rawText, parseError) {
   }
 }
 
+/**
+ * مهلة القراءة على الخادم: حد الاستضافة لـ api/analyze.js في vercel.json هو 300 ثانية (أقصى ما تسمح به الخطة).
+ * ينتظر الوكيل المزوّد حتى 270 ثانية ثم يقطع النداء ويرد برمز READING_TIMEOUT، فيبقى هامش للتحقق من الدخول وإرسال
+ * الرد قبل أن تقطع الاستضافة الطلب (رد 504 بلا تفاصيل). المتصفح ينتظر أطول من حد الاستضافة (src/lib/analyzeRequest.js).
+ * لا إعادة محاولة عند انتهاء المهلة: السبب نفسه يتكرر، والتكلفة تتضاعف.
+ */
+export const READING_HOST_LIMIT_MS = 300_000
+export const READING_UPSTREAM_TIMEOUT_MS = 270_000
+
 function readApiKey() {
   return (process.env.CLAUDE_API_KEY || '').replace(/^﻿/, '').trim()
 }
@@ -86,6 +95,8 @@ export function createClaudeProxyHandler({
   fetchImpl = (...args) => fetch(...args),
   getApiKey = readApiKey,
   logger = console,
+  upstreamTimeoutMs = null,
+  now = () => Date.now(),
 } = {}) {
   const tag = `[${name}]`
 
@@ -112,6 +123,10 @@ export function createClaudeProxyHandler({
     const body = parseSafeBody(req, res)
     if (!body) return
 
+    // المهلة تشمل انتظار الرد وقراءة جسمه كاملًا؛ عند انقضائها يُقطع النداء ولا يُعاد شيء جزئي
+    const controller = upstreamTimeoutMs ? new AbortController() : null
+    const timer = controller ? setTimeout(() => controller.abort(), upstreamTimeoutMs) : null
+    const started = now()
     try {
       const upstream = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -121,9 +136,13 @@ export function createClaudeProxyHandler({
           'content-type':       'application/json',
         },
         body: JSON.stringify(body),
+        ...(controller ? { signal: controller.signal } : {}),
       })
 
       const data = await upstream.json()
+      if (timer) clearTimeout(timer)
+      // مدة المزوّد بلا أي محتوى: تكفي لمعرفة مصدر أي بطء لاحق
+      if (controller) logger.info?.(`${tag} مدة المزوّد`, { ms: now() - started, status: upstream.status })
 
       // كشف أخطاء Claude API (overloaded, invalid_request, etc.) — يُسجَّل نوعها فقط
       if (data?.type === 'error' || data?.error) {
@@ -151,6 +170,11 @@ export function createClaudeProxyHandler({
 
       return res.status(upstream.status).json(data)
     } catch (err) {
+      if (timer) clearTimeout(timer)
+      if (controller?.signal.aborted) {
+        logger.warn(`${tag} انتهت مهلة المزوّد`, { ms: now() - started, limitMs: upstreamTimeoutMs })
+        return res.status(504).json({ error: 'READING_TIMEOUT' })
+      }
       logger.error(`${tag} فشل نداء المزوّد:`, err?.name || 'Error')
       return res.status(500).json({ error: 'UPSTREAM_FAILED' })
     }
