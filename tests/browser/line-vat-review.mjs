@@ -1,7 +1,8 @@
 // Real React pages + isolated PostgreSQL data/RPC (real approval_prepare / approval_approve). Every outbound network request is blocked.
 // 2026-11-01: a fully synthetic multi-category invoice whose totals are right but one line VAT was read as 0. Clicking approve is refused
 // (line_vat_conflict) with nothing written; the reviewer corrects that line's VAT with a reason on the review screen and approves once;
-// the line that is truly zero stays 0; the original reading, corrected value and reason are saved.
+// the line that is truly zero stays 0; the original reading, corrected value and reason are saved. A correction that no longer fits
+// the amount or the VAT basis is not approved (blocked before sending); cancelling restores the original reading.
 import {build} from 'esbuild'
 import {createRequire} from 'node:module'
 import {readFile,mkdtemp,writeFile} from 'node:fs/promises'
@@ -110,6 +111,39 @@ try{
  assert.match(await loc('line-vat-text-2').innerText(),/ضريبة البند المقروءة: 0\.00/)
  assert.deepEqual(await written(),{ledger:0,items:0,status:'analyzed',approved:0})
  check('correction requires a reason; line 3 corrected 0.00 → 18.00 with its reason; line 2 (true zero) untouched; still nothing written')
+
+ // 2b. A correction that no longer fits the figures is not approved: amount, basis, invoice discount; nothing sent, nothing written
+ // Blocked either by the screen's own guard (approve disabled: amounts no longer match the printed lines) or, when clickable, by the stale-correction check;
+ // in both cases nothing is sent and nothing is written. Returns which guard stopped it.
+ const blockedAs=async(re)=>{await page.evaluate(()=>{window.lastApproval=null})
+  let how
+  if(await approveBtn.isDisabled()){how='disabled'}else{await approveBtn.click();await queue;const n=page.locator('.ts-note--error');await n.waitFor();assert.match(await n.innerText(),re);how='message'}
+  assert.equal(await page.evaluate(()=>window.lastApproval),null,'not sent to the server');assert.deepEqual(await written(),{ledger:0,items:0,status:'analyzed',approved:0});return how}
+ const guards=[]
+ // amount: line 3 120 → 125 and line 1 200 → 195 (invoice totals still match)
+ await page.getByLabel('مبلغ البند 3').fill('125');await page.getByLabel('مبلغ البند 1').fill('195')
+ assert.match(await loc('line-vat-stale-3').innerText(),/تغيّر مبلغ البند بعد التصحيح/)
+ guards.push('amount:'+await blockedAs(/صُحّحت ضريبة البند 3 ثم تغيّر مبلغه؛ التصحيح القديم لا يُعتمد.*لم يُسجَّل شيء/))
+ await page.getByLabel('مبلغ البند 3').fill('120');await page.getByLabel('مبلغ البند 1').fill('200')
+ assert.equal(await loc('line-vat-stale-3').count(),0)
+ // basis: exclusive → inclusive
+ await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود شاملة الضريبة',exact:true}).click()
+ assert.match(await loc('line-vat-stale-3').innerText(),/تغيّر أساس الضريبة بعد التصحيح/)
+ guards.push('basis:'+await blockedAs(/صُحّحت ضريبة البند 3 ثم تغيّر أساس الضريبة/))
+ await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود قبل الضريبة',exact:true}).click()
+ assert.equal(await loc('line-vat-stale-3').count(),0)
+ // line discount on line 3 after the correction (amount kept): the stale check itself must stop it
+ await page.getByLabel('خصم البند 3').fill('5')
+ assert.match(await loc('line-vat-stale-3').innerText(),/تغيّر خصم البند بعد التصحيح/)
+ guards.push('discount:'+await blockedAs(/صُحّحت ضريبة البند 3 ثم تغيّر خصمه/))
+ await page.getByLabel('خصم البند 3').fill('');assert.equal(await loc('line-vat-stale-3').count(),0)
+ console.log('GUARDS '+guards.join(' '))
+ check('stale correction (amount, basis, line discount changed): warning on the line and approval blocked before sending ('+guards.join(', ')+'); nothing written; restoring the figures clears it')
+ // undo: back to the original reading, then correct again
+ await loc('line-vat-undo-3').click();assert.match(await loc('line-vat-text-3').innerText(),/ضريبة البند المقروءة: 0\.00/)
+ await loc('line-vat-fix-3').click();await page.getByLabel('ضريبة البند 3 المصححة').fill('18');await page.getByLabel('سبب تصحيح ضريبة البند 3').fill('قُرئت صفرًا والمطبوع في المستند 18.00');await loc('line-vat-save-3').click()
+ assert.match(await loc('line-vat-text-3').innerText(),/صُحّحت: 0\.00 ← 18\.00/)
+ check('cancel correction restores the original reading; correcting again records it anew')
 
  // 3. Approve once with the correct details
  await page.evaluate(()=>{window.lastApproval=null});await approveBtn.click();await page.waitForFunction(()=>window.lastApproval?.ok===true);await queue
