@@ -64,3 +64,36 @@ test('تغيير الرمز المالي للتصنيف لاحقًا لا يعي
   const legacy = allocateEntry({ id: 'l', journal_number: 'QD-4', type: '🛒 مصروفات تشغيلية', category_id: 'c2' }, 90, [], cats)
   assert.deepEqual([v2[0].cls, legacy[0].cls], ['opex', 'opex'])
 })
+
+// 2026-10-31: ضريبة البنود المطبوعة (20261031130000) — صنف فيه بند معفى. صافي القيد يتوزع بصافي كل بند المحفوظ، لا بنسبة الإجمالي الشامل.
+test('بند معفى داخل صنف: صافي كل بند كما هو (مبلغه − ضريبته) والفرعي لا يأخذ حصة غيره', () => {
+  const e = { id: 'clean', journal_number: 'QD-2026-235', type: '🛒 مصروفات تشغيلية' }
+  const items = [
+    { ledger_entry_id: 'clean', journal_number: 'QD-2026-235', amount: 166.75, vat_amount: 21.75, category_main: 'النظافة', category_sub: 'منظفات' },
+    { ledger_entry_id: 'clean', journal_number: 'QD-2026-235', amount: 225, vat_amount: 0, category_main: 'النظافة', category_sub: 'وقاية' },
+    { ledger_entry_id: 'clean', journal_number: 'QD-2026-235', amount: 36.8, vat_amount: 4.8, category_main: 'النظافة', category_sub: 'أكياس' },
+  ]
+  const rows = allocateEntry(e, 402, items)
+  assert.deepEqual(rows.map(r => r.amount), [145, 225, 32])
+  // التوزيع بنسبة الإجمالي الشامل كان يعطي القفازات 211.65 بدل 225
+})
+
+test('قيد مرتجع (سالب) بصافي بنوده: الإشارة على كل بند والمجموع كما هو', () => {
+  const e = { id: 'ret', journal_number: 'QD-2026-300', type: '🥩 تكلفة البضاعة المباعة' }
+  const items = [
+    { ledger_entry_id: 'ret', journal_number: 'QD-2026-300', amount: 115, vat_amount: 15, category_main: 'أ' },
+    { ledger_entry_id: 'ret', journal_number: 'QD-2026-300', amount: 50, vat_amount: 0, category_main: 'ب' },
+  ]
+  assert.deepEqual(allocateEntry(e, -150, items).map(r => r.amount), [-100, -50])
+})
+
+test('بلا ضريبة بند أو صافٍ لا يطابق القيد: التوزيع النسبي كما كان تمامًا', () => {
+  const e = { id: 'x', journal_number: 'QD-2026-301', type: '🥩 تكلفة البضاعة المباعة' }
+  const noVat = [
+    { ledger_entry_id: 'x', journal_number: 'QD-2026-301', amount: 230, category_main: 'أ' },
+    { ledger_entry_id: 'x', journal_number: 'QD-2026-301', amount: 172.5, category_main: 'ب' },
+  ]
+  assert.deepEqual(allocateEntry(e, 350, noVat).map(r => r.amount), [200, 150])
+  const mismatch = noVat.map(it => ({ ...it, vat_amount: 10 }))   // صافيه 382.5 ≠ 350 (مثلًا قيد بخصم أو بيانات قديمة)
+  assert.deepEqual(allocateEntry(e, 350, mismatch).map(r => r.amount), [200, 150])
+})

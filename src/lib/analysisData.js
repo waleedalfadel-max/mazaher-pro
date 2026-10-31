@@ -60,7 +60,7 @@ export async function loadAnalysisRows(client, { projectId, branch = 'all', from
   // بنود المستندات لكل رقم قيد، كاملة ولو تجاوزت الحد (كما في التقارير)
   const jns = [...new Set(entries.data.filter(e => e.journal_number).map(e => e.journal_number))]
   const items = await fetchByChunks(jns, 100, chunk => fetchEveryRow(() => client.from('document_items')
-    .select('id,journal_number,ledger_entry_id,category_id,subcategory_id,description,amount,category_main,category_sub')
+    .select('id,journal_number,ledger_entry_id,category_id,subcategory_id,description,amount,vat_amount,category_main,category_sub')
     .eq('project_id', projectId).in('journal_number', chunk).order('id')))
   if (items.error) throw new AnalysisLoadError('بنود المستندات', items.error)
 

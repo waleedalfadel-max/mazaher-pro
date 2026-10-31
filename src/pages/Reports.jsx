@@ -336,7 +336,7 @@ function ReportsPage() {
     const jnSet = [...new Set((ledgerFull||[]).filter(e => e.journal_number).map(e => e.journal_number))]
     const { data: docItemsData, error: itemsError } = await fetchByChunks(jnSet, 100, chunk => fetchEveryRow(() => supabase
       .from('document_items')
-      .select('id,journal_number,ledger_entry_id,category_id,subcategory_id,description,amount,category_main,category_sub')
+      .select('id,journal_number,ledger_entry_id,category_id,subcategory_id,description,amount,vat_amount,category_main,category_sub')
       .eq('project_id', projectId)
       .in('journal_number', chunk)
       .order('id')))
