@@ -30,8 +30,13 @@ export function allocateEntry(entry, amount, items, categoriesById = {}) {
   }
   const totalH = Math.round((Number(amount) || 0) * 100)
   const sign = totalH < 0 ? -1 : 1, absH = Math.abs(totalH)
-  const shares = weights.map(w => Math.floor(absH * w / totalW))
-  let rest = absH - shares.reduce((s, x) => s + x, 0)
+  // صافي كل بند محفوظ (المبلغ − ضريبته) ومجموعه = صافي القيد بالهللة ⇒ يُستعمل كما هو. ضريبة البنود المطبوعة (20261031130000)
+  // تجعل البند المعفى بلا ضريبة، فلا يصح توزيع الصافي بنسبة الإجمالي الشامل. غير ذلك (بيانات بلا ضريبة بند): التوزيع النسبي كما كان.
+  const nets = matching.map(it => it.vat_amount == null || it.vat_amount === '' ? null
+    : Math.round((Number(it.amount) || 0) * 100) - Math.round((Number(it.vat_amount) || 0) * 100))
+  const exact = nets.every(n => n != null && n >= 0) && nets.reduce((s, n) => s + n, 0) === absH
+  const shares = exact ? nets : weights.map(w => Math.floor(absH * w / totalW))
+  let rest = exact ? 0 : absH - shares.reduce((s, x) => s + x, 0)
   const order = weights.map((w, i) => ({ i, frac: (absH * w) % totalW })).sort((x, y) => y.frac - x.frac || x.i - y.i)
   for (let k = 0; rest > 0; k = (k + 1) % order.length, rest--) shares[order[k].i]++
   return matching.map((it, i) => {
