@@ -151,7 +151,7 @@ try{
  const di=await serial(()=>f.one('select approved_payload,original_reading,review_changes from approval_private.document_invoices where document_id=$1',[id]))
  const c=di.approved_payload.items[2].vatCorrection
  assert.deepEqual([c.original.lineVat,c.original.lineNet,c.original.printedLineTotal,c.value,c.reason,c.amount,c.discount,c.basis],[0,120,120,18,'قُرئت صفرًا والمطبوع في المستند 18.00',120,0,'exclusive'])
- assert.deepEqual([di.approved_payload.items[2].lineNet,di.approved_payload.items[2].printedLineTotal,di.approved_payload.items[2].amount],[120,138,120])
+ assert.deepEqual([di.approved_payload.items[2].lineNet,di.approved_payload.items[2].printedLineTotal,Number(di.approved_payload.items[2].amount)],[120,138,120])
  assert.equal(di.approved_payload.items[2].lineVat,18);assert.equal(di.approved_payload.items[1].lineVat,0);assert.equal(di.approved_payload.items[1].vatCorrection,undefined)
  assert.equal(di.original_reading.items[2].lineVat,0,'original reading kept unchanged')
  assert.ok((di.review_changes||[]).some(s=>s.includes('بند 3 — ضريبة البند: «0» ← «18»؛ السبب: قُرئت صفرًا')),JSON.stringify(di.review_changes))
