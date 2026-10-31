@@ -1,31 +1,37 @@
--- ضريبة البنود كما طُبعت وروجعت (2026-10-31).
--- كان الاعتماد يوزّع ضريبة الفاتورة على البنود بنسبة مبالغها (allocate)، فبند ضريبته المطبوعة 0 يُحمَّل ضريبة وتنقص ضريبة غيره، فتختلف ضريبة
--- كل تصنيف وإجماليه عن الورق (الإجمالي والضريبة والصافي صحيحة).
+-- ضريبة البنود كما طُبعت وروجعت (2026-10-31، مراجعة 2026-11-01).
+-- كان الاعتماد يوزّع ضريبة الفاتورة على البنود بنسبة مبالغها (allocate)، فبند ضريبته المطبوعة 0 يُحمَّل ضريبة وتنقص ضريبة غيره.
 -- ضريبة السطر المقروءة «صالحة» لبند فقط متى وصفت المبلغ المراجَع نفسه بعد أي خصم:
---   lineVat رقم صريح بهللتين على الأكثر وغير سالب (0 رقم صريح = ضريبة صفر؛ غيابه أو null أو نص = غير معروفة، لا صفر)،
---   lineNet + lineVat = printedLineTotal، ومبلغ البند بعد خصمه وحصته من خصم الفاتورة = lineNet (قبل الضريبة) أو printedLineTotal (الشامل)،
---   ولا تتجاوز 15% من lineNet بهامش هللتين. فأي تغيير في المبلغ أو في الخصم لم يعد يطابق الأسطر المطبوعة يُسقط صلاحيتها لذلك البند.
--- التوزيع:
---   ١) كل البنود صالحة ومجموعها = ضريبة الفاتورة ⇒ ضريبة كل بند كما طُبعت.
---   ٢) بعضها صالح وبعضها غير معروف: الصالح بضريبته المطبوعة (والصفر الصريح صفر)، والباقي من ضريبة الفاتورة يوزَّع نسبيًا على غير المعروف وحده،
---      متى كان الباقي بين 0 و15% من صافيها.
---   ٣) غير ذلك (أرقام غير متسقة): ضريبة الفاتورة كلها نسبيًا على كل البنود عدا ذات الصفر الصريح الصالح؛ فإن لم يبقَ بند يحمل ضريبة والضريبة
---      موجبة ⇒ null فيتوقف الاعتماد للمراجعة (line_vat_conflict).
---   ٤) لا ضريبة سطر صالحة في أي بند (بيانات قديمة أو قراءة بلا أسطر) ⇒ التوزيع النسبي كما كان تمامًا.
+--   lineVat رقم صريح بهللتين على الأكثر وغير سالب (0 = ضريبة صفر؛ غيابه أو null أو نص = غير معروفة، لا صفر)، lineNet + lineVat = printedLineTotal،
+--   مبلغ البند بعد خصمه وحصته من خصم الفاتورة = lineNet (قبل الضريبة) أو printedLineTotal (الشامل)، ولا تتجاوز 15% من lineNet بهامش هللتين.
+--   أي تغيير في المبلغ أو في الخصم لم يعد يطابق السطر المطبوع يجعل ضريبة ذلك البند غير معروفة.
+-- النتيجة jsonb: {"ok":true,"vats":[...],"mode":...} أو {"ok":false,"reason":...} فيتوقف الاعتماد للمراجعة دون تسجيل شيء (line_vat_conflict):
+--   legacy  — لا بند فيه lineVat رقمًا أصلًا (قراءات قديمة بلا ضريبة بنود): التوزيع النسبي كما كان تمامًا، بلا أي فحص جديد.
+--   exact   — كل البنود صالحة ومجموعها = ضريبة الفاتورة: ضريبة كل بند كما طُبعت.
+--   remainder — بعضها غير معروف: الصالح بضريبته المطبوعة (والصفر الصريح صفر)، والباقي يوزَّع نسبيًا على غير المعروف وحده، ثم يُفحص كل بند منها
+--     على حدة: حصته لا تتجاوز 15% من مبلغه قبل الضريبة (بهامش هللتين).
+--   تعارض (لا توزيع بديل صامت):
+--     sum_mismatch       — كل البنود صالحة ومجموعها ≠ ضريبة الفاتورة؛
+--     negative_remainder — مجموع الصالح أكبر من ضريبة الفاتورة؛
+--     line_over_limit    — حصة بند غير معروف من الباقي تتجاوز 15% من مبلغه (مع رقم البند وحصته وحدّه)؛
+--     all_zero           — كل البنود صفر صريح صالح والفاتورة بضريبة.
 -- لا يُستنتج إعفاء من اسم الصنف. لا تتغير أي معادلة مطابقة ولا أي قيد معتمد سابق.
 set search_path = public;
 
+-- نسخة سابقة غير منشورة كانت تعيد numeric[]؛ تغيير نوع الناتج يتطلب الحذف أولًا (لا توجد في الإنتاج قبل هذه الهجرة)
+drop function if exists approval_private.item_vats(jsonb, numeric[], numeric, text, numeric);
 create or replace function approval_private.item_vats(p_items jsonb, p_after numeric[], p_vat numeric, p_basis text, p_disc numeric)
-returns numeric[] language plpgsql immutable set search_path = '' as $$
+returns jsonb language plpgsql immutable set search_path = '' as $$
 declare
-  n int := coalesce(array_length(p_after, 1), 0); x jsonb; k int := 0; l numeric; ln numeric; lt numeric; ok boolean;
-  st text[] := '{}'; lv numeric[] := '{}'; v numeric[]; known numeric := 0; rest numeric; cap numeric := 0;
-  u_idx int[] := '{}'; u_w numeric[] := '{}'; nz_idx int[] := '{}'; nz_w numeric[] := '{}'; share numeric[]; i int;
+  n int := coalesce(array_length(p_after, 1), 0); x jsonb; k int := 0; l numeric; ln numeric; lt numeric; ok boolean; any_data boolean := false;
+  st text[] := '{}'; lv numeric[] := '{}'; v numeric[]; known numeric := 0; rest numeric; lim numeric;
+  u_idx int[] := '{}'; u_w numeric[] := '{}'; share numeric[]; i int;
 begin
-  if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) <> n or n = 0 then return approval_private.allocate(p_after, p_vat); end if;
+  if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) <> n or n = 0 then
+    return jsonb_build_object('ok', true, 'mode', 'legacy', 'vats', to_jsonb(approval_private.allocate(p_after, p_vat)));
+  end if;
   for x in select value from jsonb_array_elements(p_items) loop
-    k := k + 1;
-    l := null;
+    k := k + 1; l := null;
+    any_data := any_data or coalesce(jsonb_typeof(x -> 'lineVat') = 'number', false);
     ok := coalesce(jsonb_typeof(x -> 'lineVat') = 'number' and jsonb_typeof(x -> 'lineNet') = 'number' and jsonb_typeof(x -> 'printedLineTotal') = 'number', false);
     if ok then
       l := (x ->> 'lineVat')::numeric; ln := (x ->> 'lineNet')::numeric; lt := (x ->> 'printedLineTotal')::numeric;
@@ -35,33 +41,31 @@ begin
     st := array_append(st, case when not ok then 'u' when l = 0 then 'z' else 'v' end);
     lv := array_append(lv, case when ok then l end);
   end loop;
-  if not ('z' = any (st) or 'v' = any (st)) then return approval_private.allocate(p_after, p_vat); end if;   -- (٤)
+  if not any_data then   -- قراءات قديمة بلا ضريبة بنود أصلًا
+    return jsonb_build_object('ok', true, 'mode', 'legacy', 'vats', to_jsonb(approval_private.allocate(p_after, p_vat)));
+  end if;
   v := array_fill(0::numeric, array[n]);
   for i in 1..n loop
     if st[i] = 'v' then known := known + lv[i]; v[i] := lv[i]; end if;
-    if st[i] = 'u' then u_idx := u_idx || i; u_w := u_w || p_after[i];
-      cap := cap + round((case when p_basis = 'inclusive' then p_after[i] * 100 / 115 else p_after[i] end) * 0.15, 2) + 0.02; end if;
-    if st[i] <> 'z' then nz_idx := nz_idx || i; nz_w := nz_w || p_after[i]; end if;
+    if st[i] = 'u' then u_idx := array_append(u_idx, i); u_w := array_append(u_w, p_after[i]); end if;
   end loop;
   if array_length(u_idx, 1) is null then
-    if known = p_vat then return v; end if;                                                                  -- (١)
-  else
-    rest := p_vat - known;
-    if rest >= 0 and rest <= cap then                                                                        -- (٢)
-      share := approval_private.allocate(u_w, rest);
-      for i in 1..array_length(u_idx, 1) loop v[u_idx[i]] := share[i]; end loop;
-      return v;
+    if known = p_vat then return jsonb_build_object('ok', true, 'mode', 'exact', 'vats', to_jsonb(v)); end if;
+    if known = 0 then return jsonb_build_object('ok', false, 'reason', 'all_zero', 'invoice_vat', p_vat); end if;
+    return jsonb_build_object('ok', false, 'reason', 'sum_mismatch', 'printed_vat', known, 'invoice_vat', p_vat);
+  end if;
+  rest := p_vat - known;
+  if rest < 0 then return jsonb_build_object('ok', false, 'reason', 'negative_remainder', 'printed_vat', known, 'invoice_vat', p_vat); end if;
+  share := approval_private.allocate(u_w, rest);
+  for i in 1..array_length(u_idx, 1) loop
+    -- حد كل بند على حدة: 15% من مبلغه قبل الضريبة بهامش هللتين
+    lim := round((case when p_basis = 'inclusive' then u_w[i] * 100 / 115 else u_w[i] end) * 0.15, 2) + 0.02;
+    if share[i] > lim then
+      return jsonb_build_object('ok', false, 'reason', 'line_over_limit', 'line', u_idx[i], 'line_vat', share[i], 'limit', lim, 'printed_vat', known, 'invoice_vat', p_vat);
     end if;
-  end if;
-  -- (٣) غير متسق: كل الضريبة على البنود عدا الصفر الصريح الصالح
-  if array_length(nz_idx, 1) is null then
-    if p_vat = 0 then return v; end if;
-    return null;
-  end if;
-  v := array_fill(0::numeric, array[n]);
-  share := approval_private.allocate(nz_w, p_vat);
-  for i in 1..array_length(nz_idx, 1) loop v[nz_idx[i]] := share[i]; end loop;
-  return v;
+    v[u_idx[i]] := share[i];
+  end loop;
+  return jsonb_build_object('ok', true, 'mode', 'remainder', 'vats', to_jsonb(v));
 end $$;
 revoke all on function approval_private.item_vats(jsonb, numeric[], numeric, text, numeric) from public, anon, authenticated;
 
@@ -77,7 +81,7 @@ declare
   v_gross numeric; v_label text; v_key text; v_num_raw text; v_num text; v_supplier uuid; v_sup_new boolean := false;
   v_link record; v_dec jsonb; v_branch text; v_branch_key text; v_branches jsonb; v_ch jsonb; v_sales_sum numeric; plan jsonb;
   v_cat public.categories; v_sub public.categories; v_key_cat text; v_res jsonb;
-  v_disc numeric; v_line_disc numeric[]; v_disc_shares numeric[]; v_after numeric[];
+  v_disc numeric; v_line_disc numeric[]; v_disc_shares numeric[]; v_after numeric[]; v_line_vat jsonb;
 begin
   v_date := nullif(inv ->> 'date', '')::date;
   if v_date is null then return approval_private.err('date_required', jsonb_build_object('invoice_id', v_id)); end if;
@@ -158,9 +162,10 @@ begin
     v_disc_shares := approval_private.allocate(v_amounts, v_disc);
     v_after := array(select v_amounts[i] - v_disc_shares[i] from generate_subscripts(v_amounts, 1) i order by i);
     -- ضريبة كل بند كما طُبعت وروجعت (20261031130000): القواعد في approval_private.item_vats أعلاه
-    v_vats := approval_private.item_vats(v_items, v_after, v_vat, v_basis, v_disc);
-    -- كل البنود ضريبتها المطبوعة صفر والفاتورة بضريبة: أرقام متعارضة، يتوقف الاعتماد للمراجعة
-    if v_vats is null then return approval_private.err('line_vat_conflict', jsonb_build_object('invoice_id', v_id, 'vat', v_vat)); end if;
+    v_line_vat := approval_private.item_vats(v_items, v_after, v_vat, v_basis, v_disc);
+    -- ضرائب مطبوعة صالحة لا تتسق مع الفاتورة: يتوقف الاعتماد للمراجعة دون تسجيل شيء، بلا توزيع بديل صامت
+    if not (v_line_vat ->> 'ok')::boolean then return approval_private.err('line_vat_conflict', (v_line_vat - 'ok') || jsonb_build_object('invoice_id', v_id)); end if;
+    v_vats := array(select e::numeric from jsonb_array_elements_text(v_line_vat -> 'vats') with ordinality t(e, o) order by o);
     for k in 1..v_n loop
       v_item := v_items -> (k - 1);
       v_main := coalesce(nullif(v_item ->> 'category_main', ''), nullif(inv ->> 'category_main', ''));
