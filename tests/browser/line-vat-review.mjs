@@ -112,38 +112,34 @@ try{
  assert.deepEqual(await written(),{ledger:0,items:0,status:'analyzed',approved:0})
  check('correction requires a reason; line 3 corrected 0.00 → 18.00 with its reason; line 2 (true zero) untouched; still nothing written')
 
- // 2b. A correction that no longer fits the figures is not approved: amount, basis, invoice discount; nothing sent, nothing written
- // Blocked either by the screen's own guard (approve disabled: amounts no longer match the printed lines) or, when clickable, by the stale-correction check;
- // in both cases nothing is sent and nothing is written. Returns which guard stopped it.
- const blockedAs=async(re)=>{await page.evaluate(()=>{window.lastApproval=null})
-  let how
-  if(await approveBtn.isDisabled()){how='disabled'}else{await approveBtn.click();await queue;const n=page.locator('.ts-note--error');await n.waitFor();assert.match(await n.innerText(),re);how='message'}
-  assert.equal(await page.evaluate(()=>window.lastApproval),null,'not sent to the server');assert.deepEqual(await written(),{ledger:0,items:0,status:'analyzed',approved:0});return how}
- const guards=[]
+ // 2b. A correction that no longer fits the figures is not approved. For each change the cause is proven, not just a disabled button:
+ //     the line warning, the reason shown for the blocked button is the stale correction itself, nothing is sent or written, and
+ //     cancelling only the correction (other figures still changed) makes approval available — so no other condition blocked it.
+ const totalInput=page.getByLabel('إجمالي المستند')
+ const proveStale=async(label,why,msg)=>{
+  assert.match(await loc('line-vat-stale-3').innerText(),new RegExp('تغيّر '+why+' بعد التصحيح'),label+' line warning')
+  assert.equal(await approveBtn.isDisabled(),true,label+' approve disabled')
+  assert.match(await loc('line-vat-stale-blocked').innerText(),msg,label+' reason shown for the blocked button')
+  await page.evaluate(()=>{window.lastApproval=null});await approveBtn.click({force:true}).catch(()=>{});await queue
+  assert.equal(await page.evaluate(()=>window.lastApproval),null,label+' not sent');assert.deepEqual(await written(),{ledger:0,items:0,status:'analyzed',approved:0},label+' nothing written')
+  await loc('line-vat-undo-3').click()
+  assert.equal(await loc('line-vat-stale-blocked').count(),0,label+' stale reason gone after cancel');assert.equal(await approveBtn.isEnabled(),true,label+' only the stale correction blocked approval')
+  assert.match(await loc('line-vat-text-3').innerText(),/ضريبة البند المقروءة: 0\.00/,label+' original reading restored')}
+ const recorrect=async()=>{await loc('line-vat-fix-3').click();await page.getByLabel('ضريبة البند 3 المصححة').fill('18');await page.getByLabel('سبب تصحيح ضريبة البند 3').fill('قُرئت صفرًا والمطبوع في المستند 18.00');await loc('line-vat-save-3').click()
+  assert.match(await loc('line-vat-text-3').innerText(),/صُحّحت: 0\.00 ← 18\.00/);assert.equal(await loc('line-vat-stale-3').count(),0)}
  // amount: line 3 120 → 125 and line 1 200 → 195 (invoice totals still match)
  await page.getByLabel('مبلغ البند 3').fill('125');await page.getByLabel('مبلغ البند 1').fill('195')
- assert.match(await loc('line-vat-stale-3').innerText(),/تغيّر مبلغ البند بعد التصحيح/)
- guards.push('amount:'+await blockedAs(/صُحّحت ضريبة البند 3 ثم تغيّر مبلغه؛ التصحيح القديم لا يُعتمد.*لم يُسجَّل شيء/))
- await page.getByLabel('مبلغ البند 3').fill('120');await page.getByLabel('مبلغ البند 1').fill('200')
- assert.equal(await loc('line-vat-stale-3').count(),0)
- // basis: exclusive → inclusive
- await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود شاملة الضريبة',exact:true}).click()
- assert.match(await loc('line-vat-stale-3').innerText(),/تغيّر أساس الضريبة بعد التصحيح/)
- guards.push('basis:'+await blockedAs(/صُحّحت ضريبة البند 3 ثم تغيّر أساس الضريبة/))
- await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود قبل الضريبة',exact:true}).click()
- assert.equal(await loc('line-vat-stale-3').count(),0)
- // line discount on line 3 after the correction (amount kept): the stale check itself must stop it
+ await proveStale('amount','مبلغ البند',/صُحّحت ضريبة البند 3 ثم تغيّر مبلغه؛ التصحيح القديم لا يُعتمد.*لم يُسجَّل شيء/)
+ await page.getByLabel('مبلغ البند 3').fill('120');await page.getByLabel('مبلغ البند 1').fill('200');await recorrect()
+ // basis: exclusive → inclusive, with the document total 500 so the totals still match under the new basis
+ await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود شاملة الضريبة',exact:true}).click();await totalInput.fill('500')
+ await proveStale('basis','أساس الضريبة',/صُحّحت ضريبة البند 3 ثم تغيّر أساس الضريبة/)
+ await page.getByRole('group',{name:'أساس مبالغ البنود'}).getByRole('button',{name:'البنود قبل الضريبة',exact:true}).click();await totalInput.fill('548');await recorrect()
+ // line discount on line 3 after the correction (amount kept)
  await page.getByLabel('خصم البند 3').fill('5')
- assert.match(await loc('line-vat-stale-3').innerText(),/تغيّر خصم البند بعد التصحيح/)
- guards.push('discount:'+await blockedAs(/صُحّحت ضريبة البند 3 ثم تغيّر خصمه/))
- await page.getByLabel('خصم البند 3').fill('');assert.equal(await loc('line-vat-stale-3').count(),0)
- console.log('GUARDS '+guards.join(' '))
- check('stale correction (amount, basis, line discount changed): warning on the line and approval blocked before sending ('+guards.join(', ')+'); nothing written; restoring the figures clears it')
- // undo: back to the original reading, then correct again
- await loc('line-vat-undo-3').click();assert.match(await loc('line-vat-text-3').innerText(),/ضريبة البند المقروءة: 0\.00/)
- await loc('line-vat-fix-3').click();await page.getByLabel('ضريبة البند 3 المصححة').fill('18');await page.getByLabel('سبب تصحيح ضريبة البند 3').fill('قُرئت صفرًا والمطبوع في المستند 18.00');await loc('line-vat-save-3').click()
- assert.match(await loc('line-vat-text-3').innerText(),/صُحّحت: 0\.00 ← 18\.00/)
- check('cancel correction restores the original reading; correcting again records it anew')
+ await proveStale('discount','خصم البند',/صُحّحت ضريبة البند 3 ثم تغيّر خصمه/)
+ await page.getByLabel('خصم البند 3').fill('');await recorrect()
+ check('stale correction (amount, basis, line discount): line warning + blocked with the stale reason itself, nothing sent or written; cancelling only the correction re-enables approval (no other blocker); re-correcting restores a valid correction')
 
  // 3. Approve once with the correct details
  await page.evaluate(()=>{window.lastApproval=null});await approveBtn.click();await page.waitForFunction(()=>window.lastApproval?.ok===true);await queue
@@ -154,7 +150,8 @@ try{
  assert.deepEqual(led.map(l=>[l.category_main,l.gross,l.vat]),[['Synthetic cleaning',318,18],['Synthetic food',230,30]])
  const di=await serial(()=>f.one('select approved_payload,original_reading,review_changes from approval_private.document_invoices where document_id=$1',[id]))
  const c=di.approved_payload.items[2].vatCorrection
- assert.deepEqual([c.original.lineVat,c.original.lineNet,c.original.printedLineTotal,c.value,c.reason],[0,120,120,18,'قُرئت صفرًا والمطبوع في المستند 18.00'])
+ assert.deepEqual([c.original.lineVat,c.original.lineNet,c.original.printedLineTotal,c.value,c.reason,c.amount,c.discount,c.basis],[0,120,120,18,'قُرئت صفرًا والمطبوع في المستند 18.00',120,0,'exclusive'])
+ assert.deepEqual([di.approved_payload.items[2].lineNet,di.approved_payload.items[2].printedLineTotal,di.approved_payload.items[2].amount],[120,138,120])
  assert.equal(di.approved_payload.items[2].lineVat,18);assert.equal(di.approved_payload.items[1].lineVat,0);assert.equal(di.approved_payload.items[1].vatCorrection,undefined)
  assert.equal(di.original_reading.items[2].lineVat,0,'original reading kept unchanged')
  assert.ok((di.review_changes||[]).some(s=>s.includes('بند 3 — ضريبة البند: «0» ← «18»؛ السبب: قُرئت صفرًا')),JSON.stringify(di.review_changes))

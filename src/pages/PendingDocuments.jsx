@@ -1998,6 +1998,9 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
   const canManual = !!onManualApprove && !readOnly && isV2 && !paused && !preparing && !busy && !doc._readingReviewRequired
   const invStatus = id => v2?.invoices?.find(i => i.id === id)
   const exact = isV2 && res?.type === 'expense' ? exactTotals(res) : null
+  // تصحيح ضريبة بند لم يعد يناسب الأرقام (src/lib/lineVat.js): مانع مستقل بسببه الظاهر، يسبق غيره من موانع البنود
+  const lineVatStale = isV2 ? ((isMultiInvoice ? rawRes.invoices.filter(x => (invStatus(x._id)?.status ?? 'pending') === 'pending') : [res])
+    .filter(x => x?.type === 'expense').map(staleLineVatCorrection).find(Boolean) || null) : null
   const amountsBlocked = !!exact ? (exact.status === 'mismatch' || exact.status === 'invalid' || !!vatExcess(res))
     : isV2 && isMultiInvoice && rawRes.invoices.some(x => (invStatus(x._id)?.status ?? 'pending') === 'pending'
       && x.type === 'expense' && x.items?.length && (['mismatch', 'invalid'].includes(exactTotals(x).status) || !!vatExcess(x)))
@@ -2046,6 +2049,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
     <div className="rp-action-bar">
       {paused ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />الاعتماد متوقف مؤقتًا لهذه المنشأة.</div>
         : decisionPending ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />{decisionPending}</div>
+        : lineVatStale ? <div className="rp-action-why" data-k="line-vat-stale-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{approvalMessage({ code: 'line_vat_stale', ...lineVatStale })}</div>
         : supplierBlocked ? <div className="rp-action-why" data-k="supplier-blocked"><Info className="ts-icon--sm" aria-hidden="true" />في الصورة فاتورة آجلة بلا مورد محدد أو باسم يشبه موردًا مسجلًا: أكمل المورد في فاتورتها.</div>
         : amountsBlocked ? <div className="rp-action-why"><Info className="ts-icon--sm" aria-hidden="true" />البنود لا تطابق الإجمالي بالهللة. طابق مبالغ البنود وخصوماتها والضريبة مع المستند.</div>
         : receiptBlocked ? <div className="rp-action-why" data-k="receipt-blocked"><Info className="ts-icon--sm" aria-hidden="true" />{receiptBlocked}</div>
@@ -2056,7 +2060,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
         : <div className="rp-action-hint">{(exact ? amountsBlocked : totalsCheck.status === 'mismatch') ? <strong>البنود لا تطابق الإجمالي — راجعها قبل الاعتماد. </strong> : null}{approveHint}</div>}
       <div className="rp-action-buttons">
         <Button variant="primary" icon={doc._state === 'approving' ? LoaderCircle : Check} className="rp-approve"
-          disabled={busy || doc._readingReviewRequired || needsSupplierConfirm || paused || amountsBlocked || salesBlocked || supplierBlocked || !!receiptBlocked || !!loanBlocked || preparing || !!decisionPending} onClick={onApprove}>
+          disabled={busy || doc._readingReviewRequired || needsSupplierConfirm || paused || !!lineVatStale || amountsBlocked || salesBlocked || supplierBlocked || !!receiptBlocked || !!loanBlocked || preparing || !!decisionPending} onClick={onApprove}>
           {doc._state === 'approving' ? 'جارٍ الاعتماد…' : approveCount ? approveLabel(approveCount) : 'اعتماد'}
         </Button>
         <Button icon={Save} className="rp-save" disabled={busy || !doc._dirty || !canSaveDraft} onClick={onSaveDraft}
