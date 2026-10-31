@@ -161,6 +161,8 @@ export function reviewChanges(original, final) {
     for (const k of ['description', 'amount', 'category_main', 'category_sub']) {
       if (!same(a[i][k], b[i][k])) out.push(`بند ${i + 1} — ${{ description: 'الوصف', amount: 'المبلغ', category_main: 'التصنيف', category_sub: 'الفرعي' }[k]}: «${a[i][k] ?? '—'}» ← «${b[i][k] ?? '—'}»`)
     }
+    // تصحيح ضريبة البند من المراجعة (src/lib/lineVat.js): القراءة الأصلية والقيمة المصححة والسبب
+    if (b[i].vatCorrection && !same(a[i].lineVat, b[i].lineVat)) out.push(`بند ${i + 1} — ضريبة البند: «${a[i].lineVat ?? 'غير مقروءة'}» ← «${b[i].lineVat}»؛ السبب: ${b[i].vatCorrection.reason}`)
   }
   return out
 }

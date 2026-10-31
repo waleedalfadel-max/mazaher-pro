@@ -66,16 +66,17 @@ test('تغيير الرمز المالي للتصنيف لاحقًا لا يعي
 })
 
 // 2026-10-31: ضريبة البنود المطبوعة (20261031130000) — صنف فيه بند معفى. صافي القيد يتوزع بصافي كل بند المحفوظ، لا بنسبة الإجمالي الشامل.
+// مثال مصطنع بالكامل (أرقام وأسماء ليست من أي فاتورة حقيقية).
 test('بند معفى داخل صنف: صافي كل بند كما هو (مبلغه − ضريبته) والفرعي لا يأخذ حصة غيره', () => {
-  const e = { id: 'clean', journal_number: 'QD-2026-235', type: '🛒 مصروفات تشغيلية' }
+  const e = { id: 'synthetic-clean', journal_number: 'QD-2026-901', type: '🛒 مصروفات تشغيلية' }
   const items = [
-    { ledger_entry_id: 'clean', journal_number: 'QD-2026-235', amount: 166.75, vat_amount: 21.75, category_main: 'النظافة', category_sub: 'منظفات' },
-    { ledger_entry_id: 'clean', journal_number: 'QD-2026-235', amount: 225, vat_amount: 0, category_main: 'النظافة', category_sub: 'وقاية' },
-    { ledger_entry_id: 'clean', journal_number: 'QD-2026-235', amount: 36.8, vat_amount: 4.8, category_main: 'النظافة', category_sub: 'أكياس' },
+    { ledger_entry_id: 'synthetic-clean', journal_number: 'QD-2026-901', amount: 230, vat_amount: 30, category_main: 'تنظيف تجريبي', category_sub: 'منظف' },
+    { ledger_entry_id: 'synthetic-clean', journal_number: 'QD-2026-901', amount: 180, vat_amount: 0, category_main: 'تنظيف تجريبي', category_sub: 'وقاية' },
+    { ledger_entry_id: 'synthetic-clean', journal_number: 'QD-2026-901', amount: 41.4, vat_amount: 5.4, category_main: 'تنظيف تجريبي', category_sub: 'أكياس' },
   ]
-  const rows = allocateEntry(e, 402, items)
-  assert.deepEqual(rows.map(r => r.amount), [145, 225, 32])
-  // التوزيع بنسبة الإجمالي الشامل كان يعطي القفازات 211.65 بدل 225
+  const rows = allocateEntry(e, 416, items)
+  assert.deepEqual(rows.map(r => r.amount), [200, 180, 36])
+  // التوزيع بنسبة الإجمالي الشامل كان يعطي البند المعفى 165.88 بدل 180
 })
 
 test('قيد مرتجع (سالب) بصافي بنوده: الإشارة على كل بند والمجموع كما هو', () => {

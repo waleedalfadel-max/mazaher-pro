@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { analyzeDocument, ReadingReplyError } from '../lib/claude'
 import { ReadingTimeoutError } from '../lib/readingTimeout.js'
+import { hasLineVat, correctLineVat, lineVatText } from '../lib/lineVat.js'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
@@ -1692,7 +1693,7 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
 // فاتورة متعددة البنود (categoryMainFromType === undefined): كل بند يختار تصنيفه الأساسي بنفسه.
 // onEdit يستقبل كائن تصحيح (patch) — يسمح بتحديث حقلين معاً بنداء واحد ذرّي (مثل تصفير
 // category_sub عند تغيير category_main دون تسلسل نداءات يتصادم على نفس الإغلاق القديم).
-function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromType, discounts }) {
+function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromType, discounts, lineVatBasis }) {
   const allCats     = categories || []
   const parentCats  = allCats.filter(c => !c.parent_id)
   const independentMode = categoryMainFromType === undefined
@@ -1731,11 +1732,37 @@ function ItemRow({ item, index, categories, onEdit, onDelete, categoryMainFromTy
       <label className="rp-cell rp-cell--amount"><span className="rp-cell-label">{discounts ? 'المبلغ بعد الخصم' : 'المبلغ شامل الضريبة'}</span>
         <Num value={item.amount ?? ''} aria-label={`مبلغ البند ${n}`} onChange={e => onEdit({ amount: e.target.value })} /></label>
       {remove('rp-line-remove--desk')}
+      {lineVatBasis && <LineVatCell item={item} n={n} basis={lineVatBasis} onReplace={next => onEdit(next)} />}
     </div>
   )
 }
 
-function ItemLines({ items, independent, categories, transType, onEditItem, onDeleteItem, onAddItem, discounts }) {
+// ضريبة البند المقروءة وتصحيحها من المراجعة (src/lib/lineVat.js): القيمة والسبب إلزاميان، والقراءة الأصلية تبقى محفوظة مع البند
+function LineVatCell({ item, n, basis, onReplace }) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState('')
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+  const save = () => {
+    try { onReplace(correctLineVat(item, value, reason, basis)); setOpen(false); setError(''); setReason(''); setValue('') }
+    catch (e) { setError(e.message) }
+  }
+  return (
+    <div className="rp-line-vat" data-k={`line-vat-${n}`} style={{ gridColumn: '1 / -1', fontSize: 12.5, color: 'var(--ts-ink-2, #3F545B)' }}>
+      <span data-k={`line-vat-text-${n}`}>{lineVatText(item)}</span>{' '}
+      {!open && <Button size="sm" variant="quiet" data-k={`line-vat-fix-${n}`} onClick={() => { setOpen(true); setValue(item.lineVat ?? '') }}>تصحيح ضريبة البند</Button>}
+      {open && <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        <Num value={value} aria-label={`ضريبة البند ${n} المصححة`} onChange={e => setValue(e.target.value)} style={{ width: 96 }} />
+        <Input value={reason} placeholder="سبب التصحيح (مثلًا: قُرئت صفرًا والمطبوع 18.00)" aria-label={`سبب تصحيح ضريبة البند ${n}`} onChange={e => setReason(e.target.value)} style={{ minWidth: 220 }} />
+        <Button size="sm" data-k={`line-vat-save-${n}`} onClick={save}>حفظ التصحيح</Button>
+        <Button size="sm" variant="quiet" onClick={() => { setOpen(false); setError('') }}>إلغاء</Button>
+        {error && <span role="alert" style={{ color: 'var(--ts-danger, #B3261E)' }}>{error}</span>}
+      </span>}
+    </div>
+  )
+}
+
+function ItemLines({ items, independent, categories, transType, onEditItem, onDeleteItem, onAddItem, discounts, lineVatBasis }) {
   return (
     <div className="rp-lines rp-lines--doc">
       {items.length > 0 && (
@@ -1746,7 +1773,7 @@ function ItemLines({ items, independent, categories, transType, onEditItem, onDe
       )}
       {items.map((item, i) => (
         <ItemRow key={i} item={item} index={i} categories={categories}
-          categoryMainFromType={independent ? undefined : normCat(transType || '')} discounts={discounts}
+          categoryMainFromType={independent ? undefined : normCat(transType || '')} discounts={discounts} lineVatBasis={lineVatBasis}
           onEdit={patch => onEditItem(i, patch)} onDelete={() => onDeleteItem(i)} />
       ))}
       <div><Button size="sm" icon={Plus} onClick={onAddItem}>إضافة بند</Button></div>
@@ -2240,6 +2267,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                 <ExpenseBasis invoice={res} onEdit={onEdit} readOnly={readOnly} />
               )}
               <ItemLines items={res.items || []} independent={itemCount > 1 || isV2} categories={categories} transType={res.transType} discounts={isV2}
+                lineVatBasis={isV2 && res.type === 'expense' && (res.items || []).some(hasLineVat) ? (res.amountsBasis === 'exclusive' ? 'exclusive' : 'inclusive') : null}
                 onEditItem={onEditItem} onDeleteItem={onDeleteItem} onAddItem={onAddItem} />
               <ItemsTotals check={totalsCheck} exact={exact} res={res} onEdit={onEdit} onReplace={next => onReplaceInvoice(null, next)} readOnly={readOnly} />
             </div>
@@ -2416,6 +2444,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
             <h4>البنود <span className="ts-num">{items.length}</span></h4>
             {v2 && invoice.type === 'expense' && <ExpenseBasis invoice={invoice} onEdit={onEdit} readOnly={readOnly} />}
             <ItemLines items={items} independent={isMultiItem || v2} categories={categories || []} transType={invoice.transType} discounts={v2}
+              lineVatBasis={v2 && invoice.type === 'expense' && items.some(hasLineVat) ? (invoice.amountsBasis === 'exclusive' ? 'exclusive' : 'inclusive') : null}
               onEditItem={(i, patch) => onEdit('items', items.map((it, j) => j === i ? { ...it, ...patch } : it))}
               onDeleteItem={i => onEdit('items', items.filter((_, j) => j !== i))}
               onAddItem={() => onEdit('items', [...items, blankItem()])} />
