@@ -1,37 +1,66 @@
 -- ضريبة البنود كما طُبعت وروجعت (2026-10-31).
 -- كان الاعتماد يوزّع ضريبة الفاتورة على البنود بنسبة مبالغها (allocate)، فبند ضريبته المطبوعة 0 يُحمَّل ضريبة وتنقص ضريبة غيره، فتختلف ضريبة
--- كل تصنيف وإجماليه عن الورق (الإجمالي والضريبة والصافي صحيحة). الآن تُستعمل ضريبة السطر المقروءة (lineVat) كما هي فقط متى ثبت لكل بند أنها
--- ضريبة المبلغ المراجَع نفسه:
---   • lineVat رقم صريح (0 رقم صريح = ضريبة صفر؛ غيابه أو null = غير معروفة) بهللتين على الأكثر وغير سالب؛
---   • lineNet + lineVat = printedLineTotal، ومبلغ البند المراجَع = lineNet (أساس قبل الضريبة) أو = printedLineTotal (الشامل)،
---     فأي تعديل من المراجع على مبلغ البند يُسقط الاستعمال لأن الأسطر المقروءة لم تعد تصف المبلغ المراجَع؛
---   • lineVat لا يتجاوز 15% من lineNet بهامش هللتين؛ ومجموعها = ضريبة الفاتورة؛ ولا خصم على البند ولا على إجمالي الفاتورة.
--- أي شرط لا يتحقق لأي بند ⇒ التوزيع النسبي للفاتورة كلها كما كان تمامًا. لا يُستنتج إعفاء من اسم الصنف. لا تتغير أي معادلة مطابقة ولا أي قيد سابق.
+-- كل تصنيف وإجماليه عن الورق (الإجمالي والضريبة والصافي صحيحة).
+-- ضريبة السطر المقروءة «صالحة» لبند فقط متى وصفت المبلغ المراجَع نفسه بعد أي خصم:
+--   lineVat رقم صريح بهللتين على الأكثر وغير سالب (0 رقم صريح = ضريبة صفر؛ غيابه أو null أو نص = غير معروفة، لا صفر)،
+--   lineNet + lineVat = printedLineTotal، ومبلغ البند بعد خصمه وحصته من خصم الفاتورة = lineNet (قبل الضريبة) أو printedLineTotal (الشامل)،
+--   ولا تتجاوز 15% من lineNet بهامش هللتين. فأي تغيير في المبلغ أو في الخصم لم يعد يطابق الأسطر المطبوعة يُسقط صلاحيتها لذلك البند.
+-- التوزيع:
+--   ١) كل البنود صالحة ومجموعها = ضريبة الفاتورة ⇒ ضريبة كل بند كما طُبعت.
+--   ٢) بعضها صالح وبعضها غير معروف: الصالح بضريبته المطبوعة (والصفر الصريح صفر)، والباقي من ضريبة الفاتورة يوزَّع نسبيًا على غير المعروف وحده،
+--      متى كان الباقي بين 0 و15% من صافيها.
+--   ٣) غير ذلك (أرقام غير متسقة): ضريبة الفاتورة كلها نسبيًا على كل البنود عدا ذات الصفر الصريح الصالح؛ فإن لم يبقَ بند يحمل ضريبة والضريبة
+--      موجبة ⇒ null فيتوقف الاعتماد للمراجعة (line_vat_conflict).
+--   ٤) لا ضريبة سطر صالحة في أي بند (بيانات قديمة أو قراءة بلا أسطر) ⇒ التوزيع النسبي كما كان تمامًا.
+-- لا يُستنتج إعفاء من اسم الصنف. لا تتغير أي معادلة مطابقة ولا أي قيد معتمد سابق.
 set search_path = public;
 
 create or replace function approval_private.item_vats(p_items jsonb, p_after numeric[], p_vat numeric, p_basis text, p_disc numeric)
 returns numeric[] language plpgsql immutable set search_path = '' as $$
-declare v numeric[] := '{}'; x jsonb; k int := 0; lv numeric; ln numeric; lt numeric;
+declare
+  n int := coalesce(array_length(p_after, 1), 0); x jsonb; k int := 0; l numeric; ln numeric; lt numeric; ok boolean;
+  st text[] := '{}'; lv numeric[] := '{}'; v numeric[]; known numeric := 0; rest numeric; cap numeric := 0;
+  u_idx int[] := '{}'; u_w numeric[] := '{}'; nz_idx int[] := '{}'; nz_w numeric[] := '{}'; share numeric[]; i int;
 begin
-  if coalesce(p_disc, 0) <> 0 or jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) = 0
-     or jsonb_array_length(p_items) <> coalesce(array_length(p_after, 1), 0) then
-    return approval_private.allocate(p_after, p_vat);
-  end if;
+  if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) <> n or n = 0 then return approval_private.allocate(p_after, p_vat); end if;
   for x in select value from jsonb_array_elements(p_items) loop
     k := k + 1;
-    if jsonb_typeof(x -> 'lineVat') is distinct from 'number' or jsonb_typeof(x -> 'lineNet') is distinct from 'number'
-       or jsonb_typeof(x -> 'printedLineTotal') is distinct from 'number'
-       or (jsonb_typeof(x -> 'discount') = 'number' and (x ->> 'discount')::numeric <> 0) then
-      return approval_private.allocate(p_after, p_vat);
+    l := null;
+    ok := coalesce(jsonb_typeof(x -> 'lineVat') = 'number' and jsonb_typeof(x -> 'lineNet') = 'number' and jsonb_typeof(x -> 'printedLineTotal') = 'number', false);
+    if ok then
+      l := (x ->> 'lineVat')::numeric; ln := (x ->> 'lineNet')::numeric; lt := (x ->> 'printedLineTotal')::numeric;
+      ok := coalesce(l >= 0 and l = round(l, 2) and ln + l = lt and l <= round(ln * 0.15, 2) + 0.02
+            and p_after[k] = (case when p_basis = 'inclusive' then lt else ln end), false);
     end if;
-    lv := (x ->> 'lineVat')::numeric; ln := (x ->> 'lineNet')::numeric; lt := (x ->> 'printedLineTotal')::numeric;
-    if lv < 0 or lv <> round(lv, 2) or ln + lv <> lt or lv > round(ln * 0.15, 2) + 0.02
-       or p_after[k] <> (case when p_basis = 'inclusive' then lt else ln end) then
-      return approval_private.allocate(p_after, p_vat);
-    end if;
-    v := v || lv;
+    st := array_append(st, case when not ok then 'u' when l = 0 then 'z' else 'v' end);
+    lv := array_append(lv, case when ok then l end);
   end loop;
-  if (select sum(e) from unnest(v) e) <> p_vat then return approval_private.allocate(p_after, p_vat); end if;
+  if not ('z' = any (st) or 'v' = any (st)) then return approval_private.allocate(p_after, p_vat); end if;   -- (٤)
+  v := array_fill(0::numeric, array[n]);
+  for i in 1..n loop
+    if st[i] = 'v' then known := known + lv[i]; v[i] := lv[i]; end if;
+    if st[i] = 'u' then u_idx := u_idx || i; u_w := u_w || p_after[i];
+      cap := cap + round((case when p_basis = 'inclusive' then p_after[i] * 100 / 115 else p_after[i] end) * 0.15, 2) + 0.02; end if;
+    if st[i] <> 'z' then nz_idx := nz_idx || i; nz_w := nz_w || p_after[i]; end if;
+  end loop;
+  if array_length(u_idx, 1) is null then
+    if known = p_vat then return v; end if;                                                                  -- (١)
+  else
+    rest := p_vat - known;
+    if rest >= 0 and rest <= cap then                                                                        -- (٢)
+      share := approval_private.allocate(u_w, rest);
+      for i in 1..array_length(u_idx, 1) loop v[u_idx[i]] := share[i]; end loop;
+      return v;
+    end if;
+  end if;
+  -- (٣) غير متسق: كل الضريبة على البنود عدا الصفر الصريح الصالح
+  if array_length(nz_idx, 1) is null then
+    if p_vat = 0 then return v; end if;
+    return null;
+  end if;
+  v := array_fill(0::numeric, array[n]);
+  share := approval_private.allocate(nz_w, p_vat);
+  for i in 1..array_length(nz_idx, 1) loop v[nz_idx[i]] := share[i]; end loop;
   return v;
 end $$;
 revoke all on function approval_private.item_vats(jsonb, numeric[], numeric, text, numeric) from public, anon, authenticated;
@@ -128,8 +157,10 @@ begin
     -- الخصم يوزَّع على البنود بنسبة مبالغها، ثم الضريبة على المبالغ بعد الخصم — بالهللة وبالباقي الأكبر
     v_disc_shares := approval_private.allocate(v_amounts, v_disc);
     v_after := array(select v_amounts[i] - v_disc_shares[i] from generate_subscripts(v_amounts, 1) i order by i);
-    -- ضريبة كل بند كما طُبعت متى اتسقت (20261031130000)، وإلا التوزيع النسبي كما كان
+    -- ضريبة كل بند كما طُبعت وروجعت (20261031130000): القواعد في approval_private.item_vats أعلاه
     v_vats := approval_private.item_vats(v_items, v_after, v_vat, v_basis, v_disc);
+    -- كل البنود ضريبتها المطبوعة صفر والفاتورة بضريبة: أرقام متعارضة، يتوقف الاعتماد للمراجعة
+    if v_vats is null then return approval_private.err('line_vat_conflict', jsonb_build_object('invoice_id', v_id, 'vat', v_vat)); end if;
     for k in 1..v_n loop
       v_item := v_items -> (k - 1);
       v_main := coalesce(nullif(v_item ->> 'category_main', ''), nullif(inv ->> 'category_main', ''));

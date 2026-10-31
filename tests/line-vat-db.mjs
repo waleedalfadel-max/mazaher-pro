@@ -68,6 +68,8 @@ try{
  await f.db.query("insert into categories(id,project_id,name,type,ledger_type,financial_class,parent_id) values($1,$6,$7,'expense','🥩 تكلفة البضاعة المباعة','cogs',null),($2,$6,$8,'expense','🥩 تكلفة البضاعة المباعة','cogs',$1),($3,$6,$9,'expense','🛒 مصروفات تشغيلية','opex',null),($4,$6,$10,'expense','🛒 مصروفات تشغيلية','opex',$3),($5,$6,$11,'expense','🛒 مصروفات تشغيلية','opex',$3)",
   [FOOD,OIL,CLEAN,GLOVES,DET,f.p1,names[FOOD],names[OIL],names[CLEAN],names[GLOVES],names[DET]])
  await f.db.query("insert into approval_private.settings(project_id,mode) values($1,'v2')",[f.p1])
+ // A template that already has the fix (lv_fix) is returned to the current production state first, so "before" is always the current behaviour
+ if((await f.db.query("select count(*)::int n from pg_proc where proname='item_vats'")).rows[0].n)await f.db.exec(await readFile('supabase/rollback/invoice-line-vat.sql','utf8'))
 
  // ── Current production behaviour (before the migration): same invoice
  const before=await approve('before',base()),bR=reports(before)
@@ -89,42 +91,60 @@ try{
  assert.deepEqual(inc.items.map(i=>[r2(i.amount-i.vat_amount),i.vat_amount,i.amount]),[[196,29.4,225.4],[225,0,225],[145,21.75,166.75]]);totalsMatch(inc,'inclusive')
  pass('mixed inclusive: same exact lines (net 225 for the zero-VAT line, not 225 minus a share)')
 
- // ── 3. Unknown VAT is not zero: one line without lineVat (named "exempt") → no inference from the name; proportional for the whole invoice
- const unk=base();unk.items[1].description='Synthetic gloves (exempt)';delete unk.items[1].lineVat
- const u=await approve('unknown-vat',unk);assert.ok(u.items[1].vat_amount>0);assert.deepEqual(vats(u),vats(before));totalsMatch(u,'unknown')
- const nul=base();nul.items[1].lineVat=null;const n2=await approve('null-vat',nul);assert.deepEqual(vats(n2),vats(before))
- pass('unknown VAT (missing or null, even if the name says exempt): not treated as zero; whole invoice proportional exactly as before')
+ // ── 3. Known + explicit zero + missing VAT: known keeps printed VAT, explicit zero stays 0, missing takes the remainder (not zero, no inference from names)
+ const mix=base();mix.items[2].description='Synthetic detergent (exempt)';delete mix.items[2].lineVat
+ const m=await approve('known-zero-missing',mix);assert.deepEqual(vats(m),[29.4,0,21.75]);totalsMatch(m,'mixed missing')
+ const nul=base();nul.items[2].lineVat=null;assert.deepEqual(vats(await approve('null-vat',nul)),[29.4,0,21.75])
+ const str=base();str.items[2].lineVat='21.75';assert.deepEqual(vats(await approve('string-vat',str)),[29.4,0,21.75])
+ pass('known + explicit zero + missing (also null or text): 29.40 / 0 / 21.75 — missing gets the remainder, the zero line none, name ignored')
+ // missing line whose remainder is larger than 15% of its net: inconsistent → whole VAT over non-zero lines, zero line still 0
+ const big=base({vatAmount:80,totalAmount:646});delete big.items[2].lineVat
+ const bg=await approve('missing-too-big',big);assert.equal(bg.items[1].vat_amount,0);assert.equal(sum(bg.items,'vat_amount'),80);totalsMatch(bg,'too big')
+ pass('remainder impossible for the missing line: proportional over non-zero lines only; explicit zero still 0; totals 646 / 80')
 
- // ── 4. Reviewer changed an amount: printed lines no longer describe the reviewed amount → proportional
- const ed=base({totalAmount:592.15});ed.items[1].amount=200
- const e=await approve('reviewer-edit',ed);assert.ok(e.items[1].vat_amount>0);assert.equal(r2(e.items[1].amount-e.items[1].vat_amount),200);totalsMatch(e,'edited')
- pass('reviewer-edited amount: line VAT not reused (it described the old amount); proportional; reviewed net 200 kept')
+ // ── 4. Reviewer changed an amount: that line's printed VAT is no longer used; remainder logic; zero line unaffected
+ const ed=base({totalAmount:622.15});ed.items[2].amount=150
+ const e=await approve('reviewer-edit',ed);assert.equal(e.items[1].vat_amount,0);assert.equal(e.items[0].vat_amount,29.4)
+ assert.equal(r2(e.items[2].amount-e.items[2].vat_amount),150);assert.equal(e.items[2].vat_amount,21.75);totalsMatch(e,'edited')
+ const edz=base({totalAmount:612.15});edz.items[1].amount=220
+ const ez=await approve('reviewer-edit-zero-line',edz);assert.equal(ez.items[1].vat_amount,0,'remainder 0');totalsMatch(ez,'edited zero')
+ pass('reviewer-edited amount: edited line treated as unknown and takes the remainder; reviewed nets kept; explicit zero untouched')
 
- // ── 5. Invoice discount: proportional as before; nets after discount, discount counted once
+ // ── 5. Invoice discount changes every reviewed amount: printed VAT no longer matches → not used (old split); discount and VAT counted once
  const di=await approve('invoice-discount',base({invoiceDiscount:10,totalAmount:607.15}))
- assert.equal(sum(di.items,'amount')-sum(di.items,'vat_amount'),556);totalsMatch(di,'discount')
+ assert.deepEqual(vats(di).map(v=>v>0),[true,true,true],'printed figures invalidated by the discount');totalsMatch(di,'discount')
+ assert.equal(r2(sum(di.items,'amount')-sum(di.items,'vat_amount')),556)
  const dR=reports(di);assert.equal(dR.netTotal,556);assert.equal(r2(Object.values(dR.subs).reduce((s,v)=>s+v,0)),556);assert.equal(dR.vatTotal,51.15)
- pass('invoice discount: proportional VAT; report nets total 556 (566 − 10 once), VAT 51.15 once')
+ pass('invoice discount: printed line VAT invalidated (amounts changed); report nets 556 (discount once), VAT 51.15 once')
 
- // ── 6. Line discount: proportional; amounts unchanged
- const ld=base();ld.items[2].discount=5
- const l=await approve('line-discount',ld);assert.deepEqual(vats(l),vats(before));totalsMatch(l,'line discount')
- pass('line discount on an item: proportional as before')
+ // ── 6. Line discount: valid when the printed net is the discounted amount; invalid when it no longer matches
+ const ld=base();ld.items[2].discount=5;assert.deepEqual(vats(await approve('line-discount-matching',ld)),[29.4,0,21.75])
+ const ld2=base({totalAmount:612.15});ld2.items[2].discount=5;ld2.items[2].amount=140
+ const l2=await approve('line-discount-changed',ld2);assert.equal(l2.items[1].vat_amount,0);assert.equal(r2(l2.items[2].amount-l2.items[2].vat_amount),140);totalsMatch(l2,'line discount changed')
+ pass('line discount: exact when printed net = discounted amount; when the discount changes the amount the old printed VAT is not used for that line; explicit zero still 0')
 
  // ── 7. Old data shape (no per-line VAT fields): identical to the current version
  const leg=await approve('legacy-after',{...legacyIn,date:new Date(Date.UTC(2026,0,++day)).toISOString().slice(0,10),invoiceNumber:'SYN-L2'})
  assert.deepEqual(leg.items.map(i=>[i.amount,i.vat_amount]),legacyBefore.items.map(i=>[i.amount,i.vat_amount]))
  pass('old data shape without line VAT: stored values identical to the current version')
 
- // ── 8. Inconsistent printed lines: net + VAT ≠ printed total, VAT above 15%, more than two decimals, negative, sum ≠ invoice VAT
+ // ── 8. Inconsistent printed lines: zero line never takes VAT while it is valid; totals always intact
  const bad={
-  'net + VAT ≠ printed line total':i=>{i.items[0].printedLineTotal=225.5},
-  'line VAT above 15% of net':i=>{i.items[0].lineVat=36.3;i.items[0].printedLineTotal=232.3;i.items[2].lineVat=14.85;i.items[2].printedLineTotal=159.85},
-  'three decimals':i=>{i.items[0].lineVat=29.395;i.items[0].printedLineTotal=225.395;i.items[2].lineVat=21.755;i.items[2].printedLineTotal=166.755},
-  'negative':i=>{i.items[1].lineVat=-1;i.items[1].printedLineTotal=224;i.items[0].lineVat=30.4;i.items[0].printedLineTotal=226.4},
-  'sum ≠ invoice VAT':i=>{i.vatAmount=51.25;i.totalAmount=617.25}}
- for(const [name,mut] of Object.entries(bad)){const inv=base();mut(inv);const d=await approve('bad-'+name,inv);assert.ok(d.items[1].vat_amount>0,name);totalsMatch(d,name)}
- pass('inconsistent printed lines (5 cases): proportional as before, totals intact')
+  'net + VAT ≠ printed line total':[i=>{i.items[0].printedLineTotal=225.5},[29.4,0,21.75]],
+  'line VAT above 15% of net':[i=>{i.items[0].lineVat=36.3;i.items[0].printedLineTotal=232.3;i.items[2].lineVat=14.85;i.items[2].printedLineTotal=159.85},null],
+  'three decimals':[i=>{i.items[0].lineVat=29.395;i.items[0].printedLineTotal=225.395;i.items[2].lineVat=21.755;i.items[2].printedLineTotal=166.755},[29.4,0,21.75]],
+  'sum ≠ invoice VAT':[i=>{i.vatAmount=51.25;i.totalAmount=617.25},null]}
+ for(const [name,[mut,exp]] of Object.entries(bad)){const inv=base();mut(inv);const d=await approve('bad-'+name,inv)
+  assert.equal(d.items[1].vat_amount,0,name+' zero line');if(exp)assert.deepEqual(vats(d),exp,name);totalsMatch(d,name)}
+ pass('inconsistent printed lines (4 cases): explicit zero stays 0, totals intact')
+
+ // ── 8b. Every line printed with VAT 0 but the invoice has VAT: approval stops for review (no VAT pushed onto zero lines)
+ {await f.claims(f.acc);const id=randomUUID();const inv=base({vatAmount:10,totalAmount:586,items:[{...lines()[1]},{...lines()[1],description:'Synthetic gloves 2'},{description:'Synthetic box',amount:126,lineNet:126,lineVat:0,printedLineTotal:126,category_id:CLEAN,subcategory_id:GLOVES}]})
+  await f.db.query("insert into documents(id,project_id,file_name,status,analysis_result) values($1,$2,'Synthetic conflict','analyzed',$3)",[id,f.p1,JSON.stringify({invoices:[inv]})])
+  const prep=await f.rpc(f.acc,'approval_prepare',[id]);const res=await f.rpc(f.acc,'approval_approve',[id,randomUUID(),prep.version,JSON.stringify(prep.analysis_result.invoices),'{}','{}'])
+  assert.equal(res.ok,false);assert.equal(res.code,'line_vat_conflict')
+  assert.equal((await f.db.query('select count(*)::int n from ledger_entries where document_id=$1',[id])).rows[0].n,0);assert.equal((await f.db.query('select status from documents where id=$1',[id])).rows[0].status,'analyzed')
+  pass('all lines VAT 0 but invoice VAT 10: approval stops (line_vat_conflict), nothing written, document stays for review')}
 
  // ── 9. Reports, analysis, export from stored rows (mixed exclusive and inclusive): sub-category nets as printed, nothing counted twice
  for(const key of ['mixed-exclusive','mixed-inclusive']){
