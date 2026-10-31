@@ -10,6 +10,7 @@ import { Button, Chip, DateInput, Dialog, EmptyState, Field, GrowInput, IconButt
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { analyzeDocument, ReadingReplyError } from '../lib/claude'
+import { ReadingTimeoutError } from '../lib/readingTimeout.js'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
@@ -29,6 +30,8 @@ const readingForReview = r => withoutReviewConfirmations(withoutLoanPrincipalCon
 // فشل القراءة على الشاشة: رسالة عربية قصيرة وطريقة إعادة المحاولة. رد خدمة القراءة غير الصالح لا يُعرض؛ تشخيصه (بلا نص الرد)
 // في سجل المتصفح للدعم فقط.
 function readingFailure(e, retry) {
+  // انتهت مهلة القراءة: المستند كما هو بصفحاته، وإعادة القراءة للمستند نفسه
+  if (e instanceof ReadingTimeoutError) return `${e.message} ${retry}`
   if (!(e instanceof ReadingReplyError)) return e?.message || 'تعذّرت القراءة.'
   console.warn('[reading] رد غير صالح من خدمة القراءة', e.attempts)
   return `${e.message} ${retry}`

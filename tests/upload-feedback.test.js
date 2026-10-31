@@ -111,7 +111,7 @@ function harness(page, { responses = [{ status: 200, body: success }], saveError
     },
   }
   const context = vm.createContext({
-    module: { exports: {} }, doubles, console, setTimeout, TextEncoder,
+    module: { exports: {} }, doubles, console, setTimeout, clearTimeout, AbortController, Response, TextEncoder,
     FileReader: class {
       readAsDataURL() { this.onload({ target: { result: 'data:application/pdf;base64,JVBERi0=' } }) }
     },
@@ -159,6 +159,9 @@ const failures = [
   ['انقطاع الشبكة', { networkError: true }],
   ['رد غير قابل للتحليل', { status: 200, body: { error: 'JSON_PARSE_ERROR', rawText: 'PRIVATE_INVOICE', parseError: 'PRIVATE_PARSE_ERROR' } }],
   ['تحليل بلا فواتير', { status: 200, body: { content: [{ text: '{"invoices":[]}' }] } }],
+  // 2026-10-31: انتهاء مهلة القراءة (من الخادم أو الاستضافة) لا يُعاد تلقائيًا، والمستند محفوظ مرة واحدة ويُقرأ من «مستندات جديدة»
+  ['انتهاء مهلة القراءة من الخادم', { status: 504, body: { error: 'READING_TIMEOUT' }, expect: /«مستندات جديدة»/ }],
+  ['قطع الاستضافة بعد المهلة', { status: 504, body: 'FUNCTION_INVOCATION_TIMEOUT', expect: /أطول من المسموح/ }],
 ]
 for (const page of pages) {
   for (const [name, response] of failures) {
@@ -174,6 +177,7 @@ for (const page of pages) {
       assert.match(output, /محفوظ للمراجعة/)
       assert.match(output, /لا حاجة لرفعه مرة أخرى/)
       assert.doesNotMatch(output, /تم التحليل|تم استلام المستند|تعذّر حفظ المستندات|PRIVATE_|CLAUDE_API_KEY/)
+      if (response.expect) { assert.match(output, response.expect); assert.doesNotMatch(output, /Claude|API|504|FUNCTION_INVOCATION/) }
     })
   }
   for (const option of ['saveError', 'missingSavedRow']) {
