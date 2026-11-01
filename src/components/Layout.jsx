@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   Archive, ArrowLeft, BookOpen, ChartColumn, ChartLine, Eye, FileText, House, Landmark, LogOut, Menu, NotebookText,
   PanelRightClose, PanelRightOpen, Scale, Settings, Smartphone, Store, TriangleAlert, Upload, Users,
@@ -16,12 +16,12 @@ import { usesCompactHome, usesSimplifiedHome } from '../lib/businessPresentation
 function navItems(pendingCount) {
   return [
     { to: '/',                label: 'لوحة التحكم',      icon: House,        roles: ['owner', 'accountant', 'superadmin'] },
-    { to: '/accounts', label: 'كشف الحسابات', icon: Landmark, roles: ['owner', 'accountant', 'superadmin'] },
+    { to: '/accounts', label: 'كشف الحسابات', icon: Landmark, roles: ['owner', 'accountant', 'superadmin'], cond: name => !usesSimplifiedHome(name) },
+    { to: '/operations', label: 'السجل المالي', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesSimplifiedHome, alsoActive: ['/accounts'] },
     { to: '/reports',         label: 'التقارير',          icon: ChartColumn,  roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant', 'owner', 'superadmin'], module: 'suppliers' },
     { to: '/ledger',          label: 'سجل الدفتر',       icon: BookOpen,     roles: ['accountant', 'superadmin'] },
-    { to: '/operations', label: 'سجل العمليات', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesSimplifiedHome },
     { to: '/journal',         label: 'سجل الحركات',      icon: NotebookText, roles: ['accountant', 'superadmin'] },
     { to: '/archive',         label: 'أرشيف الحركات',    icon: Archive,      roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/loans',           label: 'القروض',           icon: Landmark,     roles: ['accountant', 'superadmin'] },
@@ -98,19 +98,22 @@ export default function Layout({ children }) {
   const homeItem = visibleItems[0]
   const docsItem = visibleItems.find(i => i.to === '/pending') || visibleItems.find(i => i !== homeItem && i.to === '/reports')
   const moreItems = visibleItems.filter(i => i !== homeItem && i !== docsItem)
-  const moreActive = moreItems.some(i => location.pathname.startsWith(i.to) && i.to !== '/')
+  const itemActive = item => [item.to, ...(item.alsoActive || [])].some(path => path !== '/' && location.pathname.startsWith(path))
+  const moreActive = moreItems.some(itemActive)
   // مراجعة مستند على الجوال: شريط الإجراءات يحل محل الشريط السفلي (كما في النموذج المراجَع)
   const onReview = location.pathname === '/pending' && new URLSearchParams(location.search).has('doc')
 
   const link = ({ isActive }) => `ts-nav-link${isActive ? ' is-active' : ''}`
   const NavItem = ({ item }) => {
     const Icon = item.icon
+    const isActive = item.to === '/' ? location.pathname === '/' : itemActive(item)
     return (
-      <NavLink to={item.to} end={endMatch(item.to)} className={link} title={collapsed ? item.label : undefined}>
+      <Link to={item.to} className={link({ isActive })}
+        aria-current={isActive ? 'page' : undefined} title={collapsed ? item.label : undefined}>
         <Icon className="ts-icon" aria-hidden="true" />
         {!collapsed && <span className="ts-nav-text">{item.label}</span>}
         {item.badge > 0 && <span className="ts-nav-count" aria-label={`${item.badge} بانتظار المراجعة`}>{item.badge}</span>}
-      </NavLink>
+      </Link>
     )
   }
 
@@ -243,7 +246,7 @@ export default function Layout({ children }) {
         {moreItems.length > 0 && (
           <div className="ts-choice-list">
             {moreItems.map(item => (
-              <button key={item.to} type="button" className="ts-choice" onClick={() => navigate(item.to)}>
+              <button key={item.to} type="button" className="ts-choice" aria-current={itemActive(item) ? 'page' : undefined} onClick={() => { setMoreOpen(false); navigate(item.to) }}>
                 <item.icon className="ts-icon" aria-hidden="true" style={{ color: 'var(--ts-petrol-text)' }} />
                 {item.label}
                 {item.badge > 0 && <span className="ts-nav-count" style={{ marginInlineStart: 'auto' }}>{item.badge}</span>}

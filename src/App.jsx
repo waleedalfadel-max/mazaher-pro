@@ -5,7 +5,7 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Ledger from './pages/Ledger'
-import Accounts from './pages/Accounts.jsx'
+import FinancialRecord from './pages/FinancialRecord.jsx'
 import Sales from './pages/Sales'
 import Journals from './pages/Journals'
 import Reports from './pages/Reports'
@@ -72,7 +72,7 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
-      <Route path="/accounts" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><Accounts /></ProtectedRoute>} />
+      <Route path="/accounts" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><FinancialRecord view="accounts" /></ProtectedRoute>} />
 
       <Route path="/ledger" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
@@ -154,7 +154,7 @@ function AppRoutes() {
 
       <Route path="/operations" element={
         <ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}>
-          <JournalLedger unified />
+          <FinancialRecord view="operations" />
         </ProtectedRoute>
       } />
       <Route path="/journal" element={
