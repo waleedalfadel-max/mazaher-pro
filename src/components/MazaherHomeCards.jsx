@@ -4,11 +4,13 @@ import { CompactCard } from './AccountCards.jsx'
 import { Dialog, Money, Note } from '../ui/components.jsx'
 import { accountHref, liquidityBreakdown } from '../lib/accountStatement.js'
 import { recordedLiabilities } from '../lib/recordedLiabilities.js'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function MazaherHomeCards({ stats, balances, from, to, comparison, comparisonLabel }) {
   const [showLiabilities, setShowLiabilities] = useState(false)
+  const { role } = useAuth()
   const liquidity = liquidityBreakdown(balances, balances.banks, balances.settings)
-  const debts = recordedLiabilities(balances.supplierBalance, balances.liabilities)
+  const debts = recordedLiabilities(balances.supplierBalance, balances.liabilities, balances.loans)
   const report = tab => '/reports?' + new URLSearchParams({ tab, from, to, period: 'custom' })
   const compare = (key, fallback) => comparison
     ? <>مقابل <Money value={comparison[key]} /> · {comparisonLabel}</> : fallback
@@ -38,9 +40,11 @@ export default function MazaherHomeCards({ stats, balances, from, to, comparison
     <Dialog open={showLiabilities} onClose={() => setShowLiabilities(false)} title="إجمالي الالتزامات المسجلة" description={`الأرصدة المستحقة حتى ${to}`}>
       <p>مستحقات الموردين: <Money value={balances.supplierBalance} /></p>
       {debts.otherTracked && <p>التزامات أخرى موثقة: {balances.liabilities.remaining == null ? 'غير محدد' : <Money value={balances.liabilities.remaining} />}</p>}
-      <p>الإجمالي: {debts.total == null ? 'غير محدد؛ لم يكتمل رصيد الالتزامات الأخرى' : <Money value={debts.total} />}</p>
-      <Note>يشمل مستحقات الموردين والالتزامات الأخرى الموثقة فقط. لا يشمل أرصدة القروض أو الضرائب أو أي التزامات لم تُسجّل أرصدتها. مبالغ الأقساط المسددة لا تمثل المتبقي من القروض، وذمم التطبيقات مبالغ لنا وليست التزامات علينا.</Note>
+      {balances.loans?.loans.filter(l => l.tracked).map(loan => <p key={loan.key}>{loan.label}: {loan.remaining == null ? 'غير محدد لهذا التاريخ' : <Money value={loan.remaining} />}</p>)}
+      <p>الإجمالي: {debts.total == null ? 'غير محدد؛ لم تكتمل الأرصدة لهذا التاريخ' : <Money value={debts.total} />}</p>
+      <Note>يشمل مستحقات الموردين وأرصدة القروض والالتزامات الأخرى المسجلة فقط. لا يشمل الضرائب أو أي التزامات لم تُسجّل أرصدتها. الأقساط السابقة داخلة في رصيد القرض المثبت ولا تُخصم مرة ثانية، وذمم التطبيقات مبالغ لنا وليست التزامات علينا.</Note>
       <Link className="ts-btn" to="/suppliers">تفاصيل الموردين</Link>
+      {balances.loans?.tracked && ['accountant', 'superadmin'].includes(role) && <Link className="ts-btn" to="/loans">تفاصيل القروض</Link>}
       {debts.otherTracked && <Link className="ts-btn" to={'/accounts?' + new URLSearchParams({ section: 'liabilities', to })}>تفاصيل الالتزامات الأخرى</Link>}
     </Dialog>
   </>

@@ -1,19 +1,20 @@
 import React from 'react'
 import { Field, Input, Note, Select } from '../ui/components.jsx'
 import { acceptAmount } from '../lib/amountInput.js'
+import { loanDisplayLabel } from '../lib/loanBalances.js'
 import { LOAN_NOTE, LOAN_CONFIRMATION_LABEL, loanAmount, loanTypes, loanPrincipalConfirmation, hasLoanPrincipalConfirmation } from '../lib/loanRepayment.js'
 
-export default function LoanRepaymentFields({ invoice, transTypes, onPatch, readOnly }) {
+export default function LoanRepaymentFields({ invoice, transTypes, onPatch, readOnly, settings }) {
   const types = loanTypes(transTypes)
   // Clear on every edit, including changing away and back to the previously confirmed value.
   const edit = patch => onPatch({ ...patch, loanPrincipalConfirmation: null })
   return <div data-k="loan-repayment">
-    <Note tone="info" title="سداد قرض / قسط">{LOAN_NOTE} يُسجَّل خروج المبلغ من مصدر الدفع المختار؛ لا يحسب هذا المسار المتبقي من القرض.</Note>
+    <Note tone="info" title="سداد قرض / قسط">{LOAN_NOTE} يُسجَّل خروج المبلغ من مصدر الدفع المختار، ويُخصم السداد المعتمد من رصيد القرض إن كان مسجلًا.</Note>
     {!types.length && <Note tone="warning">لا توجد أنواع قروض أو أقساط مسجلة لهذه المنشأة. حدّدها في إعدادات المنشأة أولًا.</Note>}
     <div className="ts-form-grid">
       <Field label="القرض / القسط">
         <Select data-k="loan-type" value={invoice.transType || ''} disabled={readOnly} placeholder="— اختر القرض المقصود —"
-          options={types.map(t => ({ value: t, label: t }))} onChange={e => edit({ transType: e.target.value })} />
+          options={types.map(t => ({ value: t, label: loanDisplayLabel(t, settings) }))} onChange={e => edit({ transType: e.target.value })} />
       </Field>
       <Field label="مبلغ سداد أصل القرض">
         <Input data-k="loan-amount" numeric dir="ltr" value={loanAmount(invoice)} disabled={readOnly} onChange={e => {
