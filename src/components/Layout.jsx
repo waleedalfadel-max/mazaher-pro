@@ -9,7 +9,7 @@ import { supabase } from '../lib/supabase'
 import { Brand, Button, Dialog } from '../ui/components.jsx'
 import VersionNotice from './VersionNotice.jsx'
 import { operatesBusiness } from '../lib/adminAccess'
-import { usesCompactHome } from '../lib/businessPresentation.js'
+import { usesCompactHome, usesSimplifiedHome } from '../lib/businessPresentation.js'
 
 // إدارة تحسيب ترى أدوات المنشأة كاملة بعد التحقق من سياقها. أدوار المنشأة ووحداتها تبقى كما كانت.
 // الكاشير، مثل المشتريات، يرفع المستندات من زر الرفع وحده.
@@ -21,7 +21,7 @@ function navItems(pendingCount) {
     { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant', 'owner', 'superadmin'], module: 'suppliers' },
     { to: '/ledger',          label: 'سجل الدفتر',       icon: BookOpen,     roles: ['accountant', 'superadmin'] },
-    { to: '/operations', label: 'سجل العمليات', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesCompactHome },
+    { to: '/operations', label: 'سجل العمليات', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesSimplifiedHome },
     { to: '/journal',         label: 'سجل الحركات',      icon: NotebookText, roles: ['accountant', 'superadmin'] },
     { to: '/archive',         label: 'أرشيف الحركات',    icon: Archive,      roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/loans',           label: 'القروض',           icon: Landmark,     roles: ['accountant', 'superadmin'] },
@@ -81,7 +81,8 @@ export default function Layout({ children }) {
   const adminWorking = operatesBusiness(role, projectId, viewState)
   const visibleItems = navItems(pendingCount).filter(item =>
     item.roles.includes(role) &&
-    !(['/loans', '/journal', '/archive'].includes(item.to) && usesCompactHome(projectName)) &&
+    !(item.to === '/loans' && usesCompactHome(projectName)) &&
+    !(['/journal', '/archive'].includes(item.to) && usesSimplifiedHome(projectName)) &&
     (!item.module || adminWorking || modules.includes(item.module)) &&
     (!item.cond || item.cond(projectName))
   )
