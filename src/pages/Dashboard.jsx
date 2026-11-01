@@ -329,7 +329,7 @@ export default function Dashboard() {
       setReceivables(rcv.active.length || rcv.unassigned ? rcv : null)
       setStats({ totalSales:summary.totalSales, totalExpenses:summary.totalExpenses, profit:summary.netProfit,
         grossProfit:summary.grossProfit, cogs:summary.cogs||0, operatingExpenses:summary.operatingExpenses||0,
-        grossSales:summary.grossSales||0, outputVat:summary.outputVat||0, uncounted: uncountedText(summary.uncounted) })
+        grossSales:summary.grossSales||0, outputVat:summary.outputVat||0, vatNetBeforePayment:summary.vatNetBeforePayment, uncounted: uncountedText(summary.uncounted) })
       setChartEntries(summary.entries || [])
     } catch {
       if (request === mainRequest.current) setLoadError(!r.from || !r.to || r.from > r.to

@@ -26,7 +26,7 @@ export default function MazaherHomeCards({ stats, balances, from, to, comparison
         <CompactCard key={card.account} id={`overview-${card.account}`} label={accountLabels[index]} value={card.value} hint={`حتى ${to}`} to={accountHref(card.account, to)} />
       )}</div>
       <div className="account-card-row">
-        <CompactCard id="overview-gross-sales" label="المبيعات شاملة الضريبة" value={stats.grossSales} hint="خلال الفترة · تشمل المبيعات الآجلة" to={report('sales')} />
+        <CompactCard id="overview-vat-due" label="الضريبة المستحقة" value={stats.vatNetBeforePayment} hint={stats.vatNetBeforePayment < 0 ? 'فائض لصالح المنشأة · صافي الفترة قبل السداد' : 'صافي ضريبة الفترة · قبل السداد'} to={report('vat')} />
         <CompactCard id="overview-liquidity" label="صافي الكاش الفعلي" value={liquidity.total} hint="البنك + الصندوق + العهدة بإشاراتها" to={accountHref('liquidity', to)} />
         <button type="button" className="account-card" data-k="overview-total-liabilities" onClick={() => setShowLiabilities(true)} aria-haspopup="dialog">
           <span className="account-card-label">إجمالي الالتزامات</span>
