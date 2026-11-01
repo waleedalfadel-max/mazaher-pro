@@ -2,7 +2,7 @@
 // المحرك (لوحة التحكم والتقارير) والتحليل المالي معًا بتعريف واحد للمبيعات والمصروفات والنتيجة. التغيير الوحيد في الحساب: مبلغ القيد في
 // المصروفات من expenseAmountNet (src/lib/financeRules.js) بدل «الخروج ناقص الضريبة» — انظر سبب ذلك هناك.
 import { VAT_RATE, isCOGSEntry, isSales, isExcluded, isWithdrawal, isDebt, isRealExpense, sumField,
-  expenseAmountGross, expenseAmountNet, isCounted, uncountedSummary } from './financeRules.js'
+  expenseAmountGross, expenseAmountNet, isCounted, uncountedSummary, inputVatTotal } from './financeRules.js'
 
 export function summarizeEntries(rows) {
   // القيود المحتسبة وحدها (financeRules: المعتمد والتلقائي)؛ غيرها يُعاد ملخصًا منفصلًا للعرض
@@ -27,6 +27,8 @@ export function summarizeEntries(rows) {
   // ⚠️ يفترض أن كل المبيعات خاضعة لـ15% — مؤكَّد لمزاهر. أي مبيعات معفاة
   // مستقبلاً تحتاج تخزين vat_amount على قيد المبيعة نفسها بدل الاشتقاق.
   const totalSales = grossSales / (1 + VAT_RATE)
+  const outputVat = grossSales - totalSales
+  const inputVat = inputVatTotal(entries)
 
   // كل مخرجات غير المبيعات وغير المستثنيات
   const expenseEntries = active.filter(e => !isSales(e.type))
@@ -62,7 +64,9 @@ export function summarizeEntries(rows) {
   return {
     totalSales,        // صافية بدون ضريبة المخرجات
     grossSales,        // شاملة الضريبة — للعرض المنفصل وحساب ضريبة المخرجات
-    outputVat: grossSales - totalSales,
+    outputVat,
+    inputVat,
+    vatNetBeforePayment: outputVat - inputVat,
     cashSales,
     networkSales,
     appSales,

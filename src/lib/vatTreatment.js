@@ -12,7 +12,7 @@
 //   • استرداد: النوع نفسه ودخول فقط بالشروط نفسها. يُعرض منفصلًا.
 //   • غير ذلك (ضريبة مسجلة عليه، أو بنود مستند، أو دخول وخروج معًا، أو بلا حركة نقدية، أو نوع ضريبي آخر): يحتاج تأكيد المحاسب.
 //     لا يُخمَّن تصنيفه ولا يُعدَّل القيد: لا يدخل المصروفات (كما في لوحة التحكم) ولا ضريبة المدخلات، ويُعرض بمبالغه وسببه.
-import { isTaxType, isCounted, inputVatOf, signedGrossOf } from './financeRules.js'
+import { isTaxType, isCounted, inputVatOf, inputVatTotal, signedGrossOf } from './financeRules.js'
 import { itemsForEntry } from './expenseBreakdown.js'
 
 export const VAT_TYPE = 'ضريبة القيمة المضافة'
@@ -65,7 +65,7 @@ export function vatFigures({ entries, docItems, outputVat = 0 }) {
       out: 0, in: 0, vat: n(e.vat_amount), reasonText: REVIEW_REASONS.vat_no_amount }); continue }
     inputVatEntries.push({ ...e, signedVat: v, signedGross: signedGrossOf(e) })
   }
-  const inputVat = Math.round(inputVatEntries.reduce((s, e) => s + Math.round(e.signedVat * 100), 0)) / 100
+  const inputVat = inputVatTotal(rows)
   for (const e of rows) {
     const c = classifyTaxEntry(e, docItems)
     if (!c) continue

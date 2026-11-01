@@ -146,6 +146,12 @@ export function inputVatOf(e) {
   return null
 }
 
+// Shared by the VAT report and home summary: counted, non-tax entries only.
+// A payment to the authority is not input VAT; returns retain their sign.
+export function inputVatTotal(entries) {
+  return (entries || []).reduce((sum, e) => sum + (isCounted(e) && !isTaxType(e.type) ? h(inputVatOf(e)) : 0), 0) / 100
+}
+
 /** المبلغ الإجمالي للقيد بالإشارة نفسها (للعرض بجانب ضريبته): الخروج والآجل موجبًا، والمرتجع سالبًا. */
 export function signedGrossOf(e) {
   const gross = outOf(e) + h(e.payable_in) - h(e.payable_out)

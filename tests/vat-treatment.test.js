@@ -4,9 +4,35 @@ import assert from 'node:assert/strict'
 import { classifyTaxEntry, vatFigures, REVIEW_REASONS } from '../src/lib/vatTreatment.js'
 import { expenseFigures } from '../src/lib/reportFigures.js'
 import { isRealExpense, isTaxType } from '../src/lib/financeRules.js'
+import { summarizeEntries } from '../src/lib/financeSummary.js'
 
 const VAT = '🏛️ ضريبة القيمة المضافة'
 const e = (o) => ({ id: o.id || Math.random().toString(36), date: '2026-09-15', cash_in: 0, bank_in: 0, custody_in: 0, cash_out: 0, bank_out: 0, custody_out: 0, vat_amount: null, status: 'approved', ...o })   // قيود معتمدة: غير المعتمد لا يُحتسب (financeRules.isCounted)
+
+test('home VAT matches the report: credit purchases, returns, excluded statuses and payments for another period', () => {
+  const entries = [
+    e({type:'💵 مبيعات كاش',cash_in:1150}),
+    e({type:'🛒 مصروفات تشغيلية',bank_out:230,vat_amount:30}),
+    e({type:'🛒 مصروفات تشغيلية',payable_in:115,vat_amount:15,status:'auto'}),
+    e({type:'🛒 مصروفات تشغيلية',payable_out:23,vat_amount:3}),
+    e({type:'🛒 مصروفات تشغيلية',bank_in:11.5,vat_amount:1.5}),
+    e({type:'🛒 مصروفات تشغيلية',vat_amount:50}),
+    ...['pending','rejected','cancelled',null].map(status => e({type:'🛒 مصروفات تشغيلية',bank_out:1150,vat_amount:150,status})),
+    e({type:VAT,bank_out:500,description:'سداد فترة سابقة'}),
+  ]
+  const summary = summarizeEntries(entries)
+  const report = vatFigures({entries,docItems:[],outputVat:summary.outputVat})
+  assert.equal(summary.inputVat, 40.5)
+  assert.equal(Math.round(summary.vatNetBeforePayment*100), 10950)
+  assert.equal(summary.vatNetBeforePayment, report.netBeforePayment)
+  assert.equal(summary.vatNetBeforePayment, summarizeEntries(entries.filter(x=>x.type!==VAT)).vatNetBeforePayment)
+})
+
+test('home VAT preserves a surplus as negative and an empty period as zero', () => {
+  const summary = summarizeEntries([e({type:'🛒 مصروفات تشغيلية',bank_out:115,vat_amount:15})])
+  assert.equal(summary.vatNetBeforePayment, -15)
+  assert.equal(summarizeEntries([]).vatNetBeforePayment, 0)
+})
 
 test('سداد مؤكد: نوع ضريبة القيمة المضافة وخروج نقدي بلا ضريبة مسجلة ولا بنود', () => {
   const c = classifyTaxEntry(e({ type: VAT, bank_out: 5000 }))
