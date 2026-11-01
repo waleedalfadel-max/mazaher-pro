@@ -16,6 +16,7 @@ import {expenseFigures} from '../src/lib/reportFigures.js'
 import {windowFigures} from '../src/lib/financialAnalysis.js'
 import {reportModel,sheetRows,modelToXlsx} from '../src/lib/reportExport.js'
 import {inputVatOf,expenseAmountNet} from '../src/lib/financeRules.js'
+import {approvalMessage} from '../src/lib/approvalV2.js'
 if(!process.env.REREAD_TEST_FIXTURE)throw Error('Set REREAD_TEST_FIXTURE to an isolated synthetic fixture')
 const {fixture}=await import(pathToFileURL(process.env.REREAD_TEST_FIXTURE)),f=await fixture()
 let checks=0;const pass=s=>{checks++;console.log('PASS '+s)}
@@ -169,7 +170,12 @@ try{
  assert.equal(Number(c18p.v),18);assert.equal(Number(c18p.lv),18);assert.equal(c18.items[2].vat_amount,Number(c18p.v),'stored VAT = recorded corrected value')
  const tampered=corrected(18,{value:17});const ct=await conflict('correction-tampered',tampered,'correction_invalid');assert.equal(ct.cause,'value_mismatch')
  const moved=corrected(18);moved.items[2].amount=125;moved.totalAmount=553;const cm=await conflict('correction-amount-changed',moved,'correction_invalid');assert.equal(cm.cause,'not_matching_amount')
- pass('server: correction 19 stops (correction_invalid / over_limit, limit 18.02) with nothing written; correction 18 approved, stored VAT 18 = recorded value; tampered value and changed amount stop')
+ // The screen message is built from the server's actual response (code line_vat_conflict, reason correction_invalid, line/corrected_vat/limit/cause)
+ assert.equal(c19.code,'line_vat_conflict');assert.equal(c19.reason,'correction_invalid')
+ assert.equal(approvalMessage(c19),'ضريبة البند 3 المصححة 19.00 تتجاوز 15% من صافيه (الحد 18.02)؛ لا تُستبدل بتوزيع. صحّح ضريبة البند أو ألغِ التصحيح. لم يُسجَّل شيء.')
+ assert.match(approvalMessage(ct),/ضريبة البند 3 المصححة 17.00 لا تطابق القيمة المسجلة في التصحيح.*لم يُسجَّل شيء/)
+ assert.match(approvalMessage(cm),/ضريبة البند 3 المصححة 18.00 لا تطابق مبلغ البند المراجَع.*لم يُسجَّل شيء/)
+ pass('server: correction 19 stops (correction_invalid / over_limit, limit 18.02) with nothing written; correction 18 approved, stored VAT 18 = recorded value; tampered value and changed amount stop; the screen message from each real response names the line, the corrected VAT and the cause')
 
  // ── 9. Reports, analysis, export from stored rows (mixed exclusive and inclusive): sub-category nets as printed, nothing counted twice
  for(const key of ['mixed-exclusive','mixed-inclusive']){
