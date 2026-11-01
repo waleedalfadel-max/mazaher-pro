@@ -148,7 +148,7 @@ function AttachDialog({ entry, projectId, role, onClose, onChanged, readOnly = f
 }
 
 // ── الصفحة ──────────────────────────────────────────────────────────
-export default function JournalLedger({ unified = false }) {
+export default function JournalLedger({ unified = false, embedded = false }) {
   const { role, projectId, isSuperAdmin, viewState } = useAuth()
   const canEdit = unified ? canEditLedger(role, projectId, viewState) : role === 'accountant' || role === 'owner' || isSuperAdmin
   const [rows, setRows]                 = useState([])
@@ -277,7 +277,7 @@ export default function JournalLedger({ unified = false }) {
     <div className="ldg-page jrl-page">
       <div className="ts-heading">
         <div>
-          <h1>{unified ? 'سجل العمليات' : 'سجل الحركات اليومية'}</h1>
+          {embedded ? <h2>العمليات</h2> : <h1>{unified ? 'سجل العمليات' : 'سجل الحركات اليومية'}</h1>}
           <p className="ldg-showing">
             <CalendarDays className="ts-icon--sm" aria-hidden="true" />
             <span>{rangeText}</span>

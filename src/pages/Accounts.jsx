@@ -11,11 +11,11 @@ import { downloadBlob } from '../lib/reportPdf.js'
 import { getSignedUrl } from '../lib/storage.js'
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
-export default function Accounts() {
+export default function Accounts({ embedded = false }) {
   const { projectId } = useAuth()
-  return <AccountPage key={projectId} />
+  return <AccountPage key={projectId} embedded={embedded} />
 }
-function AccountPage() {
+function AccountPage({ embedded }) {
   const { projectId, projectName, sessionEpoch } = useAuth()
   const [params, setParams] = useSearchParams()
   const [data, setData] = useState(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [exporting, setExporting] = useState(false)
@@ -70,7 +70,7 @@ function AccountPage() {
     try { const signed = await getSignedUrl(url); if (!signed) throw new Error(); window.open(signed,'_blank','noopener,noreferrer') }
     catch { setError('تعذّر فتح المستند؛ أعد المحاولة.') }
   }
-  return <div className="rpt-page" data-k="accounts-page"><Panel title="كشف الحسابات" subtitle="كل حساب وحركاته ورصيده، للمنشأة كاملة؛ يشمل المعتمد والتلقائي فقط." action={<Button onClick={load} disabled={loading}>تحديث</Button>}>
+  return <div className="rpt-page" data-k="accounts-page"><Panel title={embedded ? 'كشف حساب' : 'كشف الحسابات'} subtitle="كل حساب وحركاته ورصيده، للمنشأة كاملة؛ يشمل المعتمد والتلقائي فقط." action={<Button onClick={load} disabled={loading}>تحديث</Button>}>
     <div className="ts-panel-body"><div className="ts-form-grid">
       <Field label="الحساب"><Select value={key} options={options} onChange={e=>set('account',e.target.value)} data-k="account-select" /></Field>
       <Field label="من تاريخ (اختياري)"><Input type="date" value={from} onChange={e=>set('from',e.target.value)} /></Field>
