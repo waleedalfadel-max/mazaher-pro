@@ -2285,7 +2285,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
           )}
 
           {isWithdrawal && <div className="rp-section"><OwnerWithdrawalFields invoice={res} transTypes={transTypes} readOnly={readOnly} onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })} /></div>}
-          {isLoan && <div className="rp-section"><LoanRepaymentFields invoice={res} transTypes={transTypes} readOnly={readOnly}
+          {isLoan && <div className="rp-section"><LoanRepaymentFields settings={setup?.settings} invoice={res} transTypes={transTypes} readOnly={readOnly}
             onPatch={patch => onReplaceInvoice(null, { ...res, ...patch })} /></div>}
           {res.type === 'transfer' && !isLoan && !isWithdrawal && (
             <div className="rp-section">
@@ -2447,7 +2447,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
           {(v2 || !isSales) && <BankAccountField invoice={invoice} branch={invoice.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : branch} setup={setup} onEdit={onEdit} />}
         </div>
         {isWithdrawal && <OwnerWithdrawalFields invoice={invoice} transTypes={transTypes} readOnly={readOnly} onPatch={patch => onReplace?.({ ...invoice, ...patch })} />}
-        {isLoan && <LoanRepaymentFields invoice={invoice} transTypes={transTypes} readOnly={readOnly}
+        {isLoan && <LoanRepaymentFields settings={setup?.settings} invoice={invoice} transTypes={transTypes} readOnly={readOnly}
           onPatch={patch => onReplace?.({ ...invoice, ...patch })} />}
         {isSales && <SalesReading invoice={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} />}
         {!isSales && !isLoan && !isWithdrawal && (

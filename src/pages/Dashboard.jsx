@@ -2,6 +2,7 @@ import AccountCards from '../components/AccountCards.jsx'
 import MazaherHomeCards from '../components/MazaherHomeCards.jsx'
 import { usesMazaherHome, usesSimplifiedHome } from '../lib/businessPresentation.js'
 import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding, liquidityBreakdown } from '../lib/accountStatement.js'
+import { loanFigures } from '../lib/loanBalances.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
 import { APPS, receivableBalances } from '../lib/appStatement.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
@@ -321,6 +322,7 @@ export default function Dashboard() {
       setBalances({ ...countedBalances, available, liquidity:available.total,
         banks:banksResult.data || [], settings:settingsResult?.settings, supplierBalance,
         liabilities:liabilityFigures(rows,settingsResult?.settings,r.to),
+        loans:loanFigures(rows,settingsResult?.settings,r.to),
       })
       // ذمم التطبيقات بإشارتها (src/lib/appStatement.js، القاعدة نفسها في «كشف حساب التطبيقات»): الرصيد السالب يظهر ولا يُخفى
       const rcv = receivableBalances(rows)
