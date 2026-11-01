@@ -1,5 +1,6 @@
 import AccountCards from '../components/AccountCards.jsx'
-import { usesCompactHome } from '../lib/businessPresentation.js'
+import MazaherHomeCards from '../components/MazaherHomeCards.jsx'
+import { usesMazaherHome, usesSimplifiedHome } from '../lib/businessPresentation.js'
 import { accountDashboard, accountBalances, liabilityFigures, suppliersOutstanding, liquidityBreakdown } from '../lib/accountStatement.js'
 import { getProjectSettings } from '../lib/projectSettings.js'
 import { APPS, receivableBalances } from '../lib/appStatement.js'
@@ -192,7 +193,8 @@ function getRange(type) {
 
 export default function Dashboard() {
   const { roleLabel, role, userName, projectId: pid, projectName, sessionEpoch } = useAuth()
-  const compactHome = usesCompactHome(projectName)
+  const compactHome = usesSimplifiedHome(projectName)
+  const mazaherHome = usesMazaherHome(projectName)
   const [pendingDocs, setPendingDocs] = useState(null)
   const [pendingError, setPendingError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -302,7 +304,7 @@ export default function Dashboard() {
       if (request !== mainRequest.current) return
       const cfg = accountDashboard(settingsResult?.settings)
       let supplierBalance = null
-      if (cfg) {
+      if (cfg || mazaherHome) {
         if (banksResult.error) throw new Error('banks')
         const [suppliers, txns] = await Promise.all([
           fetchEveryRow(() => supabase.from('suppliers').select('id,opening_balance').eq('project_id',projectId).order('id')),
@@ -690,7 +692,7 @@ export default function Dashboard() {
       </div> : <>
       {/* الأرقام الأربعة المعتمدة في التصميم — من getFinancialSummary نفسه بلا تغيير في الحساب */}
       {stats?.uncounted && !loading && <div className="ts-note ts-note--warning" data-k="uncounted"><div className="ts-note-body">{stats.uncounted}</div></div>}
-      {accountDashboard(balances?.settings) && stats ? <AccountCards compactHome={compactHome} stats={stats} balances={balances} settings={balances.settings} receivables={receivables} supplierBalance={balances.supplierBalance} liabilities={balances.liabilities} from={range.from} to={range.to}/> : <div className="ts-metrics">
+      {mazaherHome && stats && balances ? <MazaherHomeCards stats={stats} balances={balances} from={range.from} to={range.to} comparison={hasCompare ? cmpStats : null} comparisonLabel={cmpLabel} /> : accountDashboard(balances?.settings) && stats ? <AccountCards compactHome={compactHome} stats={stats} balances={balances} settings={balances.settings} receivables={receivables} supplierBalance={balances.supplierBalance} liabilities={balances.liabilities} from={range.from} to={range.to}/> : <div className="ts-metrics">
         {loading || !stats ? [0, 1, 2, 3].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
             <Metric label="المبيعات" icon={Wallet} tag="قبل الضريبة"
@@ -761,7 +763,7 @@ export default function Dashboard() {
       </div>
 
       {/* الربح والأرصدة كما في التطبيق الحالي */}
-      {!accountDashboard(balances?.settings) && <><h2 className="rp-subhead">الربح والأرصدة</h2>
+      {!mazaherHome && !accountDashboard(balances?.settings) && <><h2 className="rp-subhead">الربح والأرصدة</h2>
       <div className="ts-metrics rp-metrics-secondary">
         {loading || !stats ? <div className="ts-metric rp-skeleton-card" /> : (
           <KpiCard label="الربح (حسب التطبيق الحالي)" value={stats.profit} negative={stats.profit < 0}
