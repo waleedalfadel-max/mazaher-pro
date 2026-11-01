@@ -160,6 +160,17 @@ try{
  await conflict('all-zero',base({vatAmount:10,totalAmount:510,items:[{...lines()[1]},{...lines()[1],description:'Synthetic gloves 2'},{description:'Synthetic box',amount:140,lineNet:140,lineVat:0,printedLineTotal:140,category_id:CLEAN,subcategory_id:GLOVES}]}),'all_zero')
  pass('all lines VAT 0 but invoice VAT 10: line_vat_conflict / all_zero; nothing written')
 
+ // ── 9d. Reviewer corrections reach the server: the approved VAT must equal the recorded corrected value; an invalid correction stops
+ //        (it never falls back to "unknown" and gets the remainder instead)
+ const corrected=(vat,extra={})=>{const inv=base();inv.items[2]={...inv.items[2],lineVat:vat,printedLineTotal:120+vat,vatCorrection:{original:{lineVat:0,lineNet:120,printedLineTotal:120},value:vat,reason:'synthetic correction',basis:'exclusive',amount:120,discount:0,...extra}};return inv}
+ const c19=await conflict('correction-19',corrected(19),'correction_invalid');assert.equal(c19.line,3);assert.equal(c19.cause,'over_limit');assert.equal(Number(c19.corrected_vat),19);assert.equal(Number(c19.limit),18.02)
+ const c18=await approve('correction-18',corrected(18));assert.deepEqual(vats(c18),[30,0,18])
+ const c18p=(await f.db.query("select approved_payload->'items'->2->'vatCorrection'->>'value' v, approved_payload->'items'->2->>'lineVat' lv from approval_private.document_invoices where document_id=$1",[c18.id])).rows[0]
+ assert.equal(Number(c18p.v),18);assert.equal(Number(c18p.lv),18);assert.equal(c18.items[2].vat_amount,Number(c18p.v),'stored VAT = recorded corrected value')
+ const tampered=corrected(18,{value:17});const ct=await conflict('correction-tampered',tampered,'correction_invalid');assert.equal(ct.cause,'value_mismatch')
+ const moved=corrected(18);moved.items[2].amount=125;moved.totalAmount=553;const cm=await conflict('correction-amount-changed',moved,'correction_invalid');assert.equal(cm.cause,'not_matching_amount')
+ pass('server: correction 19 stops (correction_invalid / over_limit, limit 18.02) with nothing written; correction 18 approved, stored VAT 18 = recorded value; tampered value and changed amount stop')
+
  // ── 9. Reports, analysis, export from stored rows (mixed exclusive and inclusive): sub-category nets as printed, nothing counted twice
  for(const key of ['mixed-exclusive','mixed-inclusive']){
   const R=reports(docs[key])

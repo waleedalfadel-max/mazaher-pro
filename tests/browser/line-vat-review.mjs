@@ -106,6 +106,13 @@ try{
  await loc('line-vat-save-3').click()
  assert.match(await loc('line-vat-3').locator('[role=alert]').innerText(),/اكتب سبب تصحيح ضريبة البند/)
  await page.getByLabel('سبب تصحيح ضريبة البند 3').fill('قُرئت صفرًا والمطبوع في المستند 18.00')
+ // 19 exceeds 15% of the 120 net (limit 18.02): refused at entry, the line keeps its reading, nothing recorded
+ await page.getByLabel('ضريبة البند 3 المصححة').fill('19');await loc('line-vat-save-3').click()
+ assert.match(await loc('line-vat-3').locator('[role=alert]').innerText(),/ضريبة البند 19\.00 تتجاوز 15% من صافيه 120\.00 \(الحد 18\.02\)/)
+ assert.match(await loc('line-vat-text-3').innerText(),/ضريبة البند المقروءة: 0\.00/)
+ assert.deepEqual(await written(),{ledger:0,items:0,status:'analyzed',approved:0})
+ check('correction to 19 (above the 18.02 limit) refused on the screen; the line keeps its reading; nothing recorded')
+ await page.getByLabel('ضريبة البند 3 المصححة').fill('18')
  await loc('line-vat-save-3').click()
  assert.match(await loc('line-vat-text-3').innerText(),/صُحّحت: 0\.00 ← 18\.00 — قُرئت صفرًا والمطبوع في المستند 18\.00/)
  assert.match(await loc('line-vat-text-2').innerText(),/ضريبة البند المقروءة: 0\.00/)
@@ -152,7 +159,7 @@ try{
  const c=di.approved_payload.items[2].vatCorrection
  assert.deepEqual([c.original.lineVat,c.original.lineNet,c.original.printedLineTotal,c.value,c.reason,c.amount,c.discount,c.basis],[0,120,120,18,'قُرئت صفرًا والمطبوع في المستند 18.00',120,0,'exclusive'])
  assert.deepEqual([di.approved_payload.items[2].lineNet,di.approved_payload.items[2].printedLineTotal,Number(di.approved_payload.items[2].amount)],[120,138,120])
- assert.equal(di.approved_payload.items[2].lineVat,18);assert.equal(di.approved_payload.items[1].lineVat,0);assert.equal(di.approved_payload.items[1].vatCorrection,undefined)
+ assert.equal(items[2].vat,Number(c.value),'stored VAT = recorded corrected value');assert.equal(di.approved_payload.items[2].lineVat,18);assert.equal(di.approved_payload.items[1].lineVat,0);assert.equal(di.approved_payload.items[1].vatCorrection,undefined)
  assert.equal(di.original_reading.items[2].lineVat,0,'original reading kept unchanged')
  assert.ok((di.review_changes||[]).some(s=>s.includes('بند 3 — ضريبة البند: «0» ← «18»؛ السبب: قُرئت صفرًا')),JSON.stringify(di.review_changes))
  check('approved once: items 230/30, 180/0, 138/18 in their categories; entries cleaning 318/18 and food 230/30; original reading, corrected value and reason saved')

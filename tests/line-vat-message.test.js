@@ -10,4 +10,6 @@ test('line_vat_conflict: لكل سبب رسالة بأرقامه، ولا يُس
   assert.match(m({ reason: 'negative_remainder', printed_vat: 48, invoice_vat: 20 }), /أكبر من ضريبة الفاتورة 20\.00/)
   assert.match(m({ reason: 'all_zero' }), /كل البنود مطبوعة بضريبة صفر/)
   assert.match(m({}), /لا تتسق مع ضريبة الفاتورة.*لم يُسجَّل شيء/)
+  assert.match(approvalMessage({ code: 'correction_invalid', line: 3, corrected_vat: 19, limit: 18.02, cause: 'over_limit' }), /ضريبة البند 3 المصححة 19\.00 تتجاوز 15% من صافيه \(الحد 18\.02\)؛ لا تُستبدل بتوزيع.*لم يُسجَّل شيء/)
+  assert.match(approvalMessage({ code: 'correction_invalid', line: 3, corrected_vat: 17, cause: 'value_mismatch' }), /لا تطابق القيمة المسجلة في التصحيح/)
 })

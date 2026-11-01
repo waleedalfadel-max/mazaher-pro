@@ -30,6 +30,9 @@ export function correctLineVat(item, value, reason, basis, now = new Date(), inv
   if (basis === 'inclusive' && vat >= amount) throw new Error('ضريبة البند يجب أن تكون أقل من مبلغه الشامل.')
   const net = basis === 'inclusive' ? amount - vat : amount
   const total = basis === 'inclusive' ? amount : amount + vat
+  // حد الاعتماد نفسه (approval_private.item_vats): ضريبة البند لا تتجاوز 15% من صافيه بهامش هللتين؛ التصحيح فوقه يُرفض هنا ولا يُسجَّل
+  const limit = Math.round(net * 0.15) + 2
+  if (vat > limit) throw new Error(`ضريبة البند ${(vat / 100).toFixed(2)} تتجاوز 15% من صافيه ${(net / 100).toFixed(2)} (الحد ${(limit / 100).toFixed(2)}). راجع الرقم مع المستند.`)
   // الأصل يبقى أول قراءة؛ تصحيح ثانٍ لا يمحوه
   const original = item?.vatCorrection?.original ?? Object.fromEntries(LINE_FIELDS.map(k => [k, item?.[k] ?? null]))
   return { ...item, lineVat: num(vat), lineNet: num(net), printedLineTotal: num(total),

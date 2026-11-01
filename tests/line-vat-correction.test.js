@@ -44,3 +44,10 @@ test('تصحيح قديم لا يناسب الأرقام: المبلغ أو ال
   assert.equal(undone.vatCorrection, undefined); assert.deepEqual([undone.lineVat, undone.lineNet, undone.printedLineTotal], [0, 120, 120])
   assert.throws(() => correctLineVat({ amount: 120 }, 18, 'سبب', 'exclusive', at, '10'), /خصم على الإجمالي/)
 })
+
+test('تصحيح فوق حد 15% يُرفض ولا يُسجَّل: 19 على صافٍ 120 (الحد 18.02)، و18 يُقبل', () => {
+  const it = { amount: 120, lineNet: 120, lineVat: 0, printedLineTotal: 120 }
+  assert.throws(() => correctLineVat(it, 19, 'سبب', 'exclusive', at), /19\.00 تتجاوز 15% من صافيه 120\.00 \(الحد 18\.02\)/)
+  assert.equal(correctLineVat(it, '18.02', 'سبب', 'exclusive', at).lineVat, 18.02)
+  assert.equal(correctLineVat(it, 18, 'سبب', 'exclusive', at).vatCorrection.value, 18)
+})

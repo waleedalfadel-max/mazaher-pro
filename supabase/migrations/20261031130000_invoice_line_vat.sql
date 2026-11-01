@@ -13,7 +13,9 @@
 --     sum_mismatch       — كل البنود صالحة ومجموعها ≠ ضريبة الفاتورة؛
 --     negative_remainder — مجموع الصالح أكبر من ضريبة الفاتورة؛
 --     line_over_limit    — حصة بند غير معروف من الباقي تتجاوز 15% من مبلغه (مع رقم البند وحصته وحدّه)؛
---     all_zero           — كل البنود صفر صريح صالح والفاتورة بضريبة.
+--     all_zero           — كل البنود صفر صريح صالح والفاتورة بضريبة؛
+--     correction_invalid — بند صحّح المراجع ضريبته لكن سطره غير صالح (فوق 15%، أو لا يطابق المبلغ المراجَع، أو ضريبته ≠ القيمة المصححة).
+--   البند المصحح لا يصير «غير معروف» أبدًا؛ ضريبته المعتمدة = القيمة المصححة المسجلة أو يتوقف الاعتماد.
 -- لا يُستنتج إعفاء من اسم الصنف. لا تتغير أي معادلة مطابقة ولا أي قيد معتمد سابق.
 set search_path = public;
 
@@ -24,7 +26,7 @@ returns jsonb language plpgsql immutable set search_path = '' as $$
 declare
   n int := coalesce(array_length(p_after, 1), 0); x jsonb; k int := 0; l numeric; ln numeric; lt numeric; ok boolean; any_data boolean := false;
   st text[] := '{}'; lv numeric[] := '{}'; v numeric[]; known numeric := 0; rest numeric; lim numeric;
-  u_idx int[] := '{}'; u_w numeric[] := '{}'; share numeric[]; i int;
+  u_idx int[] := '{}'; u_w numeric[] := '{}'; share numeric[]; i int; cv numeric;
 begin
   if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) <> n or n = 0 then
     return jsonb_build_object('ok', true, 'mode', 'legacy', 'vats', to_jsonb(approval_private.allocate(p_after, p_vat)));
@@ -37,6 +39,19 @@ begin
       l := (x ->> 'lineVat')::numeric; ln := (x ->> 'lineNet')::numeric; lt := (x ->> 'printedLineTotal')::numeric;
       ok := coalesce(l >= 0 and l = round(l, 2) and ln + l = lt and l <= round(ln * 0.15, 2) + 0.02
             and p_after[k] = (case when p_basis = 'inclusive' then lt else ln end), false);
+    end if;
+    -- بند صحّح المراجع ضريبته (vatCorrection): يجب أن يكون سطره صالحًا وضريبته = القيمة المصححة المسجلة، وإلا يتوقف الاعتماد.
+    -- لا يسقط التصحيح إلى «غير معروفة» فيُستبدل بتوزيع الباقي.
+    if jsonb_typeof(x -> 'vatCorrection') = 'object' then
+      cv := case when jsonb_typeof(x -> 'vatCorrection' -> 'value') = 'number' then (x -> 'vatCorrection' ->> 'value')::numeric end;
+      if cv is null or not ok or l is distinct from cv then
+        return jsonb_build_object('ok', false, 'reason', 'correction_invalid', 'line', k, 'corrected_vat', cv, 'invoice_vat', p_vat,
+          'limit', case when jsonb_typeof(x -> 'lineNet') = 'number' then round((x ->> 'lineNet')::numeric * 0.15, 2) + 0.02 end,
+          'cause', case when cv is null then 'no_value'
+                        when jsonb_typeof(x -> 'lineVat') is distinct from 'number' or (x ->> 'lineVat')::numeric <> cv then 'value_mismatch'
+                        when l > round(ln * 0.15, 2) + 0.02 then 'over_limit'
+                        else 'not_matching_amount' end);
+      end if;
     end if;
     st := array_append(st, case when not ok then 'u' when l = 0 then 'z' else 'v' end);
     lv := array_append(lv, case when ok then l end);
