@@ -161,6 +161,8 @@ export function reviewChanges(original, final) {
     for (const k of ['description', 'amount', 'category_main', 'category_sub']) {
       if (!same(a[i][k], b[i][k])) out.push(`بند ${i + 1} — ${{ description: 'الوصف', amount: 'المبلغ', category_main: 'التصنيف', category_sub: 'الفرعي' }[k]}: «${a[i][k] ?? '—'}» ← «${b[i][k] ?? '—'}»`)
     }
+    // تصحيح ضريبة البند من المراجعة (src/lib/lineVat.js): القراءة الأصلية والقيمة المصححة والسبب
+    if (b[i].vatCorrection && !same(a[i].lineVat, b[i].lineVat)) out.push(`بند ${i + 1} — ضريبة البند: «${a[i].lineVat ?? 'غير مقروءة'}» ← «${b[i].lineVat}»؛ السبب: ${b[i].vatCorrection.reason}`)
   }
   return out
 }
@@ -249,6 +251,9 @@ export const newRequestId = () => (globalThis.crypto?.randomUUID ? crypto.random
 /** المبالغ في رسائل الاعتماد: منزلتان دائمًا. */
 export const money = v => (v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 
+// تصحيح ضريبة بند غير صالح (approval_private.item_vats: correction_invalid): رقم البند والقيمة المصححة وسبب الرفض
+const correctionInvalidText = d => `ضريبة البند ${d.line ?? ''} المصححة ${money(d.corrected_vat ?? 0)} ${{ over_limit: `تتجاوز 15% من صافيه (الحد ${money(d.limit ?? 0)})`, value_mismatch: 'لا تطابق القيمة المسجلة في التصحيح', not_matching_amount: 'لا تطابق مبلغ البند المراجَع', no_value: 'بلا قيمة' }[d.cause] || 'غير صالحة'}؛ لا تُستبدل بتوزيع. صحّح ضريبة البند أو ألغِ التصحيح. لم يُسجَّل شيء.`
+
 const SALES_CHANNEL_NAMES = { cash: 'النقدي', network: 'الشبكة', transfer: 'التحويل', hunger: 'هنقر', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
 /** ما تغيّر في تقرير المبيعات بالتصحيح، لكل قناة: «النقدي من 1,184.35 إلى 1,250.35». */
 export function salesCorrectionChanges(previous, corrected) {
@@ -293,6 +298,10 @@ export function approvalMessage(res) {
     invalid_discount: 'الخصم يجب أن يكون موجبًا وأقل من مجموع البنود.',
     discount_needs_items: 'الخصم على الإجمالي يوزَّع على البنود؛ أضف بنود الفاتورة أولًا.',
     zero_items_nonzero_vat: 'البنود صفرية والضريبة ليست صفرًا.',
+    // رد الخادم الفعلي: code = line_vat_conflict و reason = correction_invalid مع line وcorrected_vat وlimit وcause
+    line_vat_conflict: d.reason === 'correction_invalid' ? correctionInvalidText(d) : `${{ all_zero: 'كل البنود مطبوعة بضريبة صفر والفاتورة بضريبة.', sum_mismatch: `مجموع ضريبة الأسطر المطبوعة ${money(d.printed_vat ?? 0)} لا يساوي ضريبة الفاتورة ${money(d.invoice_vat ?? 0)}.`, negative_remainder: `ضريبة الأسطر المطبوعة ${money(d.printed_vat ?? 0)} أكبر من ضريبة الفاتورة ${money(d.invoice_vat ?? 0)}.`, line_over_limit: `ضريبة البند ${d.line ?? ''} بعد توزيع الباقي ${money(d.line_vat ?? 0)} تتجاوز 15% من مبلغه (${money(d.limit ?? 0)}).` }[d.reason] || 'ضريبة الأسطر المطبوعة لا تتسق مع ضريبة الفاتورة.'} راجع ضريبة الفاتورة ومبالغ البنود مع المستند؛ لم يُسجَّل شيء.`,
+    line_vat_stale: `صُحّحت ضريبة البند ${d.line ?? ''} ثم تغيّر ${{ amount: 'مبلغه', discount: 'خصمه', basis: 'أساس الضريبة', invoice_discount: 'خصم الفاتورة', line: 'سطره' }[d.why] || 'رقم مؤثر'}؛ التصحيح القديم لا يُعتمد. صحّح ضريبة البند من جديد أو ألغِ التصحيح. لم يُسجَّل شيء.`,
+    correction_invalid: correctionInvalidText(d),
     amounts_mismatch: `البنود${d.discount ? ' بعد الخصم' : ''} لا تطابق الإجمالي: الفرق ${money(Math.abs(d.difference ?? 0))} ر.س. طابق مبالغ البنود وخصوماتها والضريبة مع المستند؛ لا يُعتمد بفرق.`,
     unknown_payment: `في تقرير المبيعات وسيلة دفع غير معروفة${d.labels?.length ? `: ${d.labels.map(l => `«${l}»`).join('، ')}` : ''}. انسبها إلى قناتها أو استبعدها بسبب، ثم اعتمد. لم يُسجَّل شيء.`,
     total_required: 'اكتب إجمالي التقرير المطبوع شامل الضريبة بعد المرتجعات من التقرير نفسه، ثم اعتمد. لم يُسجَّل شيء.',

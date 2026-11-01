@@ -69,16 +69,19 @@ async function reviewRegressions(){
    return inv&&Object.entries(expected).every(([key,value])=>JSON.stringify(inv[key])===JSON.stringify(value))
   }),{id,expected})
  }
+ // The payment suggestion is applied after the policy and accounts load: wait for the expected value as an explicit condition
+ // (bounded by the default timeout), never a fixed delay; a wrong or missing suggestion still fails.
+ const valueIs=async(locator,expected)=>{const h=await locator.elementHandle();await page.waitForFunction(([el,exp])=>el.value===exp,[h,expected]);return locator.inputValue()}
  if(process.env.PAYMENT_REVIEW_ONLY!=='bank') {
   for(const enabled of [false,true]) {
    await setPolicy(enabled)
    const id=await makeDoc('accountant',{type:'transfer',transType:'📥 تحصيل ذمم جاهز',amount:17,date:'2026-10-18',description:'Collection without a source'})
    await mount(id);const source=page.getByLabel('مصدر الدفع',{exact:true});await source.waitFor()
-   assert.equal(await source.inputValue(),enabled?'bank':'')
+   assert.equal(enabled?await valueIs(source,'bank'):await source.inputValue(),enabled?'bank':'')
    await source.selectOption('bank');await account().selectOption(purchase)
    if(!enabled)await page.getByRole('button',{name:'حفظ مسودة',exact:true}).click()
    await savedPayment(id,{paySource:'bank',bankAccountId:purchase})
-   await mount(id);await source.waitFor();assert.equal(await source.inputValue(),'bank');assert.equal(await account().inputValue(),purchase)
+   await mount(id);await source.waitFor();assert.equal(await valueIs(source,'bank'),'bank');assert.equal(await valueIs(account(),purchase),purchase)
    await approveButton(page.getByRole('button',{name:'اعتماد',exact:true}))
    const row=await f.one('select bank_account_id,bank_in,receivable_out,branch from ledger_entries where document_id=$1',[id])
    assert.equal(row.bank_account_id,purchase);assert.equal(Number(row.bank_in),17);assert.equal(Number(row.receivable_out),17)

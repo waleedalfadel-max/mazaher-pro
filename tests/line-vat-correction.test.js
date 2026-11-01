@@ -1,0 +1,53 @@
+// تصحيح ضريبة بند من المراجعة (src/lib/lineVat.js): الأصل والقيمة والسبب، وسطر متسق مع قاعدة الاعتماد، ولا يمس غير البند. أرقام مصطنعة.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { correctLineVat, hasLineVat, lineVatText, staleLineVatCorrection, undoLineVatCorrection } from '../src/lib/lineVat.js'
+
+const at = new Date('2026-11-01T10:00:00Z')
+test('قبل الضريبة: الضريبة المصححة على الصافي المراجَع، والأصل محفوظ، والقيم أرقام', () => {
+  const it = { description: 'منظف تجريبي', amount: 120, lineNet: 120, lineVat: 0, printedLineTotal: 120, category_main: 'تنظيف' }
+  const c = correctLineVat(it, '18', 'قُرئت صفرًا', 'exclusive', at)
+  assert.deepEqual([c.lineNet, c.lineVat, c.printedLineTotal, c.amount, c.category_main], [120, 18, 138, 120, 'تنظيف'])
+  assert.deepEqual(c.vatCorrection, { original: { lineVat: 0, lineNet: 120, printedLineTotal: 120 }, value: 18, reason: 'قُرئت صفرًا', basis: 'exclusive', amount: 120, discount: 0, at: '2026-11-01T10:00:00.000Z' })
+  assert.equal(typeof c.lineVat, 'number')
+})
+test('الشامل: الإجمالي يبقى مبلغ البند والصافي = الإجمالي − الضريبة', () => {
+  const c = correctLineVat({ amount: 138, lineNet: 138, lineVat: 0, printedLineTotal: 138 }, 18, 'سبب', 'inclusive', at)
+  assert.deepEqual([c.lineNet, c.lineVat, c.printedLineTotal], [120, 18, 138])
+})
+test('تصحيح ثانٍ لا يمحو القراءة الأصلية', () => {
+  const once = correctLineVat({ amount: 120, lineNet: 120, lineVat: 0, printedLineTotal: 120 }, 17, 'أولى', 'exclusive', at)
+  const twice = correctLineVat(once, 18, 'ثانية', 'exclusive', at)
+  assert.deepEqual(twice.vatCorrection.original, { lineVat: 0, lineNet: 120, printedLineTotal: 120 }); assert.equal(twice.vatCorrection.reason, 'ثانية')
+})
+test('السبب والقيمة والمبلغ إلزامية؛ ضريبة غير المعروفة تُصحَّح أيضًا', () => {
+  assert.throws(() => correctLineVat({ amount: 120 }, 18, '  ', 'exclusive'), /سبب/)
+  assert.throws(() => correctLineVat({ amount: 120 }, '-1', 'سبب', 'exclusive'), /موجب أو صفر/)
+  assert.throws(() => correctLineVat({ amount: 120 }, '1.234', 'سبب', 'exclusive'), /موجب أو صفر/)
+  assert.throws(() => correctLineVat({ amount: '' }, 18, 'سبب', 'exclusive'), /مبلغ البند/)
+  assert.throws(() => correctLineVat({ amount: 18 }, 18, 'سبب', 'inclusive'), /أقل من مبلغه/)
+  const u = correctLineVat({ amount: 120, lineNet: 120, printedLineTotal: 120 }, 18, 'لم تُقرأ', 'exclusive', at)
+  assert.equal(u.vatCorrection.original.lineVat, null); assert.match(lineVatText(u), /غير مقروءة ← 18\.00 — لم تُقرأ/)
+  assert.equal(hasLineVat({ amount: 1 }), false); assert.equal(hasLineVat({ lineVat: 0 }), true)
+})
+
+test('تصحيح قديم لا يناسب الأرقام: المبلغ أو الخصم أو الأساس أو خصم الفاتورة أو سطر البند؛ وإلغاء التصحيح يعيد القراءة الأصلية', () => {
+  const c = correctLineVat({ amount: 120, lineNet: 120, lineVat: 0, printedLineTotal: 120 }, 18, 'سبب', 'exclusive', at)
+  const inv = (it, extra = {}) => ({ amountsBasis: 'exclusive', items: [{ amount: 200 }, it], ...extra })
+  assert.equal(staleLineVatCorrection(inv(c)), null)
+  assert.deepEqual(staleLineVatCorrection(inv({ ...c, amount: '125' })), { line: 2, why: 'amount' })
+  assert.deepEqual(staleLineVatCorrection(inv({ ...c, discount: '5' })), { line: 2, why: 'discount' })
+  assert.deepEqual(staleLineVatCorrection({ ...inv(c), amountsBasis: 'inclusive' }), { line: 2, why: 'basis' })
+  assert.deepEqual(staleLineVatCorrection(inv(c, { invoiceDiscount: '10' })), { line: 2, why: 'invoice_discount' })
+  assert.deepEqual(staleLineVatCorrection(inv({ ...c, lineVat: 17 })), { line: 2, why: 'line' })
+  const undone = { ...c, ...undoLineVatCorrection(c) }   // كما تدمجه شاشة المراجعة
+  assert.equal(undone.vatCorrection, undefined); assert.deepEqual([undone.lineVat, undone.lineNet, undone.printedLineTotal], [0, 120, 120])
+  assert.throws(() => correctLineVat({ amount: 120 }, 18, 'سبب', 'exclusive', at, '10'), /خصم على الإجمالي/)
+})
+
+test('تصحيح فوق حد 15% يُرفض ولا يُسجَّل: 19 على صافٍ 120 (الحد 18.02)، و18 يُقبل', () => {
+  const it = { amount: 120, lineNet: 120, lineVat: 0, printedLineTotal: 120 }
+  assert.throws(() => correctLineVat(it, 19, 'سبب', 'exclusive', at), /19\.00 تتجاوز 15% من صافيه 120\.00 \(الحد 18\.02\)/)
+  assert.equal(correctLineVat(it, '18.02', 'سبب', 'exclusive', at).lineVat, 18.02)
+  assert.equal(correctLineVat(it, 18, 'سبب', 'exclusive', at).vatCorrection.value, 18)
+})
