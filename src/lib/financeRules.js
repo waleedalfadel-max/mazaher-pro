@@ -9,6 +9,11 @@ export const VAT_RATE = 0.15
 const SALES_KEYWORD = 'مبيعات'
 const SALES_EXTRA_TYPES = ['تحصيل جملة']  // النوع الوحيد المصنَّف مبيعات بلا كلمة "مبيعات" بنصه
 
+// فرق موثّق لتثبيت رصيد فعلي عند بدء المتابعة. يؤثر في رصيد الحساب فقط؛
+// ليس إيداعًا/تحويلًا فعليًا، ولا مبيعات أو مصروفًا أو ضريبة.
+export const BALANCE_START_TYPE = 'تسوية رصيد بداية المتابعة'
+export const isBalanceStart = type => type === BALANCE_START_TYPE
+
 const EXCLUDED_TYPES = [
   'تحويل داخلي',
   'صرف عهدة',
@@ -37,7 +42,7 @@ export function isSales(type) {
 }
 
 export function isExcluded(type) {
-  return EXCLUDED_TYPES.some(t => (type || '').includes(t))
+  return isBalanceStart(type) || EXCLUDED_TYPES.some(t => (type || '').includes(t))
 }
 
 
@@ -56,6 +61,7 @@ export function isTaxType(type) {
 
 export function isRealExpense(entry) {
   const type = entry.type || ''
+  if (isBalanceStart(type)) return false
   if (isWithdrawal(type)) return false
   if (isDebt(type))       return false
   if (isTaxType(type)) return false
