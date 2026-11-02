@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { operatesBusiness } from '../lib/adminAccess'
 import { Button, Dialog, Field, Input, Note, Panel, Select, Tabs, Textarea } from '../ui/components.jsx'
 import { clearProjectCache } from '../lib/projectSettings'
+import { roleLabel } from '../lib/teamSettings'
 
 import AccountDashboardSettings from '../components/AccountDashboardSettings.jsx'
 import BankWorkflowSettings from '../components/BankWorkflowSettings.jsx'
@@ -137,9 +138,9 @@ function History({projectId}){
   if(alive.current){if(r.ok&&r.project_id===projectId){setEvents(e=>before?[...e,...r.events]:r.events);setMore(r.events.length===50)}else setError(errorText(r));setBusy(false)}lock.current=false
  },[projectId])
  useEffect(()=>{alive.current=true;load();return()=>{alive.current=false}},[load])
- return <Panel title="سجل إجراءات إدارة تحسيب" subtitle="يبدأ من تفعيل هذا التحديث. يعرض المنفذ والوقت والتغيير في المنشأة المفتوحة فقط." action={<Button disabled={busy} onClick={()=>load()}>تحديث</Button>}>
+ return <Panel title="سجل الإجراءات" subtitle="تعديلات إدارة تحسيب ومستخدمي المنشأة على بياناتها، بما فيها الاعتماد. يعرض المنفذ ودوره والوقت والتغيير في المنشأة المفتوحة فقط." action={<Button disabled={busy} onClick={()=>load()}>تحديث</Button>}>
   <div className="ts-panel-body">{error&&<Note tone="error">{error}</Note>}{!busy&&!events.length&&!error&&<p>لا إجراءات مسجلة بعد.</p>}
-   {events.map(e=><details key={e.id} className="py-3 border-b"><summary>{e.actor_name} — {({INSERT:'إضافة',UPDATE:'تعديل',DELETE:'حذف'})[e.action]||e.action} — {ENTITIES[e.entity]||'إجراء'} — {new Date(e.happened_at).toLocaleString('ar-SA')}</summary>
+   {events.map(e=><details key={e.id} className="py-3 border-b"><summary>{e.actor_name} ({roleLabel(e.actor_role)}) — {({INSERT:'إضافة',UPDATE:'تعديل',DELETE:'حذف'})[e.action]||e.action} — {ENTITIES[e.entity]||'إجراء'} — {new Date(e.happened_at).toLocaleString('ar-SA')}</summary>
     {e.reason&&<p>السبب: {e.reason}</p>}
     <ul>{Object.keys(LABELS).filter(k=>JSON.stringify(e.before_value?.[k])!==JSON.stringify(e.after_value?.[k])).map(k=><li key={k}>{LABELS[k]}: {show(e.before_value?.[k])} ← {show(e.after_value?.[k])}</li>)}</ul>
     {e.changed_fields?.includes('analysis_result')&&<p>تغيّرت قراءة المستند. راجع تفاصيله في صفحة المستندات.</p>}
