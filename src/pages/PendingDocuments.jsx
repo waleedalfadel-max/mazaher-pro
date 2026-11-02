@@ -40,6 +40,7 @@ function readingFailure(e, retry) {
 import { accountDashboard } from '../lib/accountStatement.js'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
+import SupplierOverpaymentNotice from '../components/SupplierOverpaymentNotice.jsx'
 import LoanRepaymentFields from '../components/LoanRepaymentFields.jsx'
 import { LOAN_OPTION, isLoanRepayment, reviewDocumentType, toLoanRepayment, fromLoanRepayment, loanBlockReason, withoutLoanPrincipalConfirmation } from '../lib/loanRepayment.js'
 import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, receiptBlockReason, receiptHistoryNote, withSuggestedSuppliers, supplierOptions } from '../lib/supplierReceipts.js'
@@ -327,7 +328,7 @@ export default function PendingDocuments() {
     if (rereadLocks.current.has(id) && !duringReread
         && !Object.keys(patch).every(k => ['_imageData', '_isUrl', '_showImage', '_loadingImg'].includes(k))) return
     // تعديل من المستخدم (لا نتيجة قراءة جديدة ولا حالة بعد اعتماد جزئي): «تعديلات لم تُحفظ» حتى «حفظ مسودة» أو الاعتماد
-    if (patch._edit && patch._state === undefined) patch = { _v2Error: null, ...patch, _dirty: true }
+    if (patch._edit && patch._state === undefined) patch = { _v2Error: null, _overpaymentDecisions: null, ...patch, _dirty: true }
     setDocs(ds => ds.map(d => {
       if (d.id !== id) return d
       const next = { ...d, ...patch }
@@ -950,7 +951,7 @@ export default function PendingDocuments() {
     }
     // الإيصال المعاد فتحه (بعد حذف دفعته) يحمل بيانات المراجع السابقة؛ القراءة الأصلية من الخادم (original_reading)
     const originals = Object.fromEntries((doc.analysis_result?.invoices || []).map(x => [x._id, doc._v2?.invoices?.find(i => i.id === x._id)?.original_reading || x]))
-    const decisions = { suppliers: {}, duplicates: { ...(doc._dupDecisions || {}) } }
+    const decisions = { suppliers: {}, duplicates: { ...(doc._dupDecisions || {}) }, overpayments: { ...(doc._overpaymentDecisions || {}) } }
     // الصورة متعددة الفواتير: مورد كل فاتورة وحدها (invoiceSupplierContext)، والفاتورة المفردة: اختيار المستند كما كان
     const multi = list.length > 1
     const payload = invs.map(inv => {
@@ -977,7 +978,7 @@ export default function PendingDocuments() {
     } catch (e) { error = e }
     if (error?.code === 'P0023') return v2Failed(doc, { code: 'reading_replaced' })
     if (error || !data) { updateDoc(doc.id, { _state: 'analyzed', _v2Error: callError(error) }); return }
-    if (!data.ok) return v2Failed(doc, data)
+    if (!data.ok) return v2Failed(doc, { ...data, approvalTarget: target })
     v2Done(doc, data)
   }
 
@@ -1254,6 +1255,14 @@ export default function PendingDocuments() {
             approveV2({ ...doc, _dupDecisions: decisions })
           }}
           onCorrectSales={reason => correctSalesV2(doc, reason)}
+          onOverpaymentConfirm={() => {
+            const err = doc._v2Error
+            if (err?.code !== 'supplier_overpayment_confirmation' || !err.confirmation) return
+            const next = { ...doc, _overpaymentDecisions: { ...(doc._overpaymentDecisions || {}), [err.invoice_id]: err.confirmation } }
+            updateDoc(doc.id, { _state: doc._state, _overpaymentDecisions: next._overpaymentDecisions })
+            approveV2(next, err.approvalTarget || 'all')
+          }}
+          onOverpaymentCancel={() => updateDoc(doc.id, { _state: doc._state, _v2Error: null, _overpaymentDecisions: null })}
           onEditCorrection={(f, v) => {
             // لوحة حسابات التصحيح (R2): التعديل يبقي تنبيه «يوجد تقرير» ومربع السبب
             const cur = doc._edit || doc.analysis_result || {}
@@ -1940,7 +1949,7 @@ function PreviousReadings({ docId, refreshKey }) {
   </details>
 }
 
-function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualApprove, onDupConfirm, onCorrectSales, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
+function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualApprove, onDupConfirm, onCorrectSales, onOverpaymentConfirm, onOverpaymentCancel, onEditCorrection, doc, projName, onAnalyze, onApprove, onApproveForced, onDupIgnore, onReject, onSaveDraft, canSaveDraft, onEdit, onEditInvoice, onReplaceInvoice, onEditItem, onDeleteItem, onAddItem, onAddInvoice, onApproveInvoice, onRejectInvoice, onBranchChange, onSupplierChange, onSupplierNameChange, onSupplierResolve, onClearValidation, transTypes, categories, branches, setup, suppliers, payableSuppliers }) {
   const [manualIndex, setManualIndex] = useState(null)
   const [rereadOpen, setRereadOpen] = useState(false)
   useEffect(() => { setManualIndex(null) }, [doc.analysis_result?._readingId])
@@ -2025,7 +2034,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
     && (!isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending') && !salesReportCheck(x).ok))
   const pendingCount = isMultiInvoice ? rawRes.invoices.filter(x => !isV2 || (invStatus(x._id)?.status ?? 'pending') === 'pending').length : 0
   // قرار معلّق في التنبيه (تكرار، أو اشتباه بلا سبب، أو تقرير مبيعات موجود): الاعتماد يمر من التنبيه وحده
-  const DECISIONS = { duplicate_invoice: 'فاتورة معتمدة مسبقًا: لا اعتماد لها. ارفض المستند.',
+  const DECISIONS = { supplier_overpayment_confirmation: 'راجع تنبيه تجاوز المستحق أعلاه، ثم وافق على الزيادة أو ارجع للمراجعة.', duplicate_invoice: 'فاتورة معتمدة مسبقًا: لا اعتماد لها. ارفض المستند.',
     suspected_duplicate: 'اكتب سبب اختلافه عن المستند المرتبط في التنبيه أعلاه، أو ارفضه.',
     sales_report_exists: 'يوجد تقرير لهذا اليوم: صحّحه بسبب مكتوب من التنبيه أعلاه، أو ارفض المستند.',
     sales_report_exists_legacy: 'يوجد تقرير لهذا اليوم سُجّل سابقًا: لا يُنشأ ثانٍ.',
@@ -2110,7 +2119,9 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
       {doc._error && <Note tone="error" icon={CircleAlert} title="تعذّر الإجراء">{doc._error}</Note>}
       {doc._notice && <Note tone="success" icon={Check} title={doc._notice} />}
       {reopenedNote && <div data-k="receipt-reopened"><Note tone="warning" icon={CircleAlert} title="عاد هذا المستند للمراجعة">{reopenedNote}</Note></div>}
-      <V2Error err={doc._v2Error} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />
+      {doc._v2Error?.code === 'supplier_overpayment_confirmation'
+        ? <SupplierOverpaymentNotice error={doc._v2Error} busy={busy || readOnly} onConfirm={onOverpaymentConfirm} onCancel={onOverpaymentCancel} />
+        : <V2Error err={doc._v2Error} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />}
       {doc._v2Error?.code === 'sales_report_exists' && <CorrectionAccounts linked={doc._v2Error.linked} invoice={res} branch={doc.branch} setup={setup} onEdit={onEditCorrection || onEdit} />}
       {doc._validationError && (
         <Note tone="error" icon={CircleAlert} title="حقول مطلوبة قبل الاعتماد">
