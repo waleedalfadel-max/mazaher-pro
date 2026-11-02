@@ -2344,7 +2344,8 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
 }
 
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
-function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision, suppliers = [], payableSuppliers = [], documentId, history, receiptContext, onReceiptContext, serverDuplicate }) {
+// صفحة تصحيح الفاتورة المعتمدة (CorrectInvoice.jsx) تستعمل المحرر نفسه بزر حفظ التصحيح ومفتوحًا
+export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision, suppliers = [], payableSuppliers = [], documentId, history, receiptContext, onReceiptContext, serverDuplicate, approveLabel = 'اعتماد هذه الفاتورة وحدها', defaultOpen = false }) {
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -2382,7 +2383,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
     : paymentOptions(setup,invoice.paySource).filter(o => o.value !== 'payable')
 
   return (
-    <details className="rp-subinv" open={isFutureDate || undefined}>
+    <details className="rp-subinv" open={defaultOpen || isFutureDate || undefined}>
       <summary>
         <span className="rp-subinv-n">فاتورة <span className="ts-num">{index + 1}</span></span>
         <span className="rp-subinv-desc">{invoice.description || invoice.transType || '—'}</span>
@@ -2483,7 +2484,7 @@ function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch
                 if (invoice.type === 'transfer' && !invoice.paySource) { setPayError(true); return }
                 setPayError(false)
                 onApprove()
-              }}>اعتماد هذه الفاتورة وحدها</Button>
+              }}>{approveLabel}</Button>
             )}
             {onManualApprove && <Button size="sm" disabled={approving} onClick={onManualApprove}>اعتماد يدوي لهذه الفاتورة</Button>}
             {onReject && <Button size="sm" variant="quiet" icon={Ban} disabled={approving} onClick={onReject}>استبعادها</Button>}

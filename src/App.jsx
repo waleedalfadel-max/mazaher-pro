@@ -8,6 +8,7 @@ import Ledger from './pages/Ledger'
 import FinancialRecord from './pages/FinancialRecord.jsx'
 import Sales from './pages/Sales'
 import Journals from './pages/Journals'
+import CorrectInvoice from './pages/CorrectInvoice.jsx'
 import Reports from './pages/Reports'
 import FinancialAnalysis from './pages/FinancialAnalysis'
 import Loans from './pages/Loans'
@@ -132,6 +133,12 @@ function AppRoutes() {
       <Route path="/pending" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
           <PendingDocuments />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/correct/:docId/:invId" element={
+        <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>
+          <CorrectInvoice />
         </ProtectedRoute>
       } />
 
