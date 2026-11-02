@@ -144,7 +144,7 @@ export default function SupplierReceiptFields({ invoice, index = 0, documentId, 
         <div className="rp-receipt-balance" data-k={k('receipt-balance')}>
           <span>المستحق لـ«{ctx.name}» قبل السداد: <Money value={Number(ctx.balance)} /></span>
           <span>{mode === 'link' ? 'بعده: بلا تغيير (الدفعة مسجلة سابقًا)' : <>بعده: <Money value={after ?? 0} /></>}</span>
-          {mode === 'new' && after != null && after < 0 && <Status tone="danger">المبلغ أكبر من المستحق</Status>}
+          {mode === 'new' && after != null && after < 0 && <Status tone="warning">المبلغ أكبر من المستحق</Status>}
         </div>
       )}
       {dups.length > 0 && (
