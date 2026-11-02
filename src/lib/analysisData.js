@@ -5,7 +5,7 @@ import { fetchEveryRow, fetchByChunks } from './fetchAll.js'
 import { COUNTED_STATUSES } from './financialAnalysis.js'
 
 const ENTRY_COLS = 'id,date,type,description,status,branch,journal_number,category_id,category_main,category_sub,financial_class,'
-  + 'cash_in,bank_in,custody_in,receivable_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,vat_amount,total_amount'
+  + 'cash_in,bank_in,custody_in,receivable_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,vat_amount,output_vat_amount,total_amount'
 
 export class AnalysisLoadError extends Error {
   constructor(part, cause) { super(part); this.part = part; this.cause = cause }

@@ -11,7 +11,7 @@ export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقر
 // وصف الأرقام لكل قسم — يُعرض في الشاشة («ما الذي تشمله هذه الأرقام؟») وفي الملفين بالنص نفسه
 export const SCOPE = {
   sales: [
-    ['المبيعات', 'قيود المبيعات في الفترة (كاش وشبكة وتطبيقات التوصيل)، مقسومة على 1.15 لاستبعاد ضريبة المخرجات. التحويلات الداخلية وتحصيل الذمم لا تدخل.'],
+    ['المبيعات', 'قيود المبيعات في الفترة (كاش وشبكة وتطبيقات التوصيل)، بعد استبعاد ضريبة التقارير المحفوظة، أو تقدير 15% عند غيابها. التحويلات الداخلية وتحصيل الذمم لا تدخل.'],
     ['المتوسط اليومي', 'مبيعات الفترة مقسومة على عدد أيامها كلها، لا على أيام التشغيل وحدها.'],
     ['النمو', 'من أول الفترة حتى آخر يوم فيه مبيعات، مقابل الأيام نفسها من الشهر السابق.'],
     ['التطبيقات', 'هنقر وجاهز وكيتا ومرسول ونينجا، والنسبة من مبيعات الفرع نفسه.'],
@@ -183,15 +183,15 @@ export function reportModel(ctx) {
   if (tab === 'vat') {
     const d = ctx.data, v = d.vat, due = v.netBeforePayment >= 0
     blocks.push({ kind: 'metrics', id: 'vat.cards', items: [
-      { key: 'vat.output', label: 'ضريبة المخرجات', type: 'money', value: v.outputVat, foot: 'المبيعات ÷ 1.15 × 15%' },
+      { key: 'vat.output', label: 'ضريبة المخرجات', type: 'money', value: v.outputVat, foot: 'ضريبة التقارير المحفوظة؛ وعند غيابها تقدير 15%' },
       { key: 'vat.input', label: 'ضريبة المدخلات', type: 'money', value: v.inputVat, foot: 'المسجلة على فواتير المشتريات' },
       { key: 'vat.net', label: 'صافي ضريبة الفترة قبل السداد', type: 'money', value: Math.abs(v.netBeforePayment), foot: due ? 'المخرجات أكبر: مستحق للهيئة عن الفترة' : 'المدخلات أكبر: فائض لصالح المنشأة' },
       { key: 'vat.payments', label: 'مدفوعات الضريبة خلال الفترة', type: 'money', value: v.paymentsTotal, foot: v.payments.length ? `${plural(v.payments.length, 'دفعة واحدة', 'دفعتان', 'دفعات', 'دفعة')}؛ لا تُطرح من صافي الفترة${v.refunds.length ? `، ومستردات ${formatNumber(v.refundsTotal, 2)}` : ''}` : 'لا سداد مسجّل في الفترة' },
     ] })
     blocks.push({ kind: 'calc', id: 'vat.calc', title: 'تفاصيل حساب الضريبة', rows: [
       { label: 'إجمالي المبيعات (شامل الضريبة)', value: d.totalSales },
-      { label: 'المبيعات الصافية (÷ 1.15)', value: d.netSales },
-      { label: 'ضريبة المخرجات (15%)', value: v.outputVat, strong: true },
+      { label: 'المبيعات الصافية (بعد استبعاد الضريبة)', value: d.netSales },
+      { label: 'ضريبة المخرجات', value: v.outputVat, strong: true },
       { label: 'ضريبة المدخلات (من الفواتير)', value: -v.inputVat, strong: true },
       { label: 'صافي ضريبة الفترة قبل السداد', value: v.netBeforePayment, strong: true },
     ] })

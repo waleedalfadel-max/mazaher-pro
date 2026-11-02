@@ -46,7 +46,7 @@ import { LOAN_OPTION, isLoanRepayment, reviewDocumentType, toLoanRepayment, from
 import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, receiptBlockReason, receiptHistoryNote, withSuggestedSuppliers, supplierOptions } from '../lib/supplierReceipts.js'
 import { withManualInvoice } from '../lib/manualReview.js'
 import { operatesBusiness } from '../lib/adminAccess.js'
-import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck } from '../lib/salesReport.js'
+import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck, reportedSalesVatCheck } from '../lib/salesReport.js'
 import { bankAccountLabel, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
 import { applyRulesToDocument, indexRules } from '../lib/itemRules'
 import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
@@ -543,6 +543,7 @@ export default function PendingDocuments() {
     const docTransTypes = isSuperAdmin ? (transTypesMap[pid] || FALLBACK_TRANS_TYPES) : transTypes
 
     if (res.type === 'sales') {
+      if (reportedSalesVatCheck(res).provided) throw new Error('حفظ ضريبة المبيعات المطبوعة يتطلب مسار الاعتماد الجديد. فعّله لهذه المنشأة قبل الاعتماد.')
       // وسيلة دفع غير معروفة أو فرق مع الإجمالي المطبوع: لا كتابة (src/lib/salesReport.js)
       const check = salesReportCheck(res)
       if (!check.ok) throw new Error(check.reasons[0])
@@ -1629,6 +1630,7 @@ function CorrectionAccounts({ linked, invoice, branch, setup, onEdit }) {
 function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
   const [choice, setChoice] = useState({})
   const check = salesReportCheck(invoice)
+  const tax = reportedSalesVatCheck(invoice)
   const b = invoice?.salesBreakdown
   const unknown = invoice?.unknownPayments || []
   const rows = b ? CHANNELS.filter(c => b.gross[c] || b.returns[c]) : []
@@ -1691,6 +1693,12 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
           hint={check.total == null && !(Number(invoice?.salesReadingVersion) >= 2) ? 'لم يُقرأ إجمالي مطبوع: اكتبه من التقرير ليُطابق قبل الاعتماد.' : undefined}>
           <Num value={invoice?.totalSales ?? ''} data-k="sales-printed-total" disabled={readOnly} onChange={e => onEdit('totalSales', e.target.value)} />
         </Field>
+        <Field label="ضريبة المبيعات المطبوعة (اختياري)" hint="ضريبة التقرير بعد المرتجعات. عند تركها فارغة تُقدّر بافتراض خضوع كامل المبيعات لضريبة 15%. الصفر يُحفظ كما هو."
+          error={!tax.ok ? 'راجع ضريبة التقرير وإجماليه.' : undefined}>
+          <Num value={invoice?.reportedSalesVat ?? ''} data-k="sales-printed-vat" disabled={readOnly} onChange={e => onEdit('reportedSalesVat', e.target.value)} />
+        </Field>
+        <div className="rp-total-row" data-k="sales-output-vat"><span>{tax.provided ? 'ضريبة المخرجات من التقرير' : 'ضريبة المخرجات المقدّرة (15%)'}</span>
+          <Money value={tax.provided ? tax.value : (check.total ?? check.channels) / 1.15 * 0.15} /></div>
         {check.diff != null && (
           <div className={`rp-total-row${check.diff ? ' rp-total-row--warn' : ''}`} data-k="sales-diff"><span>الفرق بين وسائل الدفع والإجمالي</span><Money value={check.diff} /></div>
         )}
@@ -1908,6 +1916,7 @@ function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
     l.invoice_date && { label: 'التاريخ', value: <span className="ts-num">{l.invoice_date}</span> },
     l.total != null && { label: 'المبلغ', value: <Money value={l.total} /> },
     l.current && { label: 'أرقام التقرير الموجود', value: <span className="ts-num">نقدي {money(l.current.cash)} · شبكة {money(l.current.network)}</span> },
+    l.current?._reported_vat != null && { label: 'ضريبة التقرير الموجود', value: <Money value={l.current._reported_vat} /> },
   ].filter(Boolean) : null
   const warn = ['suspected_duplicate', 'sales_report_exists', 'no_change', 'stale', 'invoice_already_decided'].includes(err.code)
   const reasonBox = (label, cta, onGo) => (
@@ -2324,8 +2333,6 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
               <SalesReading invoice={res} onEdit={onEdit} onReplace={next => onReplaceInvoice(null, next)} readOnly={readOnly} />
               <div className="rp-totals">
                 <div className="rp-total-row rp-total-row--strong"><span>الإجمالي المحسوب</span><Money value={salesTotal} /></div>
-                <div className="rp-total-row"><span>ضريبة المخرجات المحسوبة (15% كما في التطبيق)</span>
-                  <Money value={(res.totalSales || (res.cashSales || 0) + (res.networkSales || 0) + (res.transferSales || 0)) / 1.15 * 0.15} /></div>
               </div>
             </div>
           )}

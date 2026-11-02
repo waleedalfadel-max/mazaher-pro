@@ -9,7 +9,7 @@ import { allocateEntry } from './expenseBreakdown.js'
 import { normCat } from './approvalV2.js'
 import { formatDate } from '../ui/format.js'
 import { summarizeEntries } from './financeSummary.js'
-import { VAT_RATE, isSales, isExcluded, isWithdrawal, isDebt, isTaxType, isCOGSEntry, isRealExpense, expenseAmountNet,
+import { isSales, isExcluded, isWithdrawal, isDebt, isTaxType, isCOGSEntry, isRealExpense, expenseAmountNet,
   salesAmountGross } from './financeRules.js'
 
 // القاعدة المركزية للحالات المحتسبة في financeRules (مصدر واحد للمحرك والتقارير والتحليل)
@@ -54,7 +54,7 @@ export function windowFigures(rows, w, { docItems = [], categoriesById = {} } = 
     costsH += net
     if (isCOGSEntry(e)) cogsH += net
   }
-  const salesNetH = Math.round(salesGrossH / (1 + VAT_RATE))
+  const salesNetH = toH(summarizeEntries(counted).totalSales)
 
   // البنود: توزيع صافي كل قيد مصروف على بنود مستنده (كما في تقرير المصروفات)، ثم الرئيسي بمعرّفه الثابت والفرعي تحته
   // فرعي محفوظ بالاسم وحده (قيود سابقة) تحت رئيسي معروف: يُربط بمعرّف الفرعي الوحيد بالاسم نفسه تحته، فلا يظهر البند صفين.
@@ -393,7 +393,7 @@ function limitsOf(cur, ref, { noBranchRows, pendingDocs, branch } = {}) {
   if (cur.settlementH) L.push({ key: 'settle', text: `سداد أرصدة موردين لم تدخل فواتيرها الدفتر ${money(cur.settlementH)}: يُحتسب تكلفةً عند السداد بإجماليه وبلا تصنيف. سداد الفواتير المسجلة في الدفتر يخفض الالتزام ولا يُحتسب تكلفة ثانية.` })
   if (cur.salesOutflows) L.push({ key: 'returns', tone: 'warning', text: `${cur.salesOutflows} قيد مبيعات فيه مبلغ خارج (مرتجع؟). المحرك لا يطرح الخارج من المبيعات؛ راجعه.` })
   if (cur.debtsH || cur.withdrawalsH) L.push({ key: 'finance', text: `خارج التكاليف: أقساط وقروض ${money(cur.debtsH)} ومسحوبات ${money(cur.withdrawalsH)}. البيانات لا تفصل رسوم التمويل عن أصل القرض.` })
-  L.push({ key: 'vat', text: 'صافي المبيعات = المقبوض ÷ 1.15 لكل قيود المبيعات (افتراض المحرك الحالي أن كل المبيعات خاضعة 15%). ضريبة المدخلات المسجلة على الفواتير تُطرح من التكاليف على أنها قابلة للاسترداد.' })
+  L.push({ key: 'vat', text: 'صافي المبيعات = إجمالي المبيعات ناقص ضريبة التقارير المحفوظة؛ وعند غيابها تُقدّر بافتراض خضوع كامل المبيعات لضريبة 15%. ضريبة المدخلات المسجلة على الفواتير تُطرح من التكاليف على أنها قابلة للاسترداد.' })
   L.push({ key: 'inventory', text: '«مشتريات المواد» هي مشتريات الفترة لا تكلفة الاستهلاك الفعلي؛ لا بيانات مخزون. لا تُستنتج منها هدر أو فقد.' })
   if (cur.firstDate == null && ref.n === 0) L.push({ key: 'empty', tone: 'warning', text: 'لا قيود محتسبة في الفترة ولا في المقارنة.' })
   const bad = ref.windows.filter(x => !x.valid)
