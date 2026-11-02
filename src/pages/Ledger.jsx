@@ -1,12 +1,12 @@
 import { runningAccountBalances, accountDashboard, accountHref } from '../lib/accountStatement.js'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
 import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
 import { usesCompactHome } from '../lib/businessPresentation.js'
 import BankTransferManage from '../components/BankTransferManage.jsx'
 import { BANK_TRANSFER_TYPE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
-import { BookOpen, CalendarDays, Info, Landmark, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { BookOpen, CalendarDays, Info, Landmark, Pencil, PencilLine, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
@@ -160,7 +160,13 @@ function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts 
 }
 
 export default function Ledger() {
-  const { canEdit, projectId, projectName } = useAuth()
+  const { canEdit, projectId, projectName, role, isSuperAdmin } = useAuth()
+  // قيد فاتورة معتمدة (اعتماد جديد): لا يُعدَّل ولا يُحذف من هنا، بل تُصحَّح الفاتورة كلها (CorrectInvoice.jsx).
+  // دفعات الموردين والتحويل بين الحسابين البنكيين تبقى بمساريهما في الخادم.
+  const navigate = useNavigate()
+  const canCorrect = canEdit && (role === 'accountant' || isSuperAdmin)
+  const docLocked = r => !!r?.document_invoice_id && !isSupplierPaymentType(r.type) && r.type !== BANK_TRANSFER_TYPE
+  const goCorrect = r => navigate(`/correct/${r.document_id}/${r.document_invoice_id}`)
   const compactInvoices = usesCompactHome(projectName)
   const [allRows, setAllRows]       = useState([])
   const [loading, setLoading]       = useState(true)
@@ -344,16 +350,18 @@ export default function Ledger() {
   const actions = r => !r._creditRows && canEdit && r.status !== 'cancelled' && (
     <div className="ldg-actions">
       {linkButton(r)}
+      {docLocked(r) ? canCorrect && <Button size="sm" variant="quiet" icon={PencilLine} data-k="ldg-correct" onClick={() => goCorrect(r)}>تصحيح الفاتورة</Button> : <>
       {!isSupplierPaymentType(r.type) && <Button size="sm" variant="quiet" icon={Pencil} onClick={() => openEdit(r)}>تعديل</Button>}
-      <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); askDelete(r) }}>حذف</Button>
+      <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); askDelete(r) }}>حذف</Button></>}
     </div>
   )
 
   const iconActions = r => !r._creditRows && canEdit && r.status !== 'cancelled' && (
     <div className="ldg-actions">
       {linkButton(r, 'icon')}
+      {docLocked(r) ? canCorrect && <IconButton bare label="تصحيح الفاتورة" icon={PencilLine} data-k="ldg-correct" onClick={() => goCorrect(r)} /> : <>
       {!isSupplierPaymentType(r.type) && <IconButton bare label="تعديل" icon={Pencil} onClick={() => openEdit(r)} />}
-      <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); askDelete(r) }} />
+      <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); askDelete(r) }} /></>}
     </div>
   )
 
@@ -424,7 +432,7 @@ export default function Ledger() {
                     <tr key={r.id} data-id={r.id} className={r.status === 'cancelled' ? 'is-cancelled' : ''}>
                       <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
                       <td data-k="type" className="ldg-type">{cleanLabel(r.type) || '—'}</td>
-                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}<CreditInvoiceSummary row={r} onEdit={canEdit ? openEdit : undefined} onDelete={canEdit ? askDelete : undefined}/>{r.bank_account_id && accountName[r.bank_account_id] ? <small className="ldg-bank-acc" data-k="bank-acc">{accountName[r.bank_account_id]}</small> : null}</td>
+                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}<CreditInvoiceSummary row={r} onEdit={canEdit ? openEdit : undefined} onDelete={canEdit ? askDelete : undefined} onCorrect={canCorrect ? goCorrect : undefined}/>{r.bank_account_id && accountName[r.bank_account_id] ? <small className="ldg-bank-acc" data-k="bank-acc">{accountName[r.bank_account_id]}</small> : null}</td>
                       {ACCOUNTS.map(a => <MoveCell key={a.key} r={r} acc={a.key} />)}
                       {ACCOUNTS.map(a => <BalCell key={a.key} v={r[a.bal]} k={a.bal} />)}
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
@@ -448,7 +456,7 @@ export default function Ledger() {
                     <Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status>
                   </div>
                   <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
-                  {r.description && <div className="ldg-card-desc">{r.description}</div>}<CreditInvoiceSummary row={r} onEdit={canEdit ? openEdit : undefined} onDelete={canEdit ? askDelete : undefined}/>
+                  {r.description && <div className="ldg-card-desc">{r.description}</div>}<CreditInvoiceSummary row={r} onEdit={canEdit ? openEdit : undefined} onDelete={canEdit ? askDelete : undefined} onCorrect={canCorrect ? goCorrect : undefined}/>
                   {r.bank_account_id && accountName[r.bank_account_id] && <div className="ldg-card-desc ldg-bank-acc">{accountName[r.bank_account_id]}</div>}
                   <dl className="ldg-card-moves">
                     {moves.length === 0 && <div><dt>الحركة</dt><dd>—</dd></div>}
