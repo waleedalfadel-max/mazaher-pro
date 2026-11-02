@@ -1,7 +1,7 @@
 // ملخص الأرقام من القيود — وحدة خالصة بلا اتصال (تُختبر في Node). نُقل جسم getFinancialSummary من financialEngine.js كما هو، فيستعمله
 // المحرك (لوحة التحكم والتقارير) والتحليل المالي معًا بتعريف واحد للمبيعات والمصروفات والنتيجة. التغيير الوحيد في الحساب: مبلغ القيد في
 // المصروفات من expenseAmountNet (src/lib/financeRules.js) بدل «الخروج ناقص الضريبة» — انظر سبب ذلك هناك.
-import { VAT_RATE, isCOGSEntry, isSales, isExcluded, isWithdrawal, isDebt, isRealExpense, sumField,
+import { salesAmountNet, isCOGSEntry, isSales, isExcluded, isWithdrawal, isDebt, isRealExpense, sumField,
   expenseAmountGross, expenseAmountNet, isCounted, uncountedSummary, inputVatTotal } from './financeRules.js'
 
 export function summarizeEntries(rows) {
@@ -20,13 +20,9 @@ export function summarizeEntries(rows) {
   // الحركة النقدية المقبوضة فعلاً — شاملة ضريبة المخرجات
   const grossSales = cashSales + networkSales + appSales
 
-  // ضريبة المخرجات ليست إيراداً بل التزام لهيئة الزكاة، فتُستبعَد من المبيعات.
-  // تُشتقّ بالقسمة لا تُقرأ من vat_amount: قيود المبيعات لا تكتب ذلك العمود
-  // إطلاقاً (انظر mkEntry/mkReceivable بـPendingDocuments)، فطرحه
-  // منها كان سيُبقيها إجمالية ويرفع صافي الربح خطأً.
-  // ⚠️ يفترض أن كل المبيعات خاضعة لـ15% — مؤكَّد لمزاهر. أي مبيعات معفاة
-  // مستقبلاً تحتاج تخزين vat_amount على قيد المبيعة نفسها بدل الاشتقاق.
-  const totalSales = grossSales / (1 + VAT_RATE)
+  // ضريبة التقرير المراجَعة محفوظة منفصلة عن ضريبة مدخلات المشتريات.
+  // القيود القديمة بلا ضريبة مخرجات محفوظة تحتفظ بتقدير 15% السابق.
+  const totalSales = salesEntries.reduce((sum, e) => sum + salesAmountNet(e), 0)
   const outputVat = grossSales - totalSales
   const inputVat = inputVatTotal(entries)
 

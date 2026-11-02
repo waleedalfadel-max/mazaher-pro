@@ -133,7 +133,7 @@ const CHANNEL_LABEL = { cash: 'النقدي', network: 'الشبكة', transfer:
 const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'التاريخ', invoiceNumber: 'رقم الفاتورة', totalAmount: 'الإجمالي', amount: 'المبلغ',
   vatAmount: 'الضريبة', paySource: 'مصدر الدفع', transType: 'التصنيف الأساسي', category_sub: 'التصنيف الفرعي', amountsBasis: 'أساس المبالغ',
   type: 'نوع المستند', cashSales: 'نقدي', networkSales: 'شبكة', transferSales: 'تحويل', hungerSales: 'هنقر ستيشن', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول',
-  totalSales: 'إجمالي التقرير المطبوع',
+  totalSales: 'إجمالي التقرير المطبوع', reportedSalesVat: 'ضريبة المبيعات المطبوعة',
   // إيصال سداد مورد (20261020120000)
   beneficiary: 'المستفيد', reference: 'مرجع العملية', supplierKind: 'قائمة المورد', supplierId: 'المورد', paymentMode: 'طريقة الاعتماد',
   linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', bankTransfer: 'حسابا التحويل الداخلي', splitPayment: 'تقسيم السداد', paymentAllocations: 'مبالغ السداد وحساباتها' }
@@ -196,6 +196,10 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
   const payload = { ...inv, transType: effectiveType, items, category_main: invCat?.name || invoiceName || null, category_id: invCat?.id || null, subcategory_id: categoryChoice(categories, { ...inv, category_main: invCat?.name || inv.category_main }, transType).subcategory_id }
+  if (inv.type === 'sales' && inv.reportedSalesVat != null && String(inv.reportedSalesVat).trim() !== '') {
+    const tax = toHalalas(inv.reportedSalesVat)
+    if (!Number.isNaN(tax) && tax != null) payload.reportedSalesVat = tax / 100
+  }
   if (loan || withdrawal) {
     // The server's transfer path reads amount first: send exactly the visible amount, even for an older saved draft.
     payload.amount = fromHalalas(toHalalas(loanAmount(inv)))
@@ -257,8 +261,12 @@ const correctionInvalidText = d => `ضريبة البند ${d.line ?? ''} الم
 const SALES_CHANNEL_NAMES = { cash: 'النقدي', network: 'الشبكة', transfer: 'التحويل', hunger: 'هنقر', jahez: 'جاهز', keeta: 'كيتا', mrsool: 'مرسول' }
 /** ما تغيّر في تقرير المبيعات بالتصحيح، لكل قناة: «النقدي من 1,184.35 إلى 1,250.35». */
 export function salesCorrectionChanges(previous, corrected) {
-  return Object.keys(SALES_CHANNEL_NAMES).filter(k => Number(previous?.[k] || 0) !== Number(corrected?.[k] || 0))
+  const changes = Object.keys(SALES_CHANNEL_NAMES).filter(k => Number(previous?.[k] || 0) !== Number(corrected?.[k] || 0))
     .map(k => `${SALES_CHANNEL_NAMES[k]} من ${money(previous?.[k] || 0)} إلى ${money(corrected?.[k] || 0)}`)
+  if (corrected?._reported_vat != null && (previous?._reported_vat == null || Number(previous._reported_vat) !== Number(corrected._reported_vat))) {
+    changes.push(`ضريبة التقرير من ${previous?._reported_vat == null ? 'تقدير 15%' : money(previous._reported_vat)} إلى ${money(corrected._reported_vat)}`)
+  }
+  return changes
 }
 
 /** وصف عملية سابقة مشابهة لإيصال سداد: إيصال معتمد، أو دفعة قائمة، أو مستند مرفق بالدفعة، أو إيصال آخر في الطلب نفسه. */
@@ -279,6 +287,8 @@ export function approvalMessage(res) {
     invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
     stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
     vat_excess: 'ضريبة القيمة المضافة أكبر مما يمكن لإجمالي هذه الفاتورة بنسبة 15%؛ قد تكون مكررة من عدة صفحات أو مقروءة مرتين. طابقها مع ملخص الفاتورة. لم يُسجَّل شيء.',
+    sales_vat_invalid: 'ضريبة المبيعات المطبوعة غير صالحة؛ راجع مبلغ الضريبة وإجمالي التقرير. لم يُسجَّل شيء.',
+    sales_vat_required: 'التقرير السابق له ضريبة مطبوعة محفوظة؛ أدخل ضريبة التقرير المصحح حتى لا تُستبدل بتقدير 15%. لم يُسجَّل شيء.',
     reading_replaced: 'استُبدلت قراءة هذا المستند بقراءة أحدث، فلم يُنفَّذ الإجراء ولم يُسجَّل شيء. راجع القراءة الجديدة (أعد فتح المستند إن لم تظهر) ثم أعد المحاولة.',
     bad_status: 'حالة المستند لا تسمح بالاعتماد.',
     empty: 'لا فواتير للاعتماد.',

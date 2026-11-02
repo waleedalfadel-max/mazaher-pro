@@ -13,7 +13,7 @@ export async function getFinancialSummary(projectId, fromDate, toDate, branch = 
   const { data: entries, error } = await fetchEveryRow(() => {
     let q = supabase
       .from('ledger_entries')
-      .select('id, type, financial_class, cash_in, bank_in, custody_in, cash_out, bank_out, custody_out, receivable_in, receivable_out, payable_in, payable_out, vat_amount, total_amount, status, date, branch')
+      .select('id, type, financial_class, cash_in, bank_in, custody_in, cash_out, bank_out, custody_out, receivable_in, receivable_out, payable_in, payable_out, vat_amount, output_vat_amount, total_amount, status, date, branch')
       .eq('project_id', projectId)
       .gte('date', fromDate)
       .lte('date', toDate)

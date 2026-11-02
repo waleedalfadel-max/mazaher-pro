@@ -123,12 +123,21 @@ export function normalizeSalesReading(inv) {
 /** مجموع القنوات المسجلة بالهللة. */
 export const channelsTotalH = inv => CHANNELS.reduce((t, c) => t + (amountH(inv?.[CHANNEL_FIELD[c]] ?? 0) ?? 0), 0)
 
+export function reportedSalesVatCheck(inv) {
+  const raw = inv?.reportedSalesVat
+  if (raw == null || String(raw).trim() === '') return { ok: true, provided: false }
+  const vat = amountH(raw), total = amountH(inv?.totalSales) ?? channelsTotalH(inv)
+  const ok = vat != null && vat >= 0 && vat <= Math.round(total * 15 / 115) + 2
+  return { ok, provided: true, value: vat == null ? null : vat / 100 }
+}
+
 /**
  * فحص تقرير المبيعات قبل الاعتماد: وسائل غير معروفة، وقناة سالبة (مرتجع أكبر من مبيعات قناته)، والفرق مع الإجمالي المطبوع.
  * @returns {{ ok: boolean, reasons: string[], unknown: object[], total: number|null, channels: number, diff: number|null }}
  */
 export function salesReportCheck(inv) {
   const reasons = []
+  if (!reportedSalesVatCheck(inv).ok) reasons.push('ضريبة المبيعات المطبوعة غير صالحة؛ راجع مبلغها وإجمالي التقرير.')
   // غير المعروف بمبلغ غير صفري، وكل سطر بلا مبلغ مقروء (لا يُعدّ صفرًا)
   const unknown = (inv?.unknownPayments || []).filter(u => { const h = amountH(u?.amount); return h == null || h !== 0 })
   const unreadable = unknown.filter(u => amountH(u?.amount) == null), unmapped = unknown.filter(u => amountH(u?.amount) != null)

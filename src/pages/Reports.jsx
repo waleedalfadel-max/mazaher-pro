@@ -310,11 +310,11 @@ function ReportsPage() {
       { data: prevEntriesData, error: prevError },
       engineResult,
     ] = await Promise.all([
-      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,status,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,total_amount,vat_amount,journal_number,category_main,category_sub,category_id,financial_class')
+      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('id,date,type,description,status,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,total_amount,vat_amount,output_vat_amount,journal_number,category_main,category_sub,category_id,financial_class')
         .eq('project_id', projectId).or('status.is.null,status.neq.cancelled').gte('date', fromDate).lte('date', toDate).order('date').order('id'))),
       fetchEveryRow(() => supabase.from('ledger_entries').select('date,branch,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,payable_in,payable_out,supplier_id,bank_account_id,status')
         .eq('project_id', projectId).lte('date', toDate).neq('status', 'cancelled').order('id')),
-      fetchAllRows(() => supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out')
+      fetchAllRows(() => supabase.from('ledger_entries').select('branch,type,cash_in,bank_in,receivable_in,custody_in,cash_out,bank_out,custody_out,output_vat_amount')
         .eq('project_id', projectId).neq('status', 'cancelled').gte('date', fromDate).lte('date', toDate)),
       supabase.rpc('get_purchase_entries', {
         p_project_id: projectId,
@@ -323,7 +323,7 @@ function ReportsPage() {
       }),
       fetchAllRows(() => supabase.from('sales').select('branch,cash_sales,network_sales,hunger_sales,jahez_sales,keeta_sales')
         .eq('project_id', projectId).gte('date', fromDate).lte('date', toDate)),
-      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('type,date,status,cash_in,bank_in,receivable_in')
+      fetchEveryRow(() => applyBranch(supabase.from('ledger_entries').select('type,date,status,cash_in,bank_in,receivable_in,output_vat_amount')
         .eq('project_id', projectId).neq('status','cancelled')
         .gte('date', prevFromD).lte('date', prevToD).order('id'))),
       getFinancialSummary(projectId, fromDate, toDate, branchFilter),
@@ -769,7 +769,7 @@ function ReportsPage() {
             return (
             <>
               <div className="ts-metrics" data-k="vat.cards">
-                <Metric label="ضريبة المخرجات" icon={Percent} foot="المبيعات ÷ 1.15 × 15%"><span data-k="vat.output"><Money value={v.outputVat} /></span></Metric>
+                <Metric label="ضريبة المخرجات" icon={Percent} foot="ضريبة التقارير المحفوظة؛ وعند غيابها تقدير 15%"><span data-k="vat.output"><Money value={v.outputVat} /></span></Metric>
                 <Metric label="ضريبة المدخلات" icon={Receipt} foot="المسجلة على فواتير المشتريات"><span data-k="vat.input"><Money value={v.inputVat} /></span></Metric>
                 <Metric label="صافي ضريبة الفترة قبل السداد" icon={Landmark}
                   foot={<span data-k="vat.netDir">{due ? 'المخرجات أكبر: مستحق للهيئة عن الفترة' : 'المدخلات أكبر: فائض لصالح المنشأة'}</span>}>
@@ -785,8 +785,8 @@ function ReportsPage() {
                 <div className="ts-panel-body">
                   <CalcRows k="vat.calc" rows={[
                     { label: 'إجمالي المبيعات (شامل الضريبة)', value: data.totalSales },
-                    { label: 'المبيعات الصافية (÷ 1.15)', value: data.netSales },
-                    { label: 'ضريبة المخرجات (15%)', value: v.outputVat, strong: true, line: true },
+                    { label: 'المبيعات الصافية (بعد استبعاد الضريبة)', value: data.netSales },
+                    { label: 'ضريبة المخرجات', value: v.outputVat, strong: true, line: true },
                     { label: 'ضريبة المدخلات (من الفواتير)', value: -v.inputVat, strong: true },
                     { label: 'صافي ضريبة الفترة قبل السداد', value: v.netBeforePayment, strong: true, line: true, tone: due ? 'due' : 'refund' },
                   ]} />

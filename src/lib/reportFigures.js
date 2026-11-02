@@ -2,7 +2,7 @@
 // salesFigures وexpenseFigures منقولتان كما هما من src/pages/Reports.jsx (إعادة التصميم ca1092c)، والتغيير الوحيد: تفصيل المصروفات
 // يستبعد القيود الضريبية بالشرط نفسه الذي يستبعدها به المحرك من المصروفات (isTaxType)، فتطابق لوحة التحكم؛ وتُعاد في taxEntries.
 import { allocateEntry } from './expenseBreakdown.js'
-import { isSales, isExcluded, isCOGS, isWithdrawal, isDebt, isTaxType, salesAmountNet, expenseAmountNet, VAT_RATE, isCounted } from './financeRules.js'
+import { isSales, isExcluded, isCOGS, isWithdrawal, isDebt, isTaxType, salesAmountNet, netSalesChannels, expenseAmountNet, isCounted } from './financeRules.js'
 
 export function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -69,9 +69,8 @@ export function salesFigures({ engineSummary, selectedBranch, branches, from, to
     const d = e.date; if (!d) return
     if (!dailyMap[d]) dailyMap[d] = { date: d, cash: 0, bank: 0, apps: 0 }
     // صافية بنفس معالجة بقية الشاشات — وإلا خالف مجموع الجدول بطاقة المبيعات
-    dailyMap[d].cash += (Number(e.cash_in)       || 0) / (1 + VAT_RATE)
-    dailyMap[d].bank += (Number(e.bank_in)       || 0) / (1 + VAT_RATE)
-    dailyMap[d].apps += (Number(e.receivable_in) || 0) / (1 + VAT_RATE)
+    const net = netSalesChannels(e)
+    for (const key of ['cash', 'bank', 'apps']) dailyMap[d][key] += net[key]
   })
   const dailyRows    = Object.values(dailyMap).sort((a, b) => b.date.localeCompare(a.date))
   const maxDaySales  = Math.max(...dailyRows.map(r => r.cash + r.bank + r.apps), 1)

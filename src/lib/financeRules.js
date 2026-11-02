@@ -111,7 +111,24 @@ export function salesAmountGross(e) {
 }
 
 export function salesAmountNet(e) {
-  return salesAmountGross(e) / (1 + VAT_RATE)
+  return e.output_vat_amount == null ? salesAmountGross(e) / (1 + VAT_RATE) : salesAmountGross(e) - salesVatOf(e)
+}
+
+// NULL keeps the existing 15% estimate. An explicit zero is a reviewed zero,
+// and negative values represent a documented correction to a previous report.
+export function salesVatOf(e) {
+  if (e.output_vat_amount != null && Number.isFinite(Number(e.output_vat_amount))) return Number(e.output_vat_amount)
+  const gross = salesAmountGross(e)
+  return gross - gross / (1 + VAT_RATE)
+}
+
+export function netSalesChannels(e) {
+  const amounts = { cash: Number(e.cash_in) || 0, bank: Number(e.bank_in) || 0, apps: Number(e.receivable_in) || 0 }
+  const gross = salesAmountGross(e), net = salesAmountNet(e)
+  if (gross) return Object.fromEntries(Object.entries(amounts).map(([k, v]) => [k, v * net / gross]))
+  // A tax-only correction has no cash movement, but still changes net sales.
+  const channel = /كاش/.test(e.type || '') ? 'cash' : /شبكة|تحويل/.test(e.type || '') ? 'bank' : 'apps'
+  return { ...amounts, [channel]: net }
 }
 
 // مبلغ القيد في المصروفات — بالهللات ثم يعاد بالريال (لا كسور عائمة).
