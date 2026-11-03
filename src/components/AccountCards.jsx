@@ -30,8 +30,7 @@ export default function AccountCards({ stats, balances, settings, receivables, s
       <CompactCard id="overview-gross-sales" label="المبيعات شامل الضريبة" value={stats.grossSales} hint="خلال الفترة · تشمل المبيعات الآجلة" to={report('sales')} />
       <CompactCard id="overview-liquidity" label="الكاش الفعلي" value={liquidity.total} hint={`البنوك المتاحة + الصندوق + حساب العهدة · حتى ${to}`} to={accountHref('liquidity', to)} />
     </div>}
-    {compactHome && <p className="ts-field-hint">الكاش الفعلي هو مجموع بطاقات البنوك المتاحة والصندوق وحساب العهدة بإشاراتها؛ الرصيد السالب يُخصم. الأرصدة حسب القيود المسجلة حتى {to}.</p>}
-    {liquidity?.excluded.map(e => liabilities.baseline && e.account === `bank:${liabilities.accountId}`
+    {!compactHome && liquidity?.excluded.map(e => liabilities.baseline && e.account === `bank:${liabilities.accountId}`
       ? <p className="ts-field-hint" key={e.account} data-k="liquidity-excluded"><Link to={accountHref(e.account, to)}>{e.label}</Link> مخصص لسداد الالتزامات؛ المتبقي ظاهر في بطاقة «التزامات أخرى»، وخارج الكاش المتاح.</p>
       : <p className="ts-field-hint" key={e.account} data-k="liquidity-excluded">خارج الكاش المتاح: <Link to={accountHref(e.account, to)}>{e.label}</Link> — <Money value={e.value} /> ({e.reason}).</p>)}
     {balances.custody !== 0 && <p className="ts-note">توجد عهدة موظفين سابقة بمبلغ <Money value={balances.custody} />، منفصلة عن حساب العهدة البنكي. <Link to={accountHref('custody', to)}>عرض حركاتها</Link></p>}
