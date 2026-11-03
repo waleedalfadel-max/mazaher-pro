@@ -11,6 +11,8 @@ import { DropZone, MyUploads, fileIcon } from '../components/UploadKit.jsx'
 import InvoicePagesComposer from '../components/InvoicePagesComposer.jsx'
 import { getProjectSettings, getTransactionTypes } from '../lib/projectSettings.js'
 import { activeCategories } from '../lib/categorySettings'
+import UploadHistory from '../components/UploadHistory.jsx'
+import { canViewAllUploads } from '../lib/uploadHistory.js'
 
 const MAX_SIZE_MB = 10
 const ROLE_AR = { purchasing: 'مسؤول المشتريات', accountant: 'المحاسب', owner: 'المالك' }
@@ -42,11 +44,15 @@ export default function InvoiceUpload() {
   const [myDocs, setMyDocs]             = useState([])
   const [myDocsLoading, setMyDocsLoading] = useState(true)
   const [deleteError, setDeleteError]   = useState('')
+  const [historyRefresh, setHistoryRefresh] = useState(0)
+  const showAllUploads = canViewAllUploads(role)
   // «files»: كل ملف مستند مستقل (الافتراضي). «pages»: صور صفحات فاتورة واحدة تُجمع في PDF واحد (InvoicePagesComposer)
   const [mode, setMode] = useState('files')
   const inputRef = useRef()
 
   const loadMyDocs = useCallback(async () => {
+    setHistoryRefresh(value => value + 1)
+    if (showAllUploads) return
     if (!projectId || !userName) return
     setMyDocsLoading(true)
     const { data } = await supabase.from('documents')
@@ -57,17 +63,19 @@ export default function InvoiceUpload() {
       .limit(10)
     setMyDocs(data || [])
     setMyDocsLoading(false)
-  }, [projectId, userName])
+  }, [projectId, userName, showAllUploads])
 
   useEffect(() => { loadMyDocs() }, [loadMyDocs])
 
   async function deleteMyDoc(doc) {
     // التأكيد في حوار MyUploads قبل الوصول إلى هنا
-    if (doc.status === 'approved') return
+    if (doc.status === 'approved') return false
     setDeleteError('')
-    const { error } = await supabase.from('documents').delete().eq('id', doc.id)
-    if (error) { setDeleteError(error.message); return }
+    const { data: deleted, error } = await supabase.from('documents').delete().eq('id', doc.id).eq('project_id', projectId).eq('status', doc.status).select('id')
+    if (error) { setDeleteError(error.message); return false }
+    if (!deleted?.length) { setDeleteError('لم يُحذف المستند؛ ربما تغيرت حالته. حدّث القائمة.'); return false }
     setMyDocs(ds => ds.filter(d => d.id !== doc.id))
+    return true
   }
 
   function handleFiles(fileList) {
@@ -311,7 +319,10 @@ export default function InvoiceUpload() {
       )}
 
       {deleteError && <Note tone="error" icon={CircleAlert} title="فشل الحذف">{deleteError}</Note>}
-      <MyUploads docs={myDocs} loading={myDocsLoading} onOpen={openDoc} onDelete={deleteMyDoc} />
+      {showAllUploads
+        ? <UploadHistory key={`${projectId}:${role}:${userName}`} projectId={projectId} role={role} userName={userName}
+            refreshKey={historyRefresh} onOpen={openDoc} onDelete={deleteMyDoc} />
+        : <MyUploads docs={myDocs} loading={myDocsLoading} onOpen={openDoc} onDelete={deleteMyDoc} />}
     </div>
   )
 }

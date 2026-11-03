@@ -13,6 +13,7 @@ const mocks = {
     export const { useState, useRef, useEffect, useCallback } = r;`,
   supabase: 'export const supabase = globalThis.doubles.supabase;',
   AuthContext: 'export const useAuth = () => globalThis.doubles.identity;',
+  'UploadHistory.jsx': 'export default () => null;',
   storage: `export const uploadToStorage = (...args) => globalThis.doubles.uploadToStorage(...args);
     export const getSignedUrl = async () => 'test-path';`,
   imageCompress: 'export const compressImage = async file => file; export const fitImageBase64 = async (base64,mime) => ({base64,mime});',
