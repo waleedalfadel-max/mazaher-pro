@@ -29,6 +29,22 @@ export function documentPaymentChoices(result, pendingIds = null) {
 }
 
 /** Saved reviewer choices (including explicitly cleared fields) take priority over all defaults. */
+/**
+ * مصدر الدفع المقترح لرافع المستند: قاعدة المستخدم نفسه (bank_workflow.uploader_users، 20261103120000) تسبق قاعدة دوره (uploaders).
+ * يعيد من رفع المستند ودوره والمصدر المقترح له، أو null بلا سياسة. للعرض والاقتراح فقط؛ المحاسب يؤكد المصدر أو يغيّره.
+ */
+export function uploaderPaymentRule(doc, settings, accounts = []) {
+  const policy = paymentWorkflow(settings)
+  if (!policy) return null
+  const role = doc?.created_by_role || doc?.uploaded_by
+  const userRule = doc?.created_by_user_id ? policy.uploader_users?.[doc.created_by_user_id] : null
+  const rule = userRule || policy.uploaders?.[role] || null
+  const account = rule?.source === 'bank' ? (accounts || []).find(a => a.id === rule.account_id) : null
+  return { rule, scope: userRule ? 'user' : rule ? 'role' : null, name: doc?.created_by_name || doc?.uploaded_by_name || '',
+    roleLabel: UPLOADER_ROLES[role] || role || '', sourceLabel: !rule ? '' : rule.source === 'cash' ? 'الصندوق' : (account ? bankAccountLabel(account) : 'حساب بنكي غير متاح') }
+}
+const uploaderText = u => (u.name ? `${u.name} (${u.roleLabel})` : u.roleLabel)
+
 export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null) {
   if (!inv) return inv
   if (saved && saved.type === inv.type && (saved.paymentMode || null) === (inv.paymentMode || null) && (inv.type !== 'transfer' || saved.transType === inv.transType)) {
@@ -41,8 +57,8 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
   const next = { ...inv, _paymentInitialized: true }
   const available = eligibleBankAccounts(accounts, paymentBranch(doc, inv, settings))
   const valid = id => !!id && available.some(a => a.id === id)
-  const role = doc?.created_by_role || doc?.uploaded_by
-  const rule = policy.uploaders?.[role]
+  const uploader = uploaderPaymentRule(doc, settings, accounts)
+  const rule = uploader?.rule
 
   if (inv.type === 'sales') {
     // Explicit channel accounts and historical/corrected report accounts always win.
@@ -65,10 +81,10 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
       || (inv.type === 'supplier_payment' && inv.paymentMode !== 'link') || isLoanRepayment(inv)) {
     if (rule?.source === 'cash') {
       next.paySource = 'cash'; next.bankAccountId = ''
-      next._paymentSuggested = `المصدر المقترح لأن الرافع ${UPLOADER_ROLES[role] || role}: الصندوق. أكّده أو عدّله.`
+      next._paymentSuggested = `المصدر المقترح لأن الرافع ${uploaderText(uploader)}: الصندوق. أكّده أو عدّله.`
     } else if (rule?.source === 'bank' && valid(rule.account_id)) {
       next.paySource = 'bank'; next.bankAccountId = rule.account_id
-      next._paymentSuggested = `المصدر المقترح لأن الرافع ${UPLOADER_ROLES[role] || role}: ${bankAccountLabel(available.find(a => a.id === rule.account_id))}. أكّده أو عدّله.`
+      next._paymentSuggested = `المصدر المقترح لأن الرافع ${uploaderText(uploader)}: ${bankAccountLabel(available.find(a => a.id === rule.account_id))}. أكّده أو عدّله.`
     }
   }
   return next

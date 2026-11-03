@@ -1,7 +1,7 @@
 import OwnerWithdrawalFields from '../components/OwnerWithdrawalFields.jsx'
 import { WITHDRAWAL_OPTION, isOwnerWithdrawal, toOwnerWithdrawal, fromOwnerWithdrawal, withdrawalBlockReason } from '../lib/ownerWithdrawal.js'
 import { validRereading, readingReplaced, resetReplacedReview } from '../lib/documentReread.js'
-import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices } from '../lib/paymentWorkflow.js'
+import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices, uploaderPaymentRule } from '../lib/paymentWorkflow.js'
 import BankTransferFields from '../components/BankTransferFields.jsx'
 import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -147,6 +147,16 @@ const draftStore = () => { try { return window.sessionStorage } catch { return n
 const DRAFT_EXTRAS = ['branch', '_supplierId', '_supplierName', '_supplierResolution', '_matchedSupplierId']
 
 // ملخص يُعرض في القائمة من نتيجة القراءة (شامل الضريبة كما في المستند)
+// من رفع المستند والمصدر المقترح له (قاعدة المستخدم ثم الدور، src/lib/paymentWorkflow.js): ظاهر دائمًا عند المراجعة، ولو غيّر المحاسب المصدر
+function UploaderSourceLine({ doc, setup }) {
+  const u = uploaderPaymentRule(doc, setup?.settings, setup?.bankAccounts)
+  if (!u || (!u.name && !u.roleLabel)) return null
+  return <p className="ts-field-hint" data-k="uploader-source">
+    رفعه: <strong>{u.name || u.roleLabel}</strong>{u.name && u.roleLabel ? ` (${u.roleLabel})` : ''}
+    {u.rule ? <> · المصدر المقترح {u.scope === 'user' ? 'له' : 'لدوره'}: <strong>{u.sourceLabel}</strong>. يستطيع المحاسب تغييره من «مصدر الدفع».</> : ' · بلا مصدر مقترح؛ اختر مصدر الدفع.'}
+  </p>
+}
+
 function docSummary(doc) {
   const r = doc._edit || doc.analysis_result
   const inv = r?.invoices?.length ? r.invoices : r ? [r] : []
@@ -301,7 +311,7 @@ export default function PendingDocuments() {
 
   async function loadDocs(pid) {
     let q = supabase.from('documents')
-      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,created_by_role,file_url,branch,purchase_category,category_main,category_sub,project_id')
+      .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,uploaded_by_name,created_by_role,created_by_user_id,created_by_name,file_url,branch,purchase_category,category_main,category_sub,project_id')
       .in('status', ['uploaded', 'analyzed'])
       .order('uploaded_at', { ascending: false })
     if (pid) q = q.eq('project_id', pid)
@@ -478,7 +488,7 @@ export default function PendingDocuments() {
       if (saveError) throw new Error('تعذّر تأكيد حفظ القراءة الجديدة (انقطع الاتصال أو لم يصل الرد)، وقد تكون حُفظت. حدّث الصفحة لمعرفة القراءة المحفوظة قبل أي اعتماد؛ ولن يُقبل اعتماد مبني على القراءة السابقة إن كانت الجديدة قد حُفظت.')
       if (!data?.ok) throw new Error(rereadError(data?.code))
       const { data: fresh, error: freshError } = await supabase.from('documents')
-        .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,created_by_role,file_url,branch,purchase_category,category_main,category_sub,project_id')
+        .select('id,file_name,file_type,status,analysis_result,uploaded_at,uploaded_by,uploaded_by_name,created_by_role,created_by_user_id,created_by_name,file_url,branch,purchase_category,category_main,category_sub,project_id')
         .eq('id', doc.id).single()
       clearDraftOf(doc)
       if (freshError || !fresh) { setListNotice('أُعيدت القراءة وحُفظت. حدّث الصفحة لمراجعة النتيجة الجديدة.'); setDocs(ds => ds.filter(d => d.id !== doc.id)); return }
@@ -2188,6 +2198,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
               </Field>
             </div>
           )}
+          <UploaderSourceLine doc={doc} setup={setup} />
           <div className="rp-subinvs">
             {rawRes.invoices.map((inv, idx) => (
               <InvoiceSubPanel key={inv._id || idx} invoice={inv} index={idx} transTypes={transTypes} categories={categories}
@@ -2218,6 +2229,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
           <div className="rp-section">
             <Segment full label="نوع المستند" value={isV2 ? reviewDocumentType(res) : res.type || ''} options={isV2 ? [...TYPE_OPTIONS, RECEIPT_OPTION, LOAN_OPTION, WITHDRAWAL_OPTION] : TYPE_OPTIONS}
               onChange={v => { if (readOnly) return; const next = typeChange(res, v); if (next === undefined) onEdit('type', v); else if (next) onReplaceInvoice(null, next) }} />
+            <UploaderSourceLine doc={doc} setup={setup} />
             {res._paymentSuggested && <Note>{res._paymentSuggested}</Note>}
             <HistoricalCustodyNote invoice={res} setup={setup}/>
             {isReceipt(res) ? (
@@ -2245,7 +2257,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
               )}
               {!isSales && !isBankTransfer(res) && (
                 <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
-                  <Select value={res.paySource || ''} placeholder="— اختر —" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
+                  <Select value={res.paySource || ''} placeholder="— اختر —" data-k="pay-source" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
                     options={isWithdrawal ? paymentOptions(setup,res.paySource).filter(o => ['bank','cash'].includes(o.value)) : isLoan ? paymentOptions(setup,res.paySource).filter(o => o.value !== 'payable') : [...paymentOptions(setup,res.paySource), ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
                       ...(res.paySource && ![...PAY_OPTIONS.map(o => o.value), 'credit'].includes(res.paySource) ? [{ value: res.paySource, label: res.paySource }] : [])]} />
                 </Field>

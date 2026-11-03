@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Field, Input, Note, Panel, Select } from '../ui/components.jsx'
 import { bankAccountLabel, eligibleBankAccounts } from '../lib/branchSetup.js'
 import { paymentWorkflow, UPLOADER_ROLES } from '../lib/paymentWorkflow.js'
@@ -17,6 +17,16 @@ export default function BankWorkflowSettings({ projectId, settings, banks, onSav
   const active = eligibleBankAccounts(banks, null)
   const options = active.map(a => ({ value: a.id, label: bankAccountLabel(a) }))
   const setRule = (id, patch) => setValue(v => ({ ...v, accounts: { ...v.accounts, [id]: { ...v.accounts[id], ...patch } } }))
+  // مصدر مقترح لمستخدم بعينه (يسبق قاعدة دوره): المستخدمون النشطون الذين يرفعون المستندات في هذه المنشأة
+  const [members, setMembers] = useState(null)
+  useEffect(() => {
+    let alive = true
+    supabase.rpc('admin_project_users', { p_project_id: projectId }).then(r => { if (alive) setMembers(r.data?.ok ? (r.data.members || []).filter(m => m.is_active && UPLOADER_ROLES[m.role]) : []) }, () => alive && setMembers([]))
+    return () => { alive = false }
+  }, [projectId])
+  const setUserRule = (id, choice) => setValue(v => { const uploader_users = { ...(v.uploader_users || {}) }
+    if (!choice) delete uploader_users[id]; else uploader_users[id] = choice === 'cash' ? { source: 'cash' } : { source: 'bank', account_id: choice }
+    const next = { ...v, uploader_users }; if (!Object.keys(uploader_users).length) delete next.uploader_users; return next })
   async function save() {
     if (busy) return
     setBusy(true); setError('')
@@ -33,6 +43,10 @@ export default function BankWorkflowSettings({ projectId, settings, banks, onSav
           <Select value={value.uploaders?.[role]?.source === 'cash' ? 'cash' : value.uploaders?.[role]?.account_id || ''} placeholder="بلا اقتراح مخصص"
             options={[{ value: 'cash', label: 'الصندوق' }, ...options]}
             onChange={e => { const id = e.target.value; setValue(v => { const uploaders = { ...v.uploaders }; if (!id) delete uploaders[role]; else uploaders[role] = id === 'cash' ? { source: 'cash' } : { source: 'bank', account_id: id }; return { ...v, uploaders } }) }} />
+        </Field>)}
+        {(members || []).map(m => <Field key={'user-' + m.id} label={`المصدر المقترح عند رفع ${m.name} (${UPLOADER_ROLES[m.role]})`} hint="يسبق قاعدة الدور لهذا المستخدم وحده.">
+          <Select data-k={`uploader-user-${m.id}`} value={value.uploader_users?.[m.id]?.source === 'cash' ? 'cash' : value.uploader_users?.[m.id]?.account_id || ''} placeholder="حسب الدور"
+            options={[{ value: 'cash', label: 'الصندوق' }, ...options]} onChange={e => setUserRule(m.id, e.target.value)} />
         </Field>)}
         {(settings.branches || []).map(branch => <Field key={branch} label={`حساب مبيعات الشبكة — ${branch}`}>
           <Select value={value.network_by_branch?.[branch] || ''} placeholder="بلا اقتراح مخصص"
