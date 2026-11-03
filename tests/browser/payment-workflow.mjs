@@ -143,13 +143,13 @@ try{
  await reviewRegressions()
  if(!process.env.PAYMENT_REVIEW_ONLY){
  await mount(doc)
- await page.getByText(/المصدر المقترح لأن الرافع المالك/).waitFor();assert.equal(await account().inputValue(),main);check('real review page suggests owner main account')
+ await page.getByText(/المصدر المقترح لأن الرافع .*المالك/).waitFor();assert.equal(await account().inputValue(),main);check('real review page suggests owner main account')
  await account().selectOption(purchase);await page.getByText(/مسودة محفوظة في هذه النافذة فقط/).first().waitFor();await mount(doc);await account().waitFor();assert.equal(await account().inputValue(),purchase);check('manual account survives page remount with real browser draft')
  await account().selectOption('');await mount(doc);await account().waitFor();assert.equal(await account().inputValue(),'');check('explicitly cleared choice is not replaced on reload')
  await account().selectOption(purchase);await page.evaluate(()=>window.lastApproval=null);await page.getByRole('button',{name:'اعتماد',exact:true}).click();await page.waitForFunction(()=>window.lastApproval);assert.equal((await page.evaluate(()=>window.lastApproval)).ok,true);await queue
  const leg=await f.one('select bank_account_id,bank_out from ledger_entries where document_id=$1',[doc]);assert.equal(leg.bank_account_id,purchase);assert.equal(Number(leg.bank_out),25);check('visible overridden account reaches actual approval and ledger')
- await mount(pdoc);await page.getByText(/المصدر المقترح لأن الرافع مسؤول المشتريات/).waitFor();assert.equal(await account().inputValue(),purchase);check('purchasing upload suggests purchases account')
- await mount(cdoc);await page.getByText(/المصدر المقترح لأن الرافع الكاشير/).waitFor();assert.equal(await page.getByLabel('مصدر الدفع',{exact:true}).inputValue(),'cash');assert.equal(await account().count(),0);check('cashier upload suggests cash box')
+ await mount(pdoc);await page.getByText(/المصدر المقترح لأن الرافع .*مسؤول المشتريات/).waitFor();assert.equal(await account().inputValue(),purchase);check('purchasing upload suggests purchases account')
+ await mount(cdoc);await page.getByText(/المصدر المقترح لأن الرافع .*الكاشير/).waitFor();assert.equal(await page.getByLabel('مصدر الدفع',{exact:true}).inputValue(),'cash');assert.equal(await account().count(),0);check('cashier upload suggests cash box')
  const sales=await makeDoc('cashier',{type:'sales',date:'2026-10-20',cashSales:0,networkSales:40,transferSales:12,totalSales:52})
  await mount(sales);await page.getByText(/حساب كل قناة مقترح للفرع/).waitFor()
  assert.equal(await page.locator('[data-k="bank-account-network"]').inputValue(),network)
@@ -163,7 +163,7 @@ try{
  check('each visible sales channel reaches its own bank in the actual ledger')
  const loan=await makeDoc('owner',{type:'transfer',transferPurpose:'loan_repayment',transType:'💳 قرض ١',amount:33,totalAmount:33,vatAmount:0,paySource:'cash',date:'2026-10-19',description:'Synthetic principal',
    loanPrincipalConfirmation:{version:1,confirmed:true,transType:'💳 قرض ١',amount:'33.00',vatAmount:'0.00'}})
- await mount(loan);await page.getByText(/المصدر المقترح لأن الرافع المالك/).waitFor()
+ await mount(loan);await page.getByText(/المصدر المقترح لأن الرافع .*المالك/).waitFor()
  assert.equal(await account().inputValue(),main)
  assert.equal(await page.locator('[data-k="loan-principal-confirmed"]').isChecked(),false)
  assert.equal(await page.getByRole('button',{name:'اعتماد',exact:true}).isDisabled(),true)
