@@ -2,6 +2,9 @@
 // Use the selected business, not the hostname: Tahseeb admin can work in it from any domain.
 export const usesCompactHome = projectName => projectName?.trim() === 'تشورميك'
 
-// Mazaher's layout must not enable Tashormik's loan hiding or invoice grouping.
-export const usesMazaherHome = projectName => ['ديوانية مزاهر', 'مزاهر'].includes(projectName?.trim())
+const isWahaDemo = projectName => projectName?.trim() === 'الواحة'
+export const groupsCreditInvoices = projectName => usesCompactHome(projectName) || isWahaDemo(projectName)
+
+// The demo shows the overview with VAT and loans, and groups purchases in the ledger.
+export const usesMazaherHome = projectName => ['ديوانية مزاهر', 'مزاهر'].includes(projectName?.trim()) || isWahaDemo(projectName)
 export const usesSimplifiedHome = projectName => usesCompactHome(projectName) || usesMazaherHome(projectName)
