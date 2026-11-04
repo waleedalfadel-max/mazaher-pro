@@ -2,7 +2,7 @@ import { runningAccountBalances, accountDashboard, accountHref } from '../lib/ac
 import { Link, useNavigate } from 'react-router-dom'
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
 import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
-import { usesCompactHome } from '../lib/businessPresentation.js'
+import { groupsCreditInvoices } from '../lib/businessPresentation.js'
 import BankTransferManage from '../components/BankTransferManage.jsx'
 import { BANK_TRANSFER_TYPE } from '../lib/paymentWorkflow.js'
 import React, { useEffect, useState, useMemo, useRef } from 'react'
@@ -167,7 +167,7 @@ export default function Ledger() {
   const canCorrect = canEdit && (role === 'accountant' || isSuperAdmin)
   const docLocked = r => !!r?.document_invoice_id && !isSupplierPaymentType(r.type) && r.type !== BANK_TRANSFER_TYPE
   const goCorrect = r => navigate(`/correct/${r.document_id}/${r.document_invoice_id}`)
-  const compactInvoices = usesCompactHome(projectName)
+  const compactInvoices = groupsCreditInvoices(projectName)
   const [allRows, setAllRows]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [types, setTypes]           = useState([])

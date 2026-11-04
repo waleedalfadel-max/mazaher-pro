@@ -40,6 +40,16 @@ try{
  // A second receipt in one approval sees the first one's effect. Failed warning rolls both back.
  const bs=await supplier(),bd=await doc(bs,70);bd.invs.push({...bd.invs[0],_id:randomUUID(),reference:randomUUID()});r=await approve(bd);assert.equal(r.balance,30);assert.equal(r.after,-40);assert.equal((await ledger(bd)).length,0);assert.equal(await balance(bs),100);assert.equal((await approve(bd,decision(r))).ok,true);assert.equal(await balance(bs),-40);pass('batch uses current sequential balance and rolls back all rows until approved')
  const ad=await doc(await supplier(),150);r=await approve(ad,{},f.admin);assert.equal((await approve(ad,decision(r),f.admin)).ok,true);pass('service admin can approve in the selected business')
+ // The same receipt is blocked in the control tenant, then requires consent after it becomes the Waha demo.
+ await q("update projects set subdomain='demo',name='الواحة' where id=$1",[f.p2])
+ await f.db.exec(await readFile('supabase/migrations/20261104113304_waha_demo_restaurant_parity.sql','utf8'))
+ const demoWarning=await approve(od,{},f.other)
+ assert.equal(demoWarning.code,'supplier_overpayment_confirmation')
+ assert.equal((await ledger(od)).length,0)
+ assert.equal((await approve(od,decision(demoWarning),f.other)).ok,true)
+ assert.equal(await balance(os,'list',f.other),-50)
+ assert.equal((await one("select modules ? 'suppliers' enabled from project_settings where project_id=$1",[f.p2])).enabled,true)
+ pass('Waha requires consent for supplier credit and posts it only to the demo')
  const auditBefore=await one('select count(*) n,sum(cash_out+bank_out) total from ledger_entries');await f.db.exec(await readFile('supabase/rollback/tashormik-supplier-overpayment.sql','utf8'));assert.deepEqual(await one('select count(*) n,sum(cash_out+bank_out) total from ledger_entries'),auditBefore);const rd=await doc(await supplier(),150);assert.equal((await approve(rd)).code,'exceeds_balance');await f.db.exec(await readFile('supabase/migrations/20261102081501_tashormik_supplier_overpayment.sql','utf8'));assert.equal((await approve(rd)).code,'supplier_overpayment_confirmation');pass('rollback/reapply leave existing balances intact')
  assert.equal((await one("select has_function_privilege('authenticated','approval_private.supplier_payment_core(uuid,uuid,text,text,text,uuid,numeric,date,text,text,uuid,uuid,uuid,uuid,text,jsonb)','execute') ok")).ok,false);pass('private overpayment writer is not callable by users')
  console.log(`${checks}/${checks} checks passed`)
