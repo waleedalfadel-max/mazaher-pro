@@ -1,3 +1,4 @@
+import { cashBankDirection, cashBankLabel } from '../lib/cashBankTransfer.js'
 import React, { useState, useEffect, useRef } from 'react'
 import { PDFDocument } from 'pdf-lib'
 import { supabase } from '../lib/supabase'
@@ -187,6 +188,10 @@ export default function BankReconciliation() {
   async function approveReview(item) {
     if (accountMissing) { setError(accountsBlockedMsg); return }
     if (!item._transType) { setError('يرجى اختيار نوع الحركة قبل الاعتماد'); return }
+    const direction = cashBankDirection(item._transType)
+    if (direction && item.direction !== (direction === 'deposit' ? 'in' : 'out')) {
+      setError('اتجاه التحويل لا يطابق حركة كشف البنك.'); return
+    }
     // قيد «سداد مورد» عام بلا تخفيض المستحق يرفضه الخادم (20261013120000): الدفعة تُسجَّل من «الموردين» ثم تُطابَق هنا
     if (isSupplierPaymentType(item._transType)) { setError(SUPPLIER_PAYMENT_ONLY_MSG); return }
     setError('')
@@ -500,7 +505,7 @@ function ReviewCard({ item, transTypes, subCats, onChangeType, onChangeSub, onAp
           <select value={item._transType} onChange={e => onChangeType(e.target.value)}
             className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
             <option value="">— اختر —</option>
-            {transTypes.map(t => <option key={t} value={t}>{t}</option>)}
+            {transTypes.map(t => <option key={t} value={t}>{cashBankLabel(t)}</option>)}
           </select>
         </div>
         <div>

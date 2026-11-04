@@ -1,3 +1,4 @@
+import { cashBankDirection, cashBankMovement } from './cashBankTransfer.js'
 // دوال خالصة لمنطق المطابقة البنكية — بدون أي تبعية على React أو Supabase مباشرة
 
 export const normCat = s => (s || '').replace(/[^؀-ۿ\s]/g, '').replace(/\s+/g, ' ').trim()
@@ -158,6 +159,10 @@ export async function findLegacyDuplicate(client, { projectId, date, type, descr
 export function buildLedgerInsertRow(line, { transType, categorySub, projectId, journalNumber, fileUrl, branch = null }) {
   const amount = Number(line.amount) || 0
   const isIn   = line.direction === 'in'
+  const direction = cashBankDirection(transType)
+  if (direction && (!(amount > 0) || line.direction !== (direction === 'deposit' ? 'in' : 'out'))) {
+    throw new Error('اتجاه التحويل لا يطابق حركة كشف البنك.')
+  }
   return {
     project_id: projectId,
     date: line.date,
@@ -168,6 +173,7 @@ export function buildLedgerInsertRow(line, { transType, categorySub, projectId, 
     bank_out: !isIn ? amount : 0,
     custody_in: 0, custody_out: 0,
     receivable_in: 0, receivable_out: 0,
+    ...(direction ? cashBankMovement(transType, amount) : {}),
     vat_amount: 0,
     total_amount: amount,
     status: 'approved',

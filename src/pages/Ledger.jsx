@@ -15,6 +15,7 @@ import { fetchEveryRow } from '../lib/fetchAll'
 import { deleteSupplierPayment, isSupplierPaymentType, SUPPLIER_PAYMENT_EDIT_MSG, SUPPLIER_PAYMENT_ONLY_MSG } from '../lib/supplierPayments'
 import { Button, DateInput, Dialog, EmptyState, Field, IconButton, Input, Panel, Segment, Select, Status } from '../ui/components.jsx'
 import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
+import { CASH_DEPOSIT, CASH_WITHDRAWAL, cashBankDirection, cashBankMovement, cashBankLabel } from '../lib/cashBankTransfer.js'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup'
 
 // سجل الدفتر بالهوية الجديدة. الأرصدة الجارية والفلترة والحذف النهائي كما كانت حرفيًا؛ جدول بأعمدة مجمّعة على الكمبيوتر وبطاقات
@@ -99,8 +100,15 @@ function validateEntry(row) {
     if (Number.isNaN(n)) errors[k] = AMOUNT_ERROR
     else amounts[k] = n
   }
+  if (cashBankDirection(row.type)) {
+    const amount = cashBankDirection(row.type) === 'deposit' ? amounts.cash_out : amounts.bank_out
+    if (!(amount > 0) || !Number.isSafeInteger(Math.round(amount * 100)) || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.00001
+        || Object.entries(cashBankMovement(row.type, amount)).some(([k, expected]) => amounts[k] !== expected)) {
+      errors.transfer = 'أدخل مبلغ تحويل موجبًا بدقة هللتين، ومتساويًا في الطرفين.'
+    }
+  }
   const bad = AMOUNT_KEYS.filter(k => errors[k])
-  const summary = [errors.date && 'التاريخ فارغ أو غير صحيح', bad.length && `المبلغ غير صالح في: ${bad.map(k => AMOUNT_LABEL[k]).join('، ')} (اكتب رقمًا فقط، مثل 230 أو 1,230.50)`].filter(Boolean)
+  const summary = [errors.transfer, errors.date && 'التاريخ فارغ أو غير صحيح', bad.length && `المبلغ غير صالح في: ${bad.map(k => AMOUNT_LABEL[k]).join('، ')} (اكتب رقمًا فقط، مثل 230 أو 1,230.50)`].filter(Boolean)
   return { ok: !summary.length, errors, amounts, summary: summary.length ? `لم يُحفظ: ${summary.join('؛ ')}.` : '' }
 }
 
@@ -115,7 +123,15 @@ const isManualShape = r => !r.document_id && !r.document_invoice_id && !r.file_u
 const hasBankAmount = row => !!(parseAmount(row?.bank_in) || parseAmount(row?.bank_out))
 function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts = [] }) {
   const bankList = eligibleBankAccounts(accounts, row.branch || null)
-  const showBank = accounts.length > 0 && hasBankAmount(row)
+  const direction = cashBankDirection(row.type)
+  const showBank = accounts.length > 0 && (direction || hasBankAmount(row))
+  const amountKey = direction === 'deposit' ? 'cash_out' : 'bank_out'
+  function changeType(type) {
+    setRow(r => {
+      if (cashBankDirection(type)) return { ...r, type, ...cashBankMovement(type, direction ? r[amountKey] || '' : '') }
+      return { ...r, type, ...(direction ? Object.fromEntries(AMOUNT_KEYS.map(key => [key, ''])) : {}) }
+    })
+  }
   return (
     <div className="ldg-form">
       <div className="ts-form-grid">
@@ -124,14 +140,16 @@ function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts 
             onValidityChange={ok => setRow(r => (r._dateInvalid === !ok ? r : { ...r, _dateInvalid: !ok }))} />
         </Field>
         <Field label="النوع">
-          <Select value={row.type || ''} onChange={e => setRow(r => ({ ...r, type: e.target.value }))} placeholder="— اختر —"
-            options={types.map(t => ({ value: t, label: t }))} />
+          <Select value={row.type || ''} onChange={e => changeType(e.target.value)} placeholder="— اختر —"
+            options={types.map(t => ({ value: t, label: cashBankLabel(t) }))} />
         </Field>
         <Field label="الوصف" span>
           <Input value={row.description || ''} placeholder={placeholderDesc} onChange={e => setRow(r => ({ ...r, description: e.target.value }))} />
         </Field>
       </div>
-      <div className="ldg-form-amounts">
+      {direction ? <Field label="مبلغ التحويل" error={errors.transfer} hint={cashBankLabel(row.type)}>
+        <Input numeric value={row[amountKey] || ''} placeholder="0.00" onChange={e => { const value=e.target.value; setRow(r => ({ ...r, ...cashBankMovement(r.type, value) })) }} />
+      </Field> : <div className="ldg-form-amounts">
         {ACCOUNTS.map(a => (
           <fieldset key={a.key} className="ldg-form-account">
             <legend>{a.label}</legend>
@@ -146,7 +164,7 @@ function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts 
             })}
           </fieldset>
         ))}
-      </div>
+      </div>}
       {showBank && (
         <div className="ts-form-grid">
           <Field label="الحساب البنكي" error={errors.bank_account_id} hint={row.branch ? `الحسابات المربوطة بفرع «${row.branch}».` : undefined}>
@@ -246,6 +264,9 @@ export default function Ledger() {
     if (!v.ok) return
     // تحويل قيد إلى «سداد مورد» يرفضه الخادم (20261013120000): الرسالة قبل الطلب
     if (isSupplierPaymentType(editRow.type)) { setActionError(SUPPLIER_PAYMENT_EDIT_MSG); return }
+    if (cashBankDirection(editRow.type) && bankAccounts.length && !chosenBankAccount(bankAccounts, editRow.branch || null, editRow.bank_account_id)) {
+      setActionError('اختر الحساب البنكي لهذه الحركة.'); return
+    }
     setSaving(true)
     const a = v.amounts
     const patch = {
@@ -304,7 +325,9 @@ export default function Ledger() {
     try { jn = await getOrCreateJournalNumber(projectId, newRow.date) } catch (e) { setSaving(false); setActionError(e.message); return }
     const a = v.amounts
     const total = Math.max(...AMOUNT_KEYS.map(k => a[k]))
+    const transfer = !!cashBankDirection(newRow.type)
     const { error } = await supabase.from('ledger_entries').insert({
+      ...(transfer ? { id: newRow._requestId } : {}),
       project_id:     projectId,
       date:           newRow.date,
       type:           newRow.type,
@@ -323,12 +346,18 @@ export default function Ledger() {
       journal_number: jn,
       ...(bankAccount ? { bank_account_id: bankAccount } : {}),
     })
+    let replay = false
+    if (transfer && error?.code === '23505') {
+      const { data: prior } = await supabase.from('ledger_entries').select('date,type,total_amount,bank_account_id,description,status').eq('project_id', projectId).eq('id', newRow._requestId).maybeSingle()
+      replay = prior?.status === 'approved' && prior.date === newRow.date && prior.type === newRow.type
+        && Number(prior.total_amount) === total && (prior.bank_account_id || '') === bankAccount && (prior.description || '') === (newRow.description || '')
+    }
     setSaving(false)
-    if (!error) { setNewRow(null); load(projectId) }
+    if (!error || replay) { setNewRow(null); load(projectId) }
     else setActionError('تعذّر حفظ القيد: ' + reason(error))
   }
 
-  const openNew = () => { setActionError(''); setTried(false); setNewRow({ date: fmtDate(new Date()), type:'', description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'', receivable_in:'', receivable_out:'' }) }
+  const openNew = (type = '') => { setActionError(''); setTried(false); setNewRow({ _requestId: crypto.randomUUID(), date: fmtDate(new Date()), type, description:'', cash_in:'', cash_out:'', bank_in:'', bank_out:'', custody_in:'', custody_out:'', receivable_in:'', receivable_out:'' }) }
   const choosePeriod = key => {
     setActivePeriod(key)
     if (key !== 'custom') setFilter(f => ({ ...getRange(key), type: f.type }))
@@ -377,7 +406,10 @@ export default function Ledger() {
             <span>{filter.type ? cleanLabel(filter.type) : 'كل الأنواع'}</span>
           </p>
         </div>
-        {canEdit && <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={openNew}>إضافة قيد</Button>}
+        {canEdit && <div className="flex gap-2">
+          {types.includes(CASH_WITHDRAWAL) && <Button disabled={loading || !!loadError} onClick={() => openNew(CASH_DEPOSIT)}>تحويل بين الصندوق والبنك</Button>}
+          <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => openNew()}>إضافة قيد</Button>
+        </div>}
       </div>
 
       <Panel className="ldg-filters" title="الفترة والنوع" icon={CalendarDays}>

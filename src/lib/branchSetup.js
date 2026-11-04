@@ -2,6 +2,7 @@
 // الخادم هو الحكم (حارسا الدفتر وخطة الاعتماد)؛ هنا العرض والاختيار المسبق فقط. منشأة بلا إعداد: كل القنوات، وبلا حسابات (بنك واحد كما كان).
 
 // مفتاح القناة في قراءة تقرير المبيعات ← رمزها في الخادم
+import { isCashBankInvoice } from './cashBankTransfer.js'
 export const SALES_KEY_CHANNEL = {
   cashSales: 'cash', networkSales: 'network', transferSales: 'transfer',
   hungerSales: 'hunger', jahez: 'jahez', keeta: 'keeta', mrsool: 'mrsool',
@@ -41,7 +42,7 @@ export function eligibleBankAccounts(accounts, branch) {
 export function needsBankAccount(inv) {
   if (!inv) return false
   if (inv.type === 'sales') return Number(inv.networkSales || 0) > 0 || Number(inv.transferSales || 0) > 0
-  if (inv.type === 'transfer') return inv.paySource === 'bank' || !inv.transType || /إيداع نقدي|تحصيل ذمم|صرف عهدة/.test(inv.transType)
+  if (inv.type === 'transfer') return isCashBankInvoice(inv) || inv.paySource === 'bank' || !inv.transType || /إيداع نقدي|تحصيل ذمم|صرف عهدة/.test(inv.transType)
   return inv.paySource === 'bank'
 }
 
