@@ -41,7 +41,14 @@ function AccountPage({ embedded }) {
   useEffect(() => { if (projectId) load(); return () => { seq.current++ } }, [projectId, sessionEpoch])
   const options = accountOptions(data?.banks, data?.settings)
   const selected = options.find(o => o.value === key)
-  const statement = useMemo(() => data && valid && selected ? buildAccountStatement(data.entries,key,{from,to,settings:data.settings,search,banks:data.banks}) : null,[data,key,from,to,valid,!!selected,search])
+  const statementEntries = useMemo(() => {
+    if (!data || projectName !== 'تشورميك') return data?.entries
+    return data.entries.map(row =>
+      row.journal_number === 'START-20261102-B' && row.description?.startsWith('تثبيت رصيد الراجحي الرئيسي بإفادة المالك:')
+        ? { ...row, description: 'رصيد بداية المتابعة – الراجحي الرئيسي' }
+        : row)
+  }, [data, projectName])
+  const statement = useMemo(() => data && valid && selected ? buildAccountStatement(statementEntries,key,{from,to,settings:data.settings,search,banks:data.banks}) : null,[data,statementEntries,key,from,to,valid,!!selected,search])
   const liquidityScope = ['available-bank','available-custody','liquidity'].includes(key)
     ? BALANCE_SCOPE : ''
   useEffect(() => {setPage(1)},[key,from,to])
