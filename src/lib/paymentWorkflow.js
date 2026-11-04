@@ -1,5 +1,6 @@
 // Company-specific suggestions. They never approve a document or move money.
 import { eligibleBankAccounts, expensesAtProjectLevel, bankAccountLabel } from './branchSetup.js'
+import { isCashBankInvoice, cashBankDirection } from './cashBankTransfer.js'
 import { isLoanRepayment } from './loanRepayment.js'
 
 export const BANK_TRANSFER_TYPE = '🔄 تحويل داخلي — بين الحسابات البنكية'
@@ -9,7 +10,11 @@ export const isBankTransfer = inv => inv?.type === 'transfer' && inv.transType =
 export const isAppCollection = inv => inv?.type === 'transfer' && /تحصيل ذمم/.test(inv.transType || '') && /هنقر|جاهز|مرسول|كيتا|نينجا/.test(inv.transType || '')
 // A bank-to-bank transfer has two explicit bank accounts, never a separate cash/custody source.
 // Apply on every review path (including restored drafts), not just when its type is selected manually.
-export const bankTransferPayment = inv => isBankTransfer(inv) ? { ...inv, paySource: 'bank', bankAccountId: '' } : inv
+export function bankTransferPayment(inv) {
+  if (isBankTransfer(inv)) return { ...inv, paySource: 'bank', bankAccountId: '' }
+  if (isCashBankInvoice(inv)) return { ...inv, paySource: cashBankDirection(inv.transType) === 'deposit' ? 'cash' : 'bank' }
+  return inv
+}
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k)
 const PAYMENT_FIELDS = ['paySource', 'bankAccountId', 'bankAccounts', 'bankTransfer']
 
@@ -50,7 +55,7 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
   if (saved && saved.type === inv.type && (saved.paymentMode || null) === (inv.paymentMode || null) && (inv.type !== 'transfer' || saved.transType === inv.transType)) {
     return bankTransferPayment({ ...inv, ...Object.fromEntries(PAYMENT_FIELDS.filter(k => own(saved, k)).map(k => [k, saved[k]])), _paymentSuggested: false })
   }
-  if (isBankTransfer(inv)) return bankTransferPayment(inv)
+  if (isBankTransfer(inv) || isCashBankInvoice(inv)) return bankTransferPayment(inv)
   const policy = paymentWorkflow(settings)
   if (!policy || inv._paymentInitialized) return inv
   if (inv.type === 'sales' && !inv.branch && !doc?.branch) return inv
@@ -104,7 +109,7 @@ export function reviewedPayment(inv, patch) {
   if (patch.transType === BANK_TRANSFER_TYPE) { next.paySource = 'bank'; next.bankAccountId = '' }
   if (sourceChanged && patch.paySource !== 'bank') next.bankAccountId = ''
   if (changesPayment) next._paymentSuggested = false
-  return next
+  return bankTransferPayment(next)
 }
 
 export function bankOperationalNote(settings, id) {

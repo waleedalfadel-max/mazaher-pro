@@ -2,6 +2,7 @@ import OwnerWithdrawalFields from '../components/OwnerWithdrawalFields.jsx'
 import { WITHDRAWAL_OPTION, isOwnerWithdrawal, toOwnerWithdrawal, fromOwnerWithdrawal, withdrawalBlockReason } from '../lib/ownerWithdrawal.js'
 import { validRereading, readingReplaced, resetReplacedReview } from '../lib/documentReread.js'
 import { BANK_TRANSFER_TYPE, isBankTransfer, paymentWorkflow, paymentBranch, suggestDocumentPayments, reviewedPayment, bankOperationalNote, documentPaymentChoices, uploaderPaymentRule } from '../lib/paymentWorkflow.js'
+import { cashBankMovement, isCashBankInvoice, cashBankLabel } from '../lib/cashBankTransfer.js'
 import BankTransferFields from '../components/BankTransferFields.jsx'
 import React, { useEffect, useState, useRef, useLayoutEffect, useId } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -620,7 +621,7 @@ export default function PendingDocuments() {
       const isCustody  = res.transType?.includes('صرف عهدة')
       const isCollect  = res.transType?.includes('تحصيل ذمم')
       const isDeposit  = !isCustody && !isCollect && (!res.transType || res.transType.includes('إيداع نقدي'))
-      const entryFields = isCollect
+      const entryFields = isCashBankInvoice(res) ? cashBankMovement(res.transType, amount) : isCollect
         ? { cash_in: 0, bank_in: amount, custody_in: 0, cash_out: 0, bank_out: 0, custody_out: 0, receivable_in: 0, receivable_out: amount }
         : isCustody
           ? { cash_in: 0, bank_in: 0, custody_in: amount, cash_out: 0, bank_out: amount, custody_out: 0, receivable_in: 0, receivable_out: 0 }
@@ -644,6 +645,7 @@ export default function PendingDocuments() {
       const { data: transferInserted, error: err } = await supabase.from('ledger_entries').insert({
         project_id: pid, date: res.date, type: transferType,
         description: transferDescFinal, ...entryFields,
+        ...(isCashBankInvoice(res) && res.bankAccountId ? { bank_account_id: res.bankAccountId } : {}),
         vat_amount: 0, total_amount: amount, status: 'approved',
         file_url: doc.file_url || '', journal_number: jn, branch: doc.branch || null,
       }).select('id').single()
@@ -1555,7 +1557,7 @@ const Num = React.forwardRef(function Num({ onChange, value, ...props }, ref) {
 })
 
 function catOptions(list, current) {
-  const opts = list.map(n => ({ value: n, label: n }))
+  const opts = list.map(n => ({ value: n, label: cashBankLabel(n) }))
   return current && !list.includes(current) ? [{ value: current, label: current }, ...opts] : opts
 }
 
@@ -2066,6 +2068,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
     : isMultiInvoice ? `يسجّل ${plural(pendingCount, 'قيدًا واحدًا للفاتورة المتبقية', 'قيدين للفاتورتين المتبقيتين', 'قيود مستقلة للفواتير المتبقية', 'قيدًا مستقلًا للفواتير المتبقية')}.`
     : isSales ? 'يسجّل المبيعات وقيودها حسب طريقة الدفع.'
     : isExpenseItems ? `يسجّل ${plural(entryCount, 'قيدًا واحدًا', 'قيدين', 'قيود', 'قيدًا')} في الدفتر، وعدد البنود ${itemCount}.`
+    : isCashBankInvoice(res) ? cashBankLabel(res.transType) + ' · بالمبلغ نفسه في الكشفين.'
     : isBankTransfer(res) ? 'يسجّل طرفي التحويل معًا: خروجًا من حساب ودخولًا إلى الآخر، دون مصروف أو مبيعات.' : 'يسجّل قيدًا واحدًا في الدفتر.'
   const approveLabel = n => (n === 1 ? 'اعتماد الفاتورة المتبقية' : n === 2 ? 'اعتماد الفاتورتين' : n <= 10 ? `اعتماد ${n} فواتير` : `اعتماد ${n} فاتورة`)
   // مدير المنصة يعرض المنشأة للقراءة فقط: لا اعتماد ولا رفض ولا قراءة (20261009150000)
@@ -2255,7 +2258,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                     options={branches.map(b => ({ value: b, label: b }))} />
                 </Field>
               )}
-              {!isSales && !isBankTransfer(res) && (
+              {!isSales && !isBankTransfer(res) && !isCashBankInvoice(res) && (
                 <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
                   <Select value={res.paySource || ''} placeholder="— اختر —" data-k="pay-source" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
                     options={isWithdrawal ? paymentOptions(setup,res.paySource).filter(o => ['bank','cash'].includes(o.value)) : isLoan ? paymentOptions(setup,res.paySource).filter(o => o.value !== 'payable') : [...paymentOptions(setup,res.paySource), ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
@@ -2436,7 +2439,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
           {v2 && !isSales && (
             <Field label="رقم الفاتورة"><Input value={invoice.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} /></Field>
           )}
-          {!isSales && !isBankTransfer(invoice) && (
+          {!isSales && !isBankTransfer(invoice) && !isCashBankInvoice(invoice) && (
             <Field label="مصدر الدفع" error={payError ? 'مطلوب' : undefined}>
               <Select value={invoice.paySource || ''} placeholder="— اختر —" data-k={`pay-source-${index}`} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
                 options={payOptions} />
@@ -2500,7 +2503,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
             {why && <span className="rp-action-why" data-k={`invoice-blocked-${index}`}><Info className="ts-icon--sm" aria-hidden="true" />{why}</span>}
             {onApprove && (
               <Button size="sm" icon={Check} disabled={approving || !!why} onClick={() => {
-                if (invoice.type === 'transfer' && !invoice.paySource) { setPayError(true); return }
+                if (invoice.type === 'transfer' && !invoice.paySource && !isCashBankInvoice(invoice)) { setPayError(true); return }
                 setPayError(false)
                 onApprove()
               }}>{approveLabel}</Button>
