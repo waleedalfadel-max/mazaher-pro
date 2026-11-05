@@ -21,7 +21,7 @@ import { matchSupplier } from '../lib/supplierMatching'
 import { compareItemsToTotal } from '../lib/documentTotals'
 import { acceptAmount } from '../lib/amountInput'
 import { plural } from '../ui/format.js'
-import { approvalMessage, buildInvoicePayload, exactTotals, vatExcess, expenseBasisSuggestion, expenseBasisNearMatch, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
+import { toHalalas, approvalMessage, buildInvoicePayload, exactTotals, vatExcess, expenseBasisSuggestion, expenseBasisNearMatch, invoiceSupplierContext, money, newRequestId, payableDecision, salesCorrectionChanges, supplierBlockReason, callError } from '../lib/approvalV2'
 import { setUnsaved } from '../lib/unsavedChanges'
 import ExpenseReadingHelp from '../components/ExpenseReadingHelp.jsx'
 import PdfPages from '../components/PdfPages.jsx'
@@ -39,6 +39,7 @@ function readingFailure(e, retry) {
   return `${e.message} ${retry}`
 }
 import { accountDashboard } from '../lib/accountStatement.js'
+import SalesRowsEditor from '../components/SalesRowsEditor.jsx'
 import ManualReviewDialog from '../components/ManualReviewDialog.jsx'
 import SupplierReceiptFields from '../components/SupplierReceiptFields.jsx'
 import SupplierOverpaymentNotice from '../components/SupplierOverpaymentNotice.jsx'
@@ -1044,6 +1045,8 @@ export default function PendingDocuments() {
     if (doc._readingReviewRequired || rereadLocks.current.has(doc.id)) return
     const raw = doc._edit || doc.analysis_result
     const inv = (raw?.invoices || [raw])[0]
+    const check = salesReportCheck(inv)
+    if (!check.ok) { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'sales_unexplained', reason: check.reasons[0] } }); return }
     const payload = buildInvoicePayload(inv, { original: (doc.analysis_result?.invoices || [])[0], categories: [], transTypes: [] })
     const document = { branch: doc.branch || null }
     // التصحيح مبني على نسخة التقرير التي عُرضت في التنبيه؛ تُحفظ لإعادة المحاولة بعد انقطاع
@@ -1259,6 +1262,7 @@ export default function PendingDocuments() {
           onManualApprove={manualAllowed ? async (index, invoice) => {
             if (doc.project_id !== projectId || modeOf(doc) === 'legacy') throw new Error('ادخل المنشأة أولًا وانتظر تجهيز المستند.')
             const reviewed = withManualInvoice(doc, index, invoice)
+            updateDoc(doc.id, { _edit: reviewed._edit })
             await approveV2(reviewed, invoice._id)
           } : null}
           v2={modeOf(doc) !== 'legacy' ? { mode: modeOf(doc), ...(doc._v2 || {}) } : null}
@@ -1648,6 +1652,7 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
   const rows = b ? CHANNELS.filter(c => b.gross[c] || b.returns[c]) : []
   return (
     <div className="rp-sales-reading" data-k="sales-reading">
+      {invoice.firstPaymentLines && <Note>طُوبقت مبالغ الأسطر مع عمود المبالغ وإجمالي الإغلاق المطبوع. راجع توزيع القنوات أدناه.</Note>}
       {b && (
         <table className="rp-table rp-sales-channels" data-k="sales-channels">
           <thead><tr><th>القناة</th><th className="ts-end">قبل المرتجعات</th><th className="ts-end">المرتجعات</th><th className="ts-end">الصافي حسب القراءة</th></tr></thead>
@@ -1668,6 +1673,8 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
           </ul>
         </details>
       )}
+      {!readOnly && Array.isArray(invoice.paymentLines) &&
+        <SalesRowsEditor key={invoice._id} invoice={invoice} onApply={next => { onReplace?.(next); setChoice({}) }} />}
       {unknown.map((u, i) => {
         const c = choice[i] || {}
         const apply = () => { onReplace?.(resolveUnknownPayment(invoice, i, c.channel === 'exclude' ? null : c.channel, c.reason, c.amount)); setChoice({}) }
@@ -1705,6 +1712,11 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
           hint={check.total == null && !(Number(invoice?.salesReadingVersion) >= 2) ? 'لم يُقرأ إجمالي مطبوع: اكتبه من التقرير ليُطابق قبل الاعتماد.' : undefined}>
           <Num value={invoice?.totalSales ?? ''} data-k="sales-printed-total" disabled={readOnly} onChange={e => onEdit('totalSales', e.target.value)} />
         </Field>
+        {toHalalas(invoice?.reportNetTotal) != null && toHalalas(invoice.reportNetTotal) !== toHalalas(invoice.totalSales) &&
+          <Field label="سبب تصحيح صافي الإغلاق المطبوع">
+            <Input disabled={readOnly} value={invoice.printedNetReview?.value === invoice.totalSales ? (invoice.printedNetReview?.reason || '') : ''}
+              onChange={e => onEdit('printedNetReview', { value: invoice.totalSales, reason: e.target.value })} />
+          </Field>}
         <Field label="ضريبة المبيعات المطبوعة (اختياري)" hint="ضريبة التقرير بعد المرتجعات. عند تركها فارغة تُقدّر بافتراض خضوع كامل المبيعات لضريبة 15%. الصفر يُحفظ كما هو."
           error={!tax.ok ? 'راجع ضريبة التقرير وإجماليه.' : undefined}>
           <Num value={invoice?.reportedSalesVat ?? ''} data-k="sales-printed-vat" disabled={readOnly} onChange={e => onEdit('reportedSalesVat', e.target.value)} />

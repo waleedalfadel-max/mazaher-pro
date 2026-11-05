@@ -41,7 +41,7 @@ test('sales use confirmed net channels, with original discrepancy retained and n
   const read={_id:'sale',type:'sales',date:'2026-01-02',description:'Synthetic report',cashSales:90,networkSales:100,totalSales:500,
     unknownPayments:[{label:'Unclear',amount:310}],salesReadingVersion:2,salesBreakdown:{returns:{cash:10}},bankAccounts:{network:'bank-a'}}
   assert.equal(salesReportCheck(read).ok,false)
-  const next=manualInvoice(read,{...fields,date:read.date,cashSales:120,networkSales:80,transferSales:20},[])
+  const next=manualInvoice(read,{...fields,date:read.date,printedNet:220,cashSales:120,networkSales:80,transferSales:20},[])
   assert.equal(next.totalSales,'220.00');assert.equal(next.cashSales,'120.00')
   assert.equal(salesReportCheck(next).ok,true)
   assert.deepEqual(next.manualReview.previous_unknown,read.unknownPayments)
@@ -97,4 +97,15 @@ test('مراجعة 0e0a5f1: هوية مورد «آجل — باسم المورد
   const credit = manualInvoice({ ...inv, paySource: 'credit', supplier_id: 's-9' }, fields, cats)
   assert.equal(credit.supplier_id, 's-9'); assert.equal(credit.supplier_name, undefined)
   assert.throws(() => manualInvoice({ ...inv, description: '' }, { ...fields, supplierName: '' }, cats), /اسم المورد غير محدد/)
+})
+
+test('manual closing cannot use the sum as the printed net or post gross card receipts', () => {
+  const inv = { type: 'sales', reportNetTotal: 194, totalSales: 194, date: fields.date }
+  const amounts = { ...fields, cashSales: 30, networkSales: 170, printedNet: 194 }
+  assert.throws(() => manualInvoice(inv, amounts, []), /صافي الإغلاق/)
+  assert.throws(() => manualInvoice(inv, { ...amounts, printedNet: '' }, []), /صافي الإغلاق/)
+  const reviewed = manualInvoice(inv, { ...amounts, networkSales: 164 }, [])
+  assert.equal(reviewed.networkSales, '164.00')
+  assert.equal(reviewed.printedNetReview.value, '194.00')
+  assert.equal(salesReportCheck(reviewed).ok, true)
 })

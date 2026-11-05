@@ -6,7 +6,7 @@ import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
 import { ReadingTimeoutError } from './readingTimeout.js'
 export { ReadingTimeoutError }
-import { normalizeSalesReading } from './salesReport.js'
+import { reconcileSalesColumns } from './salesReport.js'
 import { normalizeReceiptReading } from './supplierReceipts.js'
 import { normRotation, uprightImage } from './readingImage.js'
 import { prepareReadingRequest, readingSizeError, READING_REQUEST_LIMIT } from './readingRequest.js'
@@ -281,12 +281,14 @@ ${bankCustody ? 'هذه المنشأة تستخدم حسابًا بنكيًا ل
 مصادر الدفع: cash=صندوق نقدي | bank=بنك أو مدى أو تحويل | custody=عهدة موظف
 ${categorySection}
 ١. تقرير مبيعات (POS أو ملخص مبيعات يومي):
-{"type":"sales","date":"YYYY-MM-DD","paymentLines":[{"label":"اسم وسيلة الدفع كما طُبع حرفيًا","amount":0.00}],"returnLines":[{"label":"اسم وسيلة المرتجع كما طُبع","amount":0.00}],"reportGrossTotal":0.00,"reportNetTotal":null,"cashSales":0.00,"networkSales":0.00,"transferSales":0.00,"hungerSales":0.00,"jahez":0.00,"keeta":0.00,"mrsool":0.00,"totalSales":0.00}
+{"type":"sales","date":"YYYY-MM-DD","paymentLines":[{"label":"اسم وسيلة الدفع كما طُبع حرفيًا","amount":0.00}],"paymentAmountColumn":null,"returnLines":[{"label":"اسم وسيلة المرتجع كما طُبع","amount":0.00}],"reportGrossTotal":0.00,"reportNetTotal":null,"cashSales":0.00,"networkSales":0.00,"transferSales":0.00,"hungerSales":0.00,"jahez":0.00,"keeta":0.00,"mrsool":0.00,"totalSales":0.00}
 
 أسطر وسائل الدفع (الأهم — منها تُحسب القنوات في التطبيق):
   paymentLines ← انسخ كل سطر وسيلة دفع في جدول/قسم وسائل الدفع بمبلغه كما طُبع، سطرًا سطرًا، ولو تكرر اسم القناة بصيغ مختلفة
      (مثل «كاش» و«كاش توصيل» و«توصيل كاش»، أو «مدى» و«مدى توصيل» و«توصيل مدى»). لا تجمع أسطرًا ولا تحذف سطرًا، ولا تُسقط سطرًا لصغر مبلغه
      (مثل «تحويل» بمبلغ صغير). انسخ الاسم حرفيًا ولو لم تعرفه — التطبيق يصنّفه أو يعرضه للمراجعة. لا تضع فيها المرتجعات ولا الإجماليات.
+  paymentAmountColumn ← في الجدول ذي الأعمدة انسخ عمود «المبلغ» وحده من أعلى لأسفل في مصفوفة مستقلة بنفس ترتيب الطباعة، متضمنًا أول وآخر رقم وnull للخانة الفارغة. لا تنسخ هذه المصفوفة من paymentLines. إذا لم يوجد جدول بأعمدة اتركها null.
+  في الصورة المائلة اقرأ أسماء الوسائل بالترتيب، ثم تتبّع ميل كل صف من الاسم إلى عمود المبلغ، حتى لو كان الرقم أخفض منه في الصورة. أول مبلغ مقابل أول اسم. لا تزح بقية المبالغ عند تعذّر قراءة خانة، ولا تأخذ عدد العمليات أو أول سطر من القسم التالي.
   returnLines  ← أسطر المرتجعات/الاسترجاع حسب وسيلة الدفع (مثل «مرتجع كاش» أو «مرتجعات مدى»)، والمبلغ موجبًا. لا مرتجعات ⇒ [].
   reportGrossTotal ← إجمالي المبيعات المطبوع قبل المرتجعات شاملًا الضريبة (مجموع وسائل الدفع كما طُبع). غير مطبوع ⇒ null.
   reportNetTotal   ← الإجمالي المطبوع بعد المرتجعات شاملًا الضريبة إن طُبع (مثل «Net sales with tax» أو «صافي المبيعات شامل الضريبة»)، وإلا null. لا تحسبه أنت.
@@ -343,7 +345,7 @@ ${bankCustody ? '- حوالة إلى حساب العهدة البنكي من ح�
 - keeta: مبيعات كيتا / Keeta فقط — إذا لم يُذكر ضعه 0
 - mrsool: مبيعات مرسول / Mrsool فقط — إذا لم يُذكر ضعه 0
 - totalSales: مجموع cashSales + networkSales + transferSales + hungerSales + jahez + keeta + mrsool (التطبيق يعيد حسابه من paymentLines والإجمالي المطبوع)
-- إذا كان الإجمالي فقط بدون تفصيل: ضع الكل في cashSales واترك الباقي 0
+- إذا كان الإجمالي فقط بدون تفصيل: أعد paymentLines فارغة وصافي التقرير المطبوع إن وجد. لا توزّع أي مبلغ على قناة بالتخمين.
 - transType: يجب اختياره دائماً من القائمة أعلاه حرفياً بما فيه الإيموجي — الافتراضي ${defaultExpenseType} لأي فاتورة شراء
 ${paymentSourceRule}
 
@@ -451,7 +453,7 @@ ${paymentSourceRule}
   // تقرير المبيعات: القنوات من أسطر وسائل الدفع المنسوخة (المرادفات والتحويل والمرتجعات وغير المعروف) — src/lib/salesReport.js.
   // مرة واحدة عند القراءة: تعديلات المحاسب بعدها لا يُعاد حسابها.
   normalized.invoices = normalized.invoices.map(normalizeExpenseReading)
-  normalized.invoices = normalized.invoices.map(normalizeSalesReading)
+  normalized.invoices = normalized.invoices.map(inv => reconcileSalesColumns(inv, settings?.pos_payment_aliases))
   // إيصال سداد مورد: بدليل مطبوع وحده، وبلا بنود (src/lib/supplierReceipts.js)
   normalized.invoices = normalized.invoices.map(normalizeReceiptReading)
 

@@ -10,7 +10,7 @@ import { validExpenseReviews } from './expenseReading.js'
 
 /** خطأ نداء لم يصل إلى رد من الخادم: صفحة قديمة بعد نشر إصدار أحدث (رُفض قبل الإرسال)، أو انقطاع. */
 // P0023: حارس الخادم رفض الاعتماد لأن قراءة المستند استُبدلت بعد فتحه (approval_private.reject_replaced_invoice)؛ الحماية في الخادم.
-export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : error?.code === 'P0023' ? 'reading_replaced' : 'network' })
+export const callError = error => ({ code: error?.code === 'APP_VERSION_STALE' ? 'app_version_stale' : error?.code === 'P0521' ? 'sales_net_review_required' : error?.code === 'P0023' ? 'reading_replaced' : 'network' })
 
 const LATIN = { '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
   '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9', '٫': '.' }
@@ -149,6 +149,8 @@ export function reviewChanges(original, final) {
   if (fix?.rule === 'printed_line_column') out.push(`صحّح التطبيق القراءة الأولى: ${fix.to.field === 'printedLineTotal' ? 'إجمالي كل صنف الشامل المطبوع' : 'صافي كل صنف المطبوع'} بدل المبالغ المقروءة (${fix.lines.map(l => `البند ${l.line + 1}: ${l.from} ← ${l.to}`).join('، ') || 'دون تغيير المبالغ'})، أساس ${fix.from.basis === 'exclusive' ? 'قبل الضريبة' : 'شامل'} ← ${fix.to.basis === 'exclusive' ? 'قبل الضريبة' : 'شامل'}؛ لأنه يطابق الإجمالي بالهللة ومؤيَّد بأسطر كل صنف.`)
   if (final.basisReview && !same(final.basisReview,original.basisReview)) out.push(`أكد المراجع أساس مبالغ البنود من الصورة: ${final.basisReview.basis === 'exclusive' ? 'قبل الضريبة' : 'شاملة الضريبة'}`)
   if (final.roundingReview && !same(final.roundingReview,original.roundingReview)) out.push(`تسوية فرق صغير أكدها المراجع للبند ${final.roundingReview.line+1}: ${final.roundingReview.from} ← ${final.roundingReview.to}؛ ${final.roundingReview.reason}`)
+  if (final.salesRowsReview?.reason) out.push(`طابق المراجع أسطر الدفع والمرتجعات مع الإغلاق: ${final.salesRowsReview.reason}`)
+  if (final.printedNetReview?.reason) out.push(`صافي الإغلاق المؤكد ${final.printedNetReview.value}: ${final.printedNetReview.reason}`)
   if (final.manualReview?.version === 1) out.push(`اعتماد بمراجعة يدوية (${final.manualReview.mode === 'confirmed_channels' ? 'صافي القنوات المؤكد' : 'الإجمالي والتصنيف المؤكد'}): ${final.manualReview.reason}`)
   for (const [k, label] of Object.entries(FIELD_LABEL)) {
     if (k in final || k in original) if (!same(original[k], final[k])) out.push(`${label}: «${fieldText(original[k] ?? '—')}» ← «${fieldText(final[k] ?? '—')}»`)
@@ -196,6 +198,10 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
   const payload = { ...inv, transType: effectiveType, items, category_main: invCat?.name || invoiceName || null, category_id: invCat?.id || null, subcategory_id: categoryChoice(categories, { ...inv, category_main: invCat?.name || inv.category_main }, transType).subcategory_id }
+  if (inv.type === 'sales' && inv.printedNetReview) {
+    const net = toHalalas(inv.printedNetReview.value)
+    if (Number.isSafeInteger(net)) payload.printedNetReview = { ...inv.printedNetReview, value: fromHalalas(net) }
+  }
   if (inv.type === 'sales' && inv.reportedSalesVat != null && String(inv.reportedSalesVat).trim() !== '') {
     const tax = toHalalas(inv.reportedSalesVat)
     if (!Number.isNaN(tax) && tax != null) payload.reportedSalesVat = tax / 100
@@ -287,6 +293,7 @@ export function approvalMessage(res) {
     invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
     stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
     vat_excess: 'ضريبة القيمة المضافة أكبر مما يمكن لإجمالي هذه الفاتورة بنسبة 15%؛ قد تكون مكررة من عدة صفحات أو مقروءة مرتين. طابقها مع ملخص الفاتورة. لم يُسجَّل شيء.',
+    sales_net_review_required: 'طابق صافي القنوات مع صافي الإغلاق المطبوع بعد المرتجعات. عند تصحيح الصافي اكتب سببه ثم أعد الاعتماد.',
     sales_vat_invalid: 'ضريبة المبيعات المطبوعة غير صالحة؛ راجع مبلغ الضريبة وإجمالي التقرير. لم يُسجَّل شيء.',
     sales_vat_required: 'التقرير السابق له ضريبة مطبوعة محفوظة؛ أدخل ضريبة التقرير المصحح حتى لا تُستبدل بتقدير 15%. لم يُسجَّل شيء.',
     reading_replaced: 'استُبدلت قراءة هذا المستند بقراءة أحدث، فلم يُنفَّذ الإجراء ولم يُسجَّل شيء. راجع القراءة الجديدة (أعد فتح المستند إن لم تظهر) ثم أعد المحاولة.',

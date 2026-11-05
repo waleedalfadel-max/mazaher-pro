@@ -39,11 +39,15 @@ export function manualInvoice(invoice, fields, categories) {
     let total = 0
     for (const [key, label] of MANUAL_CHANNELS) { const n = amount(fields[key], label, true); next[key] = fromHalalas(n); total += n }
     if (total <= 0) throw new Error('أدخل مبلغ المبيعات في قناة واحدة على الأقل.')
-    next.totalSales = fromHalalas(total)
+    const printed = amount(fields.printedNet, 'صافي الإغلاق المطبوع بعد المرتجعات')
+    if (total !== printed) throw new Error(`مجموع القنوات ${fromHalalas(total)} لا يطابق صافي الإغلاق المطبوع ${fromHalalas(printed)}. راجع توزيع المبيعات والمرتجعات.`)
+    next.totalSales = fromHalalas(printed)
+    next.printedNetReview = { value: next.totalSales, reason }
+    review.confirmed_printed_net = next.totalSales
     next.unknownPayments = []
     next.salesReadingVersion = 2
     // These are OCR explanations, not the newly confirmed net channel amounts.
-    for (const key of ['paymentLines', 'returnLines', 'salesBreakdown', 'reportTotalBeforeReturns', 'reportNetWithTax']) delete next[key]
+    for (const key of ['paymentLines', 'returnLines', 'salesRowsReview', 'salesBreakdown', 'reportTotalBeforeReturns', 'reportNetWithTax']) delete next[key]
   } else {
     const total = amount(fields.totalAmount, 'إجمالي المستند')
     const vat = amount(fields.vatAmount, 'الضريبة', true)
