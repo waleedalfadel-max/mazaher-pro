@@ -69,6 +69,74 @@ export function classifyPaymentLabel(label, { returns = false } = {}) {
 
 const amountH = v => { const h = toHalalas(typeof v === 'string' ? v.replace(/,/g, '') : v); return h == null || Number.isNaN(h) ? null : h }
 
+// Compare the row transcription with a separate top-to-bottom read of the amount column.
+// A matching grand total alone cannot distinguish two swapped payment channels.
+export function reconcileSalesColumns(inv, aliases = {}) {
+  if (inv?.type !== 'sales') return inv
+  // Only the project's configured exact spellings may augment the generic classifier.
+  const configured = Object.entries(aliases || {}).filter(([label, channel]) => label && CHANNELS.includes(channel))
+  const present = [...(Array.isArray(inv.paymentLines) ? inv.paymentLines : []), ...(Array.isArray(inv.returnLines) ? inv.returnLines : [])]
+  const used = Object.fromEntries(configured.filter(([label]) => present.some(row => String(row?.label ?? '').trim().toLowerCase() === label.toLowerCase()))
+    .map(([label, channel]) => [label.toLowerCase(), channel]))
+  inv = { ...inv, paymentLines: Array.isArray(inv.paymentLines) ? inv.paymentLines : [], returnLines: Array.isArray(inv.returnLines) ? inv.returnLines : [] }
+  // Never accept reviewer decisions or tenant aliases from model output.
+  for (const key of ['salesRowsReview', 'printedNetReview', 'manualReview', 'salesPaymentAliases', 'resolvedPayments', 'salesAlignmentUnclear', 'firstPaymentLines']) delete inv[key]
+  if (Object.keys(used).length) inv.salesPaymentAliases = used
+  const column = inv.paymentAmountColumn
+  if (!Array.isArray(column) || !column.length) return normalizeSalesReading(inv)
+  const rows = inv.paymentLines
+  const amounts = column.map(amountH)
+  const rowAmounts = rows.map(row => amountH(row?.amount))
+  const aligned = amounts.length === rows.length && amounts.every((v, i) => v != null && v === rowAmounts[i])
+  if (aligned) return normalizeSalesReading(inv)
+  const gross = amountH(inv.reportGrossTotal)
+  const addsToGross = values => gross != null && values.every(v => v != null && v >= 0)
+    && values.reduce((sum, v) => sum + v, 0) === gross
+  if (amounts.length === rows.length && rows.every(row => String(row?.label ?? '').trim())
+      && addsToGross(amounts) && !addsToGross(rowAmounts)) {
+    const alignedRows = rows.map((row, i) => ({ ...row, amount: fromHalalas(amounts[i]) }))
+    return normalizeSalesReading({ ...inv, firstPaymentLines: rows, paymentLines: alignedRows })
+  }
+  return normalizeSalesReading({ ...inv, salesAlignmentUnclear: true })
+}
+
+function rowChannel(inv, row, returns) {
+  const label = String(row?.label ?? '').trim()
+  const alias = inv.salesPaymentAliases?.[label.toLowerCase()]
+  return CHANNELS.includes(alias) ? alias : classifyPaymentLabel(label, { returns })
+}
+
+export function salesReviewRows(inv) {
+  if (inv.salesRowsReview?.rows) return inv.salesRowsReview.rows.map(row => ({ ...row }))
+  return ['payment', 'return'].flatMap(kind => (inv[kind === 'payment' ? 'paymentLines' : 'returnLines'] || [])
+    .map(row => ({ kind, label: String(row?.label ?? ''), amount: row?.amount ?? '',
+      channel: rowChannel(inv, row, kind === 'return') || '' })))
+}
+
+// Rebuild, never increment existing channel fields. Raw OCR rows stay in the document.
+export function applySalesRows(inv, rows, reason) {
+  const note = String(reason || '').trim()
+  if (!note || !rows.length) throw new Error('راجع الأسطر واكتب سبب التصحيح.')
+  const reviewed = rows.map(row => {
+    const h = amountH(row.amount)
+    if (!['payment', 'return'].includes(row.kind) || !CHANNELS.includes(row.channel)
+        || !String(row.label || '').trim() || h == null || h < 0) {
+      throw new Error('أكمل اسم كل سطر وقناته ومبلغه كما في الإغلاق.')
+    }
+    return { kind: row.kind, label: row.label.trim(), amount: fromHalalas(h), channel: row.channel }
+  })
+  const channelLines = kind => reviewed.filter(row => row.kind === kind)
+    .map(row => ({ label: CHANNEL_NAME[row.channel], amount: row.amount }))
+  const rebuilt = normalizeSalesReading({ ...inv, salesPaymentAliases: undefined, paymentLines: channelLines('payment'), returnLines: channelLines('return') })
+  for (const [kind, key] of [['payment', 'lines'], ['return', 'returnLines']]) {
+    const labels = reviewed.filter(row => row.kind === kind && amountH(row.amount) !== 0)
+    rebuilt.salesBreakdown[key].forEach((line, i) => { line.label = labels[i].label })
+  }
+  return { ...rebuilt, totalSales: inv.totalSales ?? rebuilt.totalSales,
+    salesPaymentAliases: inv.salesPaymentAliases, paymentLines: inv.paymentLines, returnLines: inv.returnLines, resolvedPayments: [],
+    salesRowsReview: { reason: note, rows: reviewed } }
+}
+
 /**
  * يحوّل قراءة تقرير مبيعات فيها paymentLines إلى حقول القنوات المعتادة (صافية بعد المرتجعات) وتفصيل للمراجعة.
  * بلا paymentLines (قراءة قديمة أو مستند غير مبيعات): يعيد الفاتورة كما هي.
@@ -84,7 +152,7 @@ export function normalizeSalesReading(inv) {
     const h = amountH(l?.amount)
     if (h == null) { keepUnreadable(l, 'payment'); continue }
     if (h === 0) continue
-    const ch = classifyPaymentLabel(l?.label)
+    const ch = rowChannel(inv, l, false)
     lines.push({ label: String(l?.label ?? ''), amount: fromHalalas(h), channel: ch })
     if (ch) gross[ch] += h; else unknown.push({ label: String(l?.label ?? ''), amount: fromHalalas(h), kind: 'payment' })
   }
@@ -92,7 +160,7 @@ export function normalizeSalesReading(inv) {
     const h = amountH(l?.amount)
     if (h == null) { keepUnreadable(l, 'return'); continue }
     if (h === 0) continue
-    const ch = classifyPaymentLabel(l?.label, { returns: true })
+    const ch = rowChannel(inv, l, true)
     returnLines.push({ label: String(l?.label ?? ''), amount: fromHalalas(Math.abs(h)), channel: ch })
     if (ch) returns[ch] += Math.abs(h); else unknown.push({ label: String(l?.label ?? ''), amount: fromHalalas(-Math.abs(h)), kind: 'return' })
   }
@@ -137,6 +205,16 @@ export function reportedSalesVatCheck(inv) {
  */
 export function salesReportCheck(inv) {
   const reasons = []
+  if (inv?.salesAlignmentUnclear && !inv.salesRowsReview?.reason && !inv.manualReview?.reason) {
+    reasons.push('اختلف ترتيب مبالغ وسائل الدفع بين قراءتي الجدول. افتح «مراجعة أسطر الإغلاق» وطابق كل سطر مع الصورة.')
+  }
+  const readNet = amountH(inv?.reportNetTotal)
+  const editedNet = amountH(inv?.totalSales)
+  const netReview = inv?.printedNetReview
+  if (readNet != null && editedNet !== readNet &&
+      !(String(netReview?.reason || '').trim() && amountH(netReview?.value) === editedNet && editedNet != null)) {
+    reasons.push('صافي الإغلاق المدخل يختلف عن الصافي المقروء من التقرير. طابقه مع الصورة واكتب سبب تصحيحه.')
+  }
   if (!reportedSalesVatCheck(inv).ok) reasons.push('ضريبة المبيعات المطبوعة غير صالحة؛ راجع مبلغها وإجمالي التقرير.')
   // غير المعروف بمبلغ غير صفري، وكل سطر بلا مبلغ مقروء (لا يُعدّ صفرًا)
   const unknown = (inv?.unknownPayments || []).filter(u => { const h = amountH(u?.amount); return h == null || h !== 0 })
@@ -146,6 +224,15 @@ export function salesReportCheck(inv) {
   if ((inv?.resolvedPayments || []).some(r => !r?.channel && !String(r?.reason || '').trim())) reasons.push('سطر مستبعد بلا سبب موثّق. اكتب سبب الاستبعاد.')
   const negative = CHANNELS.filter(c => (amountH(inv?.[CHANNEL_FIELD[c]] ?? 0) ?? 0) < 0)
   if (negative.length) reasons.push(`مرتجعات ${negative.map(c => CHANNEL_NAME[c]).join(' و')} أكبر من مبيعاتها في التقرير. راجع القراءة.`)
+  if (inv?.salesRowsReview?.rows) {
+    const reviewed = Object.fromEntries(CHANNELS.map(c => [c, 0]))
+    for (const row of inv.salesRowsReview.rows) {
+      reviewed[row.channel] += (row.kind === 'return' ? -1 : 1) * amountH(row.amount)
+    }
+    if (CHANNELS.some(c => reviewed[c] !== amountH(inv[CHANNEL_FIELD[c]] ?? 0))) {
+      reasons.push('تغيّرت قناة بعد مراجعة الأسطر. صحّح السطر المقابل في «مراجعة أسطر الإغلاق» ليطابق القيد.')
+    }
+  }
   const ch = channelsTotalH(inv)
   const t = inv?.totalSales == null || inv.totalSales === '' ? null : amountH(inv.totalSales)
   const diff = t == null ? null : ch - t

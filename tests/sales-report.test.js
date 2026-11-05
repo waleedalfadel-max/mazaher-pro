@@ -1,7 +1,7 @@
 // قراءة تقرير المبيعات (src/lib/salesReport.js): أسطر وسائل دفع مصطنعة بصيغ «توصيل» وتحويل ومرتجعات (أرقام وهمية).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyPaymentLabel, normalizeSalesReading, salesReportCheck, resolveUnknownPayment } from '../src/lib/salesReport.js'
+import { classifyPaymentLabel, normalizeSalesReading, salesReportCheck, resolveUnknownPayment, reconcileSalesColumns, salesReviewRows, applySalesRows } from '../src/lib/salesReport.js'
 
 // قبل المرتجعات: نقدي 120.00، شبكة 1,500.40، تحويل 9.00، هنقرستيشن 410.25، جاهز 150.00، مرسول 22.00 = 2,211.65
 // المرتجعات: نقدي 7.25، شبكة 20.00 ⇒ الصافي 2,184.40
@@ -145,4 +145,36 @@ test('قراءة قديمة بلا أسطر وسائل الدفع تبقى كم�
   const old = { type: 'sales', cashSales: 10, networkSales: 5, totalSales: 15 }
   assert.equal(normalizeSalesReading(old), old)
   assert.equal(salesReportCheck(old).ok, true)
+})
+
+test('slanted receipt with a shifted/missing amount: use the ordered column only with a unique gross match', () => {
+  const raw = { type: 'sales', paymentLines: [{label:'Cash',amount:null}, {label:'Mada',amount:20}, {label:'Triple Hunger',amount:85}],
+    paymentAmountColumn: [20,85,10], reportGrossTotal:115, reportNetTotal:111, returnLines:[{label:'Mada',amount:4}] }
+  const r = reconcileSalesColumns(raw, {'triple hunger':'hunger'})
+  assert.equal(r.cashSales,20); assert.equal(r.networkSales,81); assert.equal(r.hungerSales,10)
+  assert.equal(salesReportCheck(r).ok,true)
+  assert.deepEqual(r.firstPaymentLines,raw.paymentLines)
+  assert.equal(reconcileSalesColumns(raw).unknownPayments[0].label,'Triple Hunger')
+})
+
+test('balanced swapped amounts still require row review; editing a refund rebuilds once', () => {
+  const raw = { type:'sales', paymentLines:[{label:'Cash',amount:82},{label:'Mada',amount:18}],
+    paymentAmountColumn:[18,82], reportGrossTotal:100, reportNetTotal:95, returnLines:[{label:'Mada',amount:5}] }
+  const r = reconcileSalesColumns(raw)
+  assert.equal(salesReportCheck(r).ok,false)
+  const rows = salesReviewRows(r)
+  rows[0].amount=18; rows[1].amount=82
+  assert.throws(() => applySalesRows(r,rows,'')); assert.throws(() => applySalesRows(r,[{...rows[0],amount:''}],'reviewed'))
+  const fixed = applySalesRows(r,rows,'checked each line')
+  assert.equal(fixed.networkSales,77); assert.equal(fixed.cashSales,18); assert.equal(salesReportCheck(fixed).ok,true)
+  assert.equal(applySalesRows(fixed,salesReviewRows(fixed),'checked again').networkSales,77)
+  assert.deepEqual(fixed.paymentLines,raw.paymentLines)
+  assert.equal(salesReportCheck({...fixed,networkSales:78,cashSales:17}).ok,false)
+})
+
+test('a corrected independent printed total needs a reason tied to the final amount', () => {
+  const inv={type:'sales',cashSales:125,totalSales:125,reportNetTotal:120}
+  assert.equal(salesReportCheck(inv).ok,false)
+  assert.equal(salesReportCheck({...inv,printedNetReview:{value:120,reason:'checked'}}).ok,false)
+  assert.equal(salesReportCheck({...inv,printedNetReview:{value:125,reason:'corrected misread net'}}).ok,true)
 })
