@@ -1,3 +1,4 @@
+import { suggestSalesPaymentAccounts } from './salesPaymentAccounts.js'
 // Company-specific suggestions. They never approve a document or move money.
 import { eligibleBankAccounts, expensesAtProjectLevel, bankAccountLabel } from './branchSetup.js'
 import { isCashBankInvoice, cashBankDirection } from './cashBankTransfer.js'
@@ -16,7 +17,7 @@ export function bankTransferPayment(inv) {
   return inv
 }
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k)
-const PAYMENT_FIELDS = ['paySource', 'bankAccountId', 'bankAccounts', 'bankTransfer']
+const PAYMENT_FIELDS = ['paySource', 'bankAccountId', 'bankAccounts', 'bankTransfer', 'salesBankRoutes']
 
 export function paymentBranch(doc, inv, settings) {
   return (inv?.type === 'expense' && expensesAtProjectLevel(settings)) || inv?.type === 'supplier_payment' || isBankTransfer(inv) || (paymentWorkflow(settings) && isAppCollection(inv))
@@ -25,7 +26,7 @@ export function paymentBranch(doc, inv, settings) {
 
 export function paymentChoice(inv) {
   return { type: inv.type, paymentMode: inv.paymentMode || null, transType: inv.transType || null,
-    ...Object.fromEntries(PAYMENT_FIELDS.map(k => [k, inv[k] ?? (['bankAccounts', 'bankTransfer'].includes(k) ? {} : '')])) }
+    ...Object.fromEntries(PAYMENT_FIELDS.filter(k => k !== 'salesBankRoutes' || own(inv, k)).map(k => [k, inv[k] ?? (['bankAccounts', 'bankTransfer'].includes(k) ? {} : '')])) }
 }
 
 export function documentPaymentChoices(result, pendingIds = null) {
@@ -97,7 +98,8 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
 
 export function suggestDocumentPayments(result, doc, settings, accounts, saved = {}, pendingIds = null) {
   if (!result) return result
-  const map = inv => pendingIds && !pendingIds.has(inv?._id) ? inv : suggestInvoicePayment(inv, doc, settings, accounts, saved?.[inv?._id])
+  const map = inv => pendingIds && !pendingIds.has(inv?._id) ? inv
+    : suggestSalesPaymentAccounts(suggestInvoicePayment(inv, doc, settings, accounts, saved?.[inv?._id]), settings)
   return Array.isArray(result.invoices) ? { ...result, invoices: result.invoices.map(map) } : map(result)
 }
 

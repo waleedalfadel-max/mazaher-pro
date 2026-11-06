@@ -136,7 +136,7 @@ const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'الت
   totalSales: 'إجمالي التقرير المطبوع', reportedSalesVat: 'ضريبة المبيعات المطبوعة',
   // إيصال سداد مورد (20261020120000)
   beneficiary: 'المستفيد', reference: 'مرجع العملية', supplierKind: 'قائمة المورد', supplierId: 'المورد', paymentMode: 'طريقة الاعتماد',
-  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', bankTransfer: 'حسابا التحويل الداخلي', splitPayment: 'تقسيم السداد', paymentAllocations: 'مبالغ السداد وحساباتها' }
+  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', salesBankRoutes: 'حسابات وسائل الدفع', bankTransfer: 'حسابا التحويل الداخلي', splitPayment: 'تقسيم السداد', paymentAllocations: 'مبالغ السداد وحساباتها' }
 const fieldText = v => Array.isArray(v) ? JSON.stringify(v) : v && typeof v === 'object' ? JSON.stringify(v, Object.keys(v).sort()) : String(v ?? '')
 const same = (a, b) => fieldText(a) === fieldText(b)
 
@@ -293,6 +293,8 @@ export function approvalMessage(res) {
     invoice_already_decided: `هذه الفاتورة ${d.status === 'excluded' ? 'استُبعدت' : 'اعتُمدت'} مسبقًا${d.journal_number ? ` بالقيد ${d.journal_number}` : ''}. حُدّثت الصفحة.`,
     stale: 'تغيّر المستند منذ فتحته (اعتمده أو عدّله مستخدم آخر). حُدّثت الصفحة؛ راجع ثم أعد المحاولة.',
     vat_excess: 'ضريبة القيمة المضافة أكبر مما يمكن لإجمالي هذه الفاتورة بنسبة 15%؛ قد تكون مكررة من عدة صفحات أو مقروءة مرتين. طابقها مع ملخص الفاتورة. لم يُسجَّل شيء.',
+    sales_bank_routes_invalid: 'راجع مبالغ وسائل الدفع وحساباتها. يجب أن يطابق توزيعها صافي القناة.',
+    sales_bank_routes_required: 'راجع توزيع وسائل الدفع على الحسابات قبل تصحيح التقرير.',
     sales_net_review_required: 'طابق صافي القنوات مع صافي الإغلاق المطبوع بعد المرتجعات. عند تصحيح الصافي اكتب سببه ثم أعد الاعتماد.',
     sales_vat_invalid: 'ضريبة المبيعات المطبوعة غير صالحة؛ راجع مبلغ الضريبة وإجمالي التقرير. لم يُسجَّل شيء.',
     sales_vat_required: 'التقرير السابق له ضريبة مطبوعة محفوظة؛ أدخل ضريبة التقرير المصحح حتى لا تُستبدل بتقدير 15%. لم يُسجَّل شيء.',

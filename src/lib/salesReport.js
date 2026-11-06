@@ -1,3 +1,4 @@
+import { salesPaymentAccountsError } from './salesPaymentAccounts.js'
 // قراءة تقرير المبيعات (2026-10-18): وسائل الدفع كما طُبعت في التقرير ← قنوات تحسيب، والمرتجعات، والإجمالي المطبوع.
 // المزوّد ينسخ أسطر وسائل الدفع والمرتجعات حرفيًا (paymentLines / returnLines)، والتصنيف هنا بقواعد ثابتة قابلة للاختبار:
 //   • «كاش توصيل» و«توصيل كاش» نقدي، و«مدى توصيل» و«توصيل مدى» شبكة: «توصيل» وصف لطريقة التسليم لا قناة، ولا تدل وحدها على تطبيق.
@@ -80,7 +81,7 @@ export function reconcileSalesColumns(inv, aliases = {}) {
     .map(([label, channel]) => [label.toLowerCase(), channel]))
   inv = { ...inv, paymentLines: Array.isArray(inv.paymentLines) ? inv.paymentLines : [], returnLines: Array.isArray(inv.returnLines) ? inv.returnLines : [] }
   // Never accept reviewer decisions or tenant aliases from model output.
-  for (const key of ['salesRowsReview', 'printedNetReview', 'manualReview', 'salesPaymentAliases', 'resolvedPayments', 'salesAlignmentUnclear', 'firstPaymentLines']) delete inv[key]
+  for (const key of ['salesRowsReview', 'printedNetReview', 'manualReview', 'salesPaymentAliases', 'resolvedPayments', 'salesAlignmentUnclear', 'firstPaymentLines', 'salesBankRoutes']) delete inv[key]
   if (Object.keys(used).length) inv.salesPaymentAliases = used
   const column = inv.paymentAmountColumn
   if (!Array.isArray(column) || !column.length) return normalizeSalesReading(inv)
@@ -240,6 +241,8 @@ export function salesReportCheck(inv) {
   if (t == null && Number(inv?.salesReadingVersion) >= 2) reasons.push('اكتب «إجمالي التقرير المطبوع» شامل الضريبة بعد المرتجعات (مثل Net sales with tax) من التقرير نفسه، ليُطابق قبل الاعتماد.')
   if (inv?.totalSales != null && inv.totalSales !== '' && t == null) reasons.push('إجمالي التقرير المطبوع ليس مبلغًا صالحًا.')
   if (diff) reasons.push(`مجموع وسائل الدفع ${fromHalalas(ch)} لا يطابق إجمالي التقرير ${fromHalalas(t)}: الفرق ${fromHalalas(Math.abs(diff))}.`)
+  const accountsError = salesPaymentAccountsError(inv)
+  if (accountsError) reasons.push(accountsError)
   return { ok: reasons.length === 0, reasons, unknown, total: t == null ? null : Number(fromHalalas(t)), channels: Number(fromHalalas(ch)), diff: diff == null ? null : Number(fromHalalas(diff)) }
 }
 
