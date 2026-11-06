@@ -6,7 +6,7 @@ import {readFile} from 'node:fs/promises'
 if (!process.env.SALES_ACCOUNT_TEST_FIXTURE) throw new Error('An isolated synthetic fixture is required')
 const {fixture}=await import(pathToFileURL(process.env.SALES_ACCOUNT_TEST_FIXTURE))
 const f=await fixture()
-await f.db.exec(await readFile('supabase/pending/sales_payment_name_accounts.sql','utf8'))
+await f.db.exec(await readFile('supabase/migrations/20261106142136_sales_payment_name_accounts.sql','utf8'))
 try {
  const main=randomUUID(),restricted=randomUUID(),foreign=randomUUID()
  await f.db.query("insert into bank_accounts(id,project_id,name,branches,is_active) values($1,$4,'Main','{}',true),($2,$4,'Liabilities','{}',true),($3,$5,'Other business','{}',true)",[main,restricted,foreign,f.p1,f.p2])
