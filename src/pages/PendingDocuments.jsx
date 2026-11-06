@@ -1,3 +1,4 @@
+import { salesRouteRemainder } from '../lib/salesPaymentAccounts.js'
 import OwnerWithdrawalFields from '../components/OwnerWithdrawalFields.jsx'
 import { WITHDRAWAL_OPTION, isOwnerWithdrawal, toOwnerWithdrawal, fromOwnerWithdrawal, withdrawalBlockReason } from '../lib/ownerWithdrawal.js'
 import { validRereading, readingReplaced, resetReplacedReview } from '../lib/documentReread.js'
@@ -1051,7 +1052,8 @@ export default function PendingDocuments() {
     const document = { branch: doc.branch || null }
     // التصحيح مبني على نسخة التقرير التي عُرضت في التنبيه؛ تُحفظ لإعادة المحاولة بعد انقطاع
     const linked = doc._v2Error?.linked || doc._salesLinked || {}
-    if (payload.bankAccounts && linked.accounts) {
+    if (linked.current?._bank_allocations && !Array.isArray(payload.salesBankRoutes)) payload.salesBankRoutes = []
+    if (payload.bankAccounts && linked.accounts && !Array.isArray(payload.salesBankRoutes)) {
       const kept = Object.fromEntries(Object.entries(payload.bankAccounts).filter(([k]) => !(Number(linked.accounts[k]?.old || 0) || Number(linked.accounts[k]?.total || 0))))
       payload.bankAccounts = kept
     }
@@ -1577,6 +1579,21 @@ function BankAccountField({ invoice, branch, setup, onEdit }) {
   const staleMsg = 'الحساب المختار سابقًا غير متاح لهذا الفرع؛ اختر من القائمة.'
   // تقرير المبيعات: حساب كل قناة بنكية يُقرأ ويُكتب في مكان واحد (bankAccounts.<القناة>، والعام احتياطي) — في الحقلين أو الحقل الواحد،
   // فما يظهر للمحاسب هو ما يُرسل ويُسجَّل، ولو صُفّرت قناة أو أُعيدت (R3-01)
+  if (invoice?.type === 'sales' && invoice.salesBankRoutes?.length) {
+    return <>
+      {invoice.salesBankRoutes.map((row, index) => <Field key={row.label} label={`حساب ${row.label} — ${money(row.amount)} ريال`}
+        hint={bankOperationalNote(setup?.settings, row.accountId) || 'الحساب المقترح لاسم وسيلة الدفع في جميع الفروع.'}>
+        <Select value={row.accountId} placeholder="— اختر الحساب —" data-k={`sales-payment-account-${index}`}
+          options={opts} onChange={e => onEdit('salesBankRoutes', invoice.salesBankRoutes.map((item, i) => i === index ? { ...item, accountId: e.target.value } : item))} />
+      </Field>)}
+      {BANK_CHANNELS.filter(c => salesRouteRemainder(invoice, c.k) > 0).map(c => <Field key={c.k}
+        label={`حساب بقية ${c.label} — ${money(salesRouteRemainder(invoice, c.k) / 100)} ريال`}>
+        <Select value={chosenBankAccount(accounts, branch, salesChannelAccount(invoice, c.k))} placeholder="— اختر الحساب —"
+          data-k={`bank-account-${c.k}`} options={opts}
+          onChange={e => onEdit('bankAccounts', withSalesChannelAccount(invoice, [c.k], e.target.value))} />
+      </Field>)}
+    </>
+  }
   if (invoice?.type === 'sales') {
     const shown = BANK_CHANNELS.filter(c => Number(invoice?.[c.field] || 0) > 0)
     if (shown.length === 2 && list.length > 1) return shown.map(c => {
@@ -1618,6 +1635,7 @@ function BankAccountField({ invoice, branch, setup, onEdit }) {
 function CorrectionAccounts({ linked, invoice, branch, setup, onEdit }) {
   const accounts = setup?.bankAccounts || []
   if (!accounts.length || !linked?.accounts || !invoice) return null
+  if (invoice.salesBankRoutes || linked.current?._bank_allocations) return <BankAccountField invoice={invoice} branch={branch} setup={setup} onEdit={onEdit} />
   const list = eligibleBankAccounts(accounts, branch)
   const rows = BANK_CHANNELS.map(c => {
     const oldV = Number(linked.current?.[c.k] || 0), newV = Number(invoice[c.field] || 0), a = linked.accounts[c.k] || {}
