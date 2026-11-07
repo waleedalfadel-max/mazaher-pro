@@ -18,6 +18,7 @@ import UsersManagement from './pages/UsersManagement'
 import AdminBusinessUsers from './pages/AdminBusinessUsers'
 import JournalLedger from './pages/JournalLedger'
 import JournalDetail from './pages/JournalDetail.jsx'
+import JournalDay from './pages/JournalDay.jsx'
 import JournalArchive from './pages/JournalArchive'
 import SuperAdmin from './pages/SuperAdmin'
 import Suppliers from './pages/Suppliers'
@@ -76,6 +77,7 @@ function AppRoutes() {
 
       <Route path="/accounts" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><FinancialRecord view="accounts" /></ProtectedRoute>} />
       <Route path="/journal-entry/:entryId" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><JournalDetail /></ProtectedRoute>} />
+      <Route path="/daily-journal" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><JournalDay /></ProtectedRoute>} />
 
       <Route path="/ledger" element={
         <ProtectedRoute allowedRoles={['accountant', 'superadmin']}>

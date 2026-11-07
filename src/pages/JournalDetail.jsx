@@ -58,7 +58,7 @@ function DetailPage({ projectId, entryId }) {
   const { projectName } = useAuth(), location = useLocation()
   const [detail, setDetail] = useState(null), [error, setError] = useState(''), [fileError, setFileError] = useState('')
   const [attempt, setAttempt] = useState(0), [printing, setPrinting] = useState(false)
-  const returnTo = /^\/(accounts|operations|ledger|journal)(\?|$)/.test(location.state?.returnTo || '') ? location.state.returnTo : '/operations'
+  const returnTo = /^\/(accounts|operations|ledger|journal|daily-journal)(\?|$)/.test(location.state?.returnTo || '') ? location.state.returnTo : '/operations'
   useEffect(() => {
     let active = true
     setDetail(null); setError(''); setFileError('')

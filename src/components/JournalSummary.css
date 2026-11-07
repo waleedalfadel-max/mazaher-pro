@@ -1,0 +1,28 @@
+.daily-journals { display: grid; gap: 16px; }
+.journal-summary-day { background: #fff; border: 1px solid var(--ts-line); border-radius: 12px; overflow: hidden; }
+.journal-summary-day > header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--ts-line); }
+.journal-summary-day h3 { margin: 0; font-size: 17px; }
+.journal-summary-day > header span { color: var(--ts-muted); font-size: 12px; }
+.journal-summary-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; align-items: center; gap: 18px; padding: 16px 20px; border-bottom: 1px solid var(--ts-line-soft); }
+.journal-summary-row:last-child { border-bottom: 0; }
+.journal-summary-label, .journal-summary-values { display: grid; gap: 6px; overflow-wrap: anywhere; }
+.journal-summary-label strong { font-size: 14px; }
+.journal-summary-label > span, .journal-summary-values { font-size: 13px; }
+.journal-summary-label small { color: var(--ts-muted); }
+.journal-summary-values .ts-num { white-space: nowrap; }
+.journal-day-totals { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 18px 0; padding: 12px 0; border-block: 1px solid var(--ts-line); font-weight: 600; }
+.journal-day-scope { color: var(--ts-muted); font-size: 13px; margin-bottom: 14px; }
+.journal-extra-filters { margin-top: 12px; }
+.journal-extra-filters > summary { color: var(--ts-petrol-text); cursor: pointer; }
+.journal-extra-filters .ts-form-grid { margin-top: 12px; }
+@media (max-width: 600px) {
+  .journal-summary-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 14px; }
+  .journal-summary-values { grid-column: 1 / -1; grid-row: 2; }
+  .journal-summary-day > header { padding: 14px; }
+}
+@media print {
+  .journal-print-root .journal-summary-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; padding: 12px 0; break-inside: avoid; }
+  .journal-print-root .journal-summary-values { grid-column: auto; grid-row: auto; }
+  .journal-print-root .journal-summary-label strong { font-size: 11pt; }
+  .journal-print-root .journal-summary-values { font-size: 10pt; }
+}
