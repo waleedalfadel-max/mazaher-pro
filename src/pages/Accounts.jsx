@@ -11,6 +11,7 @@ import { downloadBlob } from '../lib/reportPdf.js'
 import { getSignedUrl } from '../lib/storage.js'
 import EntryDescription from '../components/EntryDescription.jsx'
 import JournalEntryLink from '../components/JournalEntryLink.jsx'
+import './Accounts.css'
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
 export default function Accounts({ embedded = false }) {
@@ -81,7 +82,7 @@ function AccountPage({ embedded }) {
     try { const signed = await getSignedUrl(url); if (!signed) throw new Error(); window.open(signed,'_blank','noopener,noreferrer') }
     catch { setError('تعذّر فتح المستند؛ أعد المحاولة.') }
   }
-  return <div className="rpt-page" data-k="accounts-page"><Panel title={embedded ? 'كشف حساب' : 'كشف الحسابات'} subtitle="كل حساب وحركاته ورصيده، للمنشأة كاملة؛ يشمل المعتمد والتلقائي فقط." action={<Button onClick={load} disabled={loading}>تحديث</Button>}>
+  return <div className="rpt-page accounts-page" data-k="accounts-page"><Panel title={embedded ? 'كشف حساب' : 'كشف الحسابات'} subtitle="كل حساب وحركاته ورصيده، للمنشأة كاملة؛ يشمل المعتمد والتلقائي فقط." action={<Button onClick={load} disabled={loading}>تحديث</Button>}>
     <div className="ts-panel-body"><div className="ts-form-grid">
       <Field label="الحساب"><select className="ts-input" value={key} onChange={e=>set('account',e.target.value)} data-k="account-select">
         {selected && !options.some(o => o.value === key) && <option value={key} hidden>{selected.label}</option>}
@@ -92,15 +93,28 @@ function AccountPage({ embedded }) {
       <Field label="بحث بالبيان أو القيد أو المنفذ"><Input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} /></Field>
     </div>{!valid && <Note tone="error">اختر فترة صحيحة.</Note>}{!selected && data && <Note tone="error">الحساب غير موجود في هذه المنشأة؛ اختر حسابًا من القائمة.</Note>}
     {error && <Note tone="error">{error}</Note>}{loading && <p>جارٍ تحميل الكشف…</p>}
-    {statement && <>{liquidityScope && <Note>{liquidityScope}</Note>}<div className="account-card-row"><div>رصيد بداية الفترة من القيود<Money value={statement.opening}/></div><div>إجمالي الداخل<Money value={statement.incoming}/></div><div>إجمالي الخارج<Money value={statement.outgoing}/></div></div>
-      <p data-k="account-closing"><strong>{closingLabel}: {closingValue==null ? 'غير محدد' : <Money value={closingValue}/>}</strong></p>{bookOnly && <Note>الأرقام في جدول الحركات هي صافي ما سُجل في الدفتر وليست سيولة متاحة. <Link to={accountHref('liquidity',to,from)}>عرض الكاش الفعلي</Link></Note>}
+    {statement && <>{liquidityScope && <Note>{liquidityScope}</Note>}<div className="account-card-row account-statement-totals">
+      <div><span>رصيد بداية الفترة</span><Money value={statement.opening}/></div>
+      <div><span>إجمالي الداخل</span><Money value={statement.incoming}/></div>
+      <div><span>إجمالي الخارج</span><Money value={statement.outgoing}/></div>
+      <div className="account-statement-closing" data-k="account-closing"><span>{closingLabel}</span><strong>{closingValue==null ? 'غير محدد' : <Money value={closingValue}/>}</strong></div>
+      </div>{bookOnly && <Note>الأرقام في جدول الحركات هي صافي ما سُجل في الدفتر وليست سيولة متاحة. <Link to={accountHref('liquidity',to,from)}>عرض الكاش الفعلي</Link></Note>}
       <Note>رصيد البداية من القيود السابقة المسجلة فقط. لا يفترض وجود رصيد افتتاحي بنكي غير مسجل. التحويل الداخلي يظهر خروجًا من المصدر ودخولًا للوجهة.</Note>
-      <Button disabled={exporting} onClick={()=>exportAs('xlsx')}>Excel</Button> <Button disabled={exporting} onClick={()=>exportAs('pdf')}>PDF</Button>
+      <div className="account-export-actions"><Button disabled={exporting} onClick={()=>exportAs('xlsx')}>Excel</Button><Button disabled={exporting} onClick={()=>exportAs('pdf')}>PDF</Button></div>
       {search && <p>البحث يرشّح الصفوف فقط؛ الرصيد والملخص يشملان كل حركات الفترة.</p>}
-      <div className="rpt-table-wrap"><table className="rpt-table" data-k="account-movements"><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>داخل</th><th>خارج</th><th>الرصيد</th><th>المنفذ</th><th>المستند</th></tr></thead>
-        <tbody>{statement.rows.slice((page-1)*50,page*50).map(r=><tr key={r.id}><td>{formatDate(r.date,{year:true})}</td><td><JournalEntryLink entry={r}/></td><td><EntryDescription row={r}/></td><td><Money value={r.incoming}/></td><td><Money value={r.outgoing}/></td><td><Money value={r.balance}/></td><td>{r.created_by_name||'غير مسجل'}</td><td>{r.file_url && <Button size="sm" onClick={()=>openReceipt(r.file_url)}>عرض</Button>}</td></tr>)}</tbody></table></div>
+      <div className="rpt-table-wrap account-statement-table-wrap"><table className="rpt-table account-statement-table" data-k="account-movements"><thead><tr><th scope="col">التاريخ</th><th scope="col">القيد</th><th scope="col">البيان</th><th scope="col">داخل</th><th scope="col">خارج</th><th scope="col">الرصيد</th><th scope="col">المنفذ</th><th scope="col">المستند</th></tr></thead>
+        <tbody>{statement.rows.slice((page-1)*50,page*50).map(r=><tr key={r.id}>
+          <td className="account-movement-date">{formatDate(r.date,{year:true})}</td>
+          <td className="account-movement-journal"><JournalEntryLink entry={r}/></td>
+          <td className="account-movement-description"><EntryDescription row={r}/></td>
+          <td className="account-movement-in" data-label="داخل"><Money value={r.incoming}/></td>
+          <td className="account-movement-out" data-label="خارج"><Money value={r.outgoing}/></td>
+          <td className="account-movement-balance" data-label="الرصيد بعد الحركة"><Money value={r.balance}/></td>
+          <td className="account-movement-actor" data-label="المنفذ">{r.created_by_name||'غير مسجل'}</td>
+          <td className="account-movement-document">{r.file_url && <Button size="sm" onClick={()=>openReceipt(r.file_url)}>المستند</Button>}</td>
+        </tr>)}</tbody></table></div>
       {!statement.rows.length && <p>لا حركات في الاختيار الحالي.</p>}
-      <Button disabled={page<=1} onClick={()=>setPage(p=>p-1)}>السابق</Button> <span>{page} / {Math.max(1,Math.ceil(statement.rows.length/50))}</span> <Button disabled={page*50>=statement.rows.length} onClick={()=>setPage(p=>p+1)}>التالي</Button>
+      <div className="account-pagination"><Button disabled={page<=1} onClick={()=>setPage(p=>p-1)}>السابق</Button><span>{page} / {Math.max(1,Math.ceil(statement.rows.length/50))}</span><Button disabled={page*50>=statement.rows.length} onClick={()=>setPage(p=>p+1)}>التالي</Button></div>
     </>}
     </div></Panel>
   </div>
