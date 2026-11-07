@@ -5,7 +5,7 @@ import JournalEntryLink from '../components/JournalEntryLink.jsx'
 import JournalSummary from '../components/JournalSummary.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, ExternalLink, FileText, Info, NotebookText, Paperclip, PencilLine, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { uploadToStorage, getSignedUrl } from '../lib/storage'
@@ -281,7 +281,7 @@ function JournalLedgerPage({ unified, embedded }) {
     <div className="ldg-page jrl-page">
       <div className="ts-heading">
         <div>
-          {embedded ? <h2>العمليات</h2> : <h1>{unified ? 'سجل العمليات' : 'سجل الحركات اليومية'}</h1>}
+          {embedded ? <h2>العمليات</h2> : <><h1>{unified ? 'سجل العمليات' : 'سجل الحركات اليومية'}</h1><Link className="ts-btn" to="/suspense">الفروقات</Link></>}
           <p className="ldg-showing">
             <CalendarDays className="ts-icon--sm" aria-hidden="true" />
             <span>{rangeText}</span>

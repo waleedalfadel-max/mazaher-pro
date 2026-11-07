@@ -19,7 +19,7 @@ export function journalPostings(rows, { banks = [], suppliers = [], settings = {
   for (const row of rows) {
     const type = clean(row.type), issues = [], lines = [], desc = compactEntryDescription(row)
     const bank = labels.get('bank:' + row.bank_account_id) || banks.find(b => b.id === row.bank_account_id)?.name
-    const supplier = suppliers.find(s => s.id === row.supplier_id)?.name
+    const supplier = suppliers.find(s => row.supplier_id ? s.id === row.supplier_id : row.journal_number && s.journal_number === row.journal_number)?.name
     const bankEffect = cents(row.bank_in) || cents(row.bank_out)
     const payableEffect = cents(row.payable_in) || cents(row.payable_out)
     if (bankEffect && !bank) issues.push('الحساب البنكي غير محدد')
@@ -48,7 +48,8 @@ export function journalPostings(rows, { banks = [], suppliers = [], settings = {
       if (!transfers.has(key)) transfers.set(key, { rows: [], issues: [] })
       transfers.get(key).rows.push({ row, lines, desc }); transfers.get(key).issues.push(...issues); continue
     }
-    if (isBalanceStart(row.type)) issues.push('الحساب المقابل لتسوية البداية يحتاج مراجعة')
+    if (row.type === 'فروقات قيد المراجعة' && !vat && !cents(row.output_vat_amount)) lines.push(line('فروقات قيد المراجعة', -net, row))
+    else if (isBalanceStart(row.type)) issues.push('الحساب المقابل لتسوية البداية يحتاج مراجعة')
     else if (settlement) {
       if (net !== 0) issues.push('طرف السداد أو التحصيل غير مكتمل')
       if (vat) issues.push('ضريبة السداد تحتاج مراجعة')
