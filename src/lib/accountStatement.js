@@ -19,14 +19,21 @@ export function accountOptions(banks, settings) {
     { value: 'custody', label: cfg ? 'عهدة موظفين سابقة (إن وجدت)' : 'العهدة' }]
 }
 
-// A business can choose its statement menu independently of aggregate drill-downs.
-// Values remain the original account IDs; labels never select or combine balances.
+// Select real active accounts, using the business's names and order. Aggregate
+// drill-downs remain available by URL, but are not extra selectable accounts.
 export function statementAccountOptions(banks, settings) {
+  const accounts = banks || []
+  const actual = [{ value: 'cash', label: 'الصندوق' },
+    ...accounts.filter(a => a.is_active !== false).map(a => ({ value: `bank:${a.id}`, label: a.name || a.bank || 'حساب بنكي' })),
+    // Legacy businesses without named banks still have one recorded bank balance.
+    ...(!accounts.length ? [{ value: 'bank', label: 'البنك' }] : []),
+    ...(!accountDashboard(settings) ? [{ value: 'custody', label: 'العهدة' }] : [])]
   const configured = settings?.statement_accounts
-  if (!Array.isArray(configured) || !configured.length) return accountOptions(banks, settings)
-  const allowed = new Set(['cash', ...(banks || []).map(a => `bank:${a.id}`)]), seen = new Set()
-  return configured.filter(o => o && allowed.has(o.value) && typeof o.label === 'string' && o.label.trim()
+  if (!Array.isArray(configured) || !configured.length) return actual
+  const allowed = new Set(actual.map(a => a.value)), seen = new Set()
+  const named = configured.filter(o => o && allowed.has(o.value) && typeof o.label === 'string' && o.label.trim()
     && !seen.has(o.value) && seen.add(o.value)).map(o => ({ value: o.value, label: o.label.trim() }))
+  return [...named, ...actual.filter(a => !seen.has(a.value))]
 }
 
 const availableBank = (bank, settings) => bank && bank.is_active !== false && settings?.bank_workflow?.accounts?.[bank.id]?.operating_available !== false

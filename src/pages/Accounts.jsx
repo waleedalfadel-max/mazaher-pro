@@ -23,7 +23,8 @@ function AccountPage({ embedded }) {
   const [data, setData] = useState(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [exporting, setExporting] = useState(false)
   const [search, setSearch] = useState(''), [page, setPage] = useState(1)
   const seq = useRef(0)
-  const from = params.get('from') || '', to = params.get('to') || today(), key = params.get('account') || (params.get('section')==='liabilities' && data?.settings?.account_dashboard?.liability_account_id ? 'bank:'+data.settings.account_dashboard.liability_account_id : data?.settings?.statement_accounts?.length ? 'cash' : 'liquidity')
+  const options = statementAccountOptions(data?.banks, data?.settings)
+  const from = params.get('from') || '', to = params.get('to') || today(), key = params.get('account') || (params.get('section')==='liabilities' && data?.settings?.account_dashboard?.liability_account_id ? 'bank:'+data.settings.account_dashboard.liability_account_id : options[0]?.value || 'cash')
   const iso = v => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v
   const valid = iso(to) && (!from || iso(from) && from <= to)
   const set = (k,v) => { const next = new URLSearchParams(params); if (v) next.set(k,v); else next.delete(k); setParams(next); setPage(1) }
@@ -41,7 +42,6 @@ function AccountPage({ embedded }) {
     finally { if (n === seq.current) setLoading(false) }
   }
   useEffect(() => { if (projectId) load(); return () => { seq.current++ } }, [projectId, sessionEpoch])
-  const options = statementAccountOptions(data?.banks, data?.settings)
   // Existing links from balance cards still show their exact aggregate, without
   // adding that aggregate to the business's selectable account menu.
   const selected = options.find(o => o.value === key) || accountOptions(data?.banks, data?.settings).find(o => o.value === key)
