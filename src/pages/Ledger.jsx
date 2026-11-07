@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
 import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
 import EntryDescription from '../components/EntryDescription.jsx'
+import JournalEntryLink from '../components/JournalEntryLink.jsx'
 import { groupsCreditInvoices } from '../lib/businessPresentation.js'
 import BankTransferManage from '../components/BankTransferManage.jsx'
 import { BANK_TRANSFER_TYPE } from '../lib/paymentWorkflow.js'
@@ -469,7 +470,7 @@ export default function Ledger() {
                       {ACCOUNTS.map(a => <MoveCell key={a.key} r={r} acc={a.key} />)}
                       {ACCOUNTS.map(a => <BalCell key={a.key} v={r[a.bal]} k={a.bal} />)}
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
-                      <td>{iconActions(r)}</td>
+                      <td><JournalEntryLink entry={r}>عرض القيد</JournalEntryLink>{iconActions(r)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -498,7 +499,7 @@ export default function Ledger() {
                   <dl className="ldg-card-bals">
                     {ACCOUNTS.map(a => <div key={a.key} className={r[a.bal] != null && r[a.bal] < 0 ? 'is-neg' : ''}><dt>{balanceLabel(a)}</dt><dd className="ts-num">{fmtBal(r[a.bal])}</dd></div>)}
                   </dl>
-                  {actions(r)}
+                  <JournalEntryLink entry={r}>عرض القيد</JournalEntryLink>{actions(r)}
                 </article>
               )
             })}
