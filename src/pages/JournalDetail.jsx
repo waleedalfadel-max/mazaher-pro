@@ -44,7 +44,7 @@ function DetailPage({ projectId, entryId }) {
   const { projectName } = useAuth(), location = useLocation()
   const [detail, setDetail] = useState(null), [error, setError] = useState(''), [fileError, setFileError] = useState('')
   const [attempt, setAttempt] = useState(0), [printing, setPrinting] = useState(false)
-  const returnTo = /^\/(accounts|operations|ledger|journal|daily-journal)(\?|$)/.test(location.state?.returnTo || '') ? location.state.returnTo : '/operations'
+  const returnTo = /^\/(accounts|operations|ledger|journal|daily-journal|suspense)(\?|$)/.test(location.state?.returnTo || '') ? location.state.returnTo : '/operations'
   useEffect(() => {
     let active = true
     setDetail(null); setError(''); setFileError('')
@@ -81,6 +81,7 @@ function DetailPage({ projectId, entryId }) {
     {error ? <Note tone="error" action={<Button icon={RefreshCw} onClick={() => setAttempt(n => n + 1)}>إعادة المحاولة</Button>}>{error}</Note>
       : !detail ? <p role="status">جارٍ تحميل القيد…</p> : <>
         {fileError && <Note tone="error">{fileError}</Note>}
+        {detail.rows.filter(r=>['فروقات قيد المراجعة','تسوية مطابقة بنكية','فرق صندوق','فرق عهدة'].includes(r.type)).map(r=><Link key={r.id} className="ts-btn" to={`/suspense?entry=${r.id}`}>مراجعة الفرق</Link>)}
         <JournalDetailContent detail={detail} projectName={projectName} onOpenFile={openFile}/>
         {createPortal(<div className="journal-print-root"><JournalDetailContent detail={detail} projectName={projectName} printing/></div>, document.body)}
       </>}

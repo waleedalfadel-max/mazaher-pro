@@ -53,7 +53,7 @@ export function journalAccountMovements(row, { banks = [], suppliers = [], setti
   const labels = new Map((Array.isArray(settings.statement_accounts) ? settings.statement_accounts : [])
     .filter(a => a && typeof a.label === 'string' && a.label.trim()).map(a => [a.value, a.label.trim()]))
   const bankName = labels.get('bank:' + row.bank_account_id) || banks.find(b => b.id === row.bank_account_id)?.name || 'حساب بنكي غير محدد'
-  const supplier = suppliers.find(s => s.id === row.supplier_id)?.name
+  const supplier = suppliers.find(s => row.supplier_id ? s.id === row.supplier_id : row.journal_number && s.journal_number === row.journal_number)?.name
   const accounts = [
     ['cash', labels.get('cash') || 'الصندوق'], ['bank', bankName], ['custody', 'عهدة موظفين'],
     ['receivable', 'ذمم مدينة'], ['payable', supplier ? `مستحقات المورد — ${supplier}` : 'مستحقات الموردين'],

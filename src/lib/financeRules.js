@@ -21,6 +21,9 @@ const EXCLUDED_TYPES = [
   'تحويل داخلي — صرف عهدة',
   'تحويل داخلي — إيداع نقدي',
   'تحصيل ذمم',
+  'فروقات قيد المراجعة',
+  'حوالة واردة بالخطأ',
+  'رد حوالات واردة بالخطأ',
 ]
 
 export const WITHDRAWALS_TYPES = [
@@ -61,7 +64,7 @@ export function isTaxType(type) {
 
 export function isRealExpense(entry) {
   const type = entry.type || ''
-  if (isBalanceStart(type)) return false
+  if (isExcluded(type)) return false
   if (isWithdrawal(type)) return false
   if (isDebt(type))       return false
   if (isTaxType(type)) return false

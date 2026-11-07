@@ -75,6 +75,7 @@ function AppRoutes() {
         </ProtectedRoute>
       } />
 
+      <Route path="/suspense" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><FinancialRecord view="suspense" /></ProtectedRoute>} />
       <Route path="/accounts" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><FinancialRecord view="accounts" /></ProtectedRoute>} />
       <Route path="/journal-entry/:entryId" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><JournalDetail /></ProtectedRoute>} />
       <Route path="/daily-journal" element={<ProtectedRoute allowedRoles={['owner', 'accountant', 'superadmin']}><JournalDay /></ProtectedRoute>} />

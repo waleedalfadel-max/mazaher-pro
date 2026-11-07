@@ -17,7 +17,7 @@ function navItems(pendingCount) {
   return [
     { to: '/',                label: 'لوحة التحكم',      icon: House,        roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/accounts', label: 'كشف الحسابات', icon: Landmark, roles: ['owner', 'accountant', 'superadmin'], cond: name => !usesSimplifiedHome(name) },
-    { to: '/operations', label: 'السجل المالي', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesSimplifiedHome, alsoActive: ['/accounts'] },
+    { to: '/operations', label: 'السجل المالي', icon: NotebookText, roles: ['owner', 'accountant', 'superadmin'], cond: usesSimplifiedHome, alsoActive: ['/accounts', '/suspense'] },
     { to: '/reports',         label: 'التقارير',          icon: ChartColumn,  roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/analysis',        label: 'التحليل المالي',   icon: ChartLine,    roles: ['owner', 'accountant', 'superadmin'] },
     { to: '/suppliers',       label: 'الموردين',          icon: Store,        roles: ['accountant', 'owner', 'superadmin'], module: 'suppliers' },
