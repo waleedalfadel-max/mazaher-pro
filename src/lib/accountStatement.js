@@ -19,6 +19,16 @@ export function accountOptions(banks, settings) {
     { value: 'custody', label: cfg ? 'عهدة موظفين سابقة (إن وجدت)' : 'العهدة' }]
 }
 
+// A business can choose its statement menu independently of aggregate drill-downs.
+// Values remain the original account IDs; labels never select or combine balances.
+export function statementAccountOptions(banks, settings) {
+  const configured = settings?.statement_accounts
+  if (!Array.isArray(configured) || !configured.length) return accountOptions(banks, settings)
+  const allowed = new Set(['cash', ...(banks || []).map(a => `bank:${a.id}`)]), seen = new Set()
+  return configured.filter(o => o && allowed.has(o.value) && typeof o.label === 'string' && o.label.trim()
+    && !seen.has(o.value) && seen.add(o.value)).map(o => ({ value: o.value, label: o.label.trim() }))
+}
+
 const availableBank = (bank, settings) => bank && bank.is_active !== false && settings?.bank_workflow?.accounts?.[bank.id]?.operating_available !== false
 const scopedBanks = settings => !!accountDashboard(settings) || !!settings?.bank_workflow?.accounts || settings?.bank_workflow?.version === 1
 

@@ -3,8 +3,8 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { fetchEveryRow } from '../lib/fetchAll.js'
-import { accountDashboard, accountOptions, buildAccountStatement, liabilityFigures, accountHref, BALANCE_SCOPE } from '../lib/accountStatement.js'
-import { Button, Field, Input, Money, Note, Panel, Select } from '../ui/components.jsx'
+import { accountDashboard, accountOptions, statementAccountOptions, buildAccountStatement, liabilityFigures, accountHref, BALANCE_SCOPE } from '../lib/accountStatement.js'
+import { Button, Field, Input, Money, Note, Panel } from '../ui/components.jsx'
 import { formatDate } from '../ui/format.js'
 import { exportFileName, modelToXlsx } from '../lib/reportExport.js'
 import { downloadBlob } from '../lib/reportPdf.js'
@@ -22,7 +22,7 @@ function AccountPage({ embedded }) {
   const [data, setData] = useState(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [exporting, setExporting] = useState(false)
   const [search, setSearch] = useState(''), [page, setPage] = useState(1)
   const seq = useRef(0)
-  const from = params.get('from') || '', to = params.get('to') || today(), key = params.get('account') || (params.get('section')==='liabilities' && data?.settings?.account_dashboard?.liability_account_id ? 'bank:'+data.settings.account_dashboard.liability_account_id : 'liquidity')
+  const from = params.get('from') || '', to = params.get('to') || today(), key = params.get('account') || (params.get('section')==='liabilities' && data?.settings?.account_dashboard?.liability_account_id ? 'bank:'+data.settings.account_dashboard.liability_account_id : data?.settings?.statement_accounts?.length ? 'cash' : 'liquidity')
   const iso = v => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v
   const valid = iso(to) && (!from || iso(from) && from <= to)
   const set = (k,v) => { const next = new URLSearchParams(params); if (v) next.set(k,v); else next.delete(k); setParams(next); setPage(1) }
@@ -40,8 +40,10 @@ function AccountPage({ embedded }) {
     finally { if (n === seq.current) setLoading(false) }
   }
   useEffect(() => { if (projectId) load(); return () => { seq.current++ } }, [projectId, sessionEpoch])
-  const options = accountOptions(data?.banks, data?.settings)
-  const selected = options.find(o => o.value === key)
+  const options = statementAccountOptions(data?.banks, data?.settings)
+  // Existing links from balance cards still show their exact aggregate, without
+  // adding that aggregate to the business's selectable account menu.
+  const selected = options.find(o => o.value === key) || accountOptions(data?.banks, data?.settings).find(o => o.value === key)
   const statementEntries = useMemo(() => {
     if (!data || projectName !== 'تشورميك') return data?.entries
     return data.entries.map(row =>
@@ -80,7 +82,10 @@ function AccountPage({ embedded }) {
   }
   return <div className="rpt-page" data-k="accounts-page"><Panel title={embedded ? 'كشف حساب' : 'كشف الحسابات'} subtitle="كل حساب وحركاته ورصيده، للمنشأة كاملة؛ يشمل المعتمد والتلقائي فقط." action={<Button onClick={load} disabled={loading}>تحديث</Button>}>
     <div className="ts-panel-body"><div className="ts-form-grid">
-      <Field label="الحساب"><Select value={key} options={options} onChange={e=>set('account',e.target.value)} data-k="account-select" /></Field>
+      <Field label="الحساب"><select className="ts-input" value={key} onChange={e=>set('account',e.target.value)} data-k="account-select">
+        {selected && !options.some(o => o.value === key) && <option value={key} hidden>{selected.label}</option>}
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select></Field>
       <Field label="من تاريخ (اختياري)"><Input type="date" value={from} onChange={e=>set('from',e.target.value)} /></Field>
       <Field label="حتى تاريخ"><Input type="date" value={to} onChange={e=>set('to',e.target.value)} /></Field>
       <Field label="بحث بالبيان أو القيد أو المنفذ"><Input value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} /></Field>
