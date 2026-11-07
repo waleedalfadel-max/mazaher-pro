@@ -18,7 +18,7 @@
     if(!selected||!program)return;
     const months=Number(selected.value),setup=Number(program.setup_fee),fee=Number(program['price_'+months+'_months']);
     set('[data-period-label]',labels[months]);set('[data-summary-setup]',money(setup)+' ريال');set('[data-summary-subscription]',money(fee)+' ريال');set('[data-total]',money(Math.round((setup+fee)*100)/100)+' ريال');
-    order.href='https://store.safahat.app/program-tahseeb.html?months='+months;order.textContent='اطلب تحسيب — '+labels[months]+' ←';
+    order.href='https://store.safahat.app/checkout.html?program=tahseeb&months='+months;order.textContent='متابعة للدفع — التأسيس '+money(setup)+' ريال ←';
     summary.hidden=false;
   };
   periods.addEventListener('change',update);
@@ -46,3 +46,4 @@
   }
   loadPrices();
 })();
+
