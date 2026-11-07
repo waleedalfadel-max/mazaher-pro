@@ -1,3 +1,4 @@
+import { isInternalTransfer, normalizeInternalTransfer } from './internalTransfer.js'
 import { suggestSalesPaymentAccounts } from './salesPaymentAccounts.js'
 // Company-specific suggestions. They never approve a document or move money.
 import { eligibleBankAccounts, expensesAtProjectLevel, bankAccountLabel } from './branchSetup.js'
@@ -12,21 +13,23 @@ export const isAppCollection = inv => inv?.type === 'transfer' && /تحصيل ذ
 // A bank-to-bank transfer has two explicit bank accounts, never a separate cash/custody source.
 // Apply on every review path (including restored drafts), not just when its type is selected manually.
 export function bankTransferPayment(inv) {
+  if (isInternalTransfer(inv)) return normalizeInternalTransfer(inv)
   if (isBankTransfer(inv)) return { ...inv, paySource: 'bank', bankAccountId: '' }
   if (isCashBankInvoice(inv)) return { ...inv, paySource: cashBankDirection(inv.transType) === 'deposit' ? 'cash' : 'bank' }
   return inv
 }
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k)
-const PAYMENT_FIELDS = ['paySource', 'bankAccountId', 'bankAccounts', 'bankTransfer', 'salesBankRoutes']
+const PAYMENT_FIELDS = ['paySource', 'bankAccountId', 'bankAccounts', 'bankTransfer', 'internalTransfer', 'salesBankRoutes']
 
 export function paymentBranch(doc, inv, settings) {
-  return (inv?.type === 'expense' && expensesAtProjectLevel(settings)) || inv?.type === 'supplier_payment' || isBankTransfer(inv) || (paymentWorkflow(settings) && isAppCollection(inv))
+  return (inv?.type === 'expense' && expensesAtProjectLevel(settings)) || inv?.type === 'supplier_payment' || isInternalTransfer(inv) || isBankTransfer(inv) || (paymentWorkflow(settings) && isAppCollection(inv))
     ? null : (inv?.branch || doc?.branch || null)
 }
 
 export function paymentChoice(inv) {
+  inv = normalizeInternalTransfer(inv)
   return { type: inv.type, paymentMode: inv.paymentMode || null, transType: inv.transType || null,
-    ...Object.fromEntries(PAYMENT_FIELDS.filter(k => k !== 'salesBankRoutes' || own(inv, k)).map(k => [k, inv[k] ?? (['bankAccounts', 'bankTransfer'].includes(k) ? {} : '')])) }
+    ...Object.fromEntries(PAYMENT_FIELDS.filter(k => k !== 'salesBankRoutes' || own(inv, k)).map(k => [k, inv[k] ?? (['bankAccounts', 'bankTransfer', 'internalTransfer'].includes(k) ? {} : '')])) }
 }
 
 export function documentPaymentChoices(result, pendingIds = null) {
@@ -53,10 +56,12 @@ const uploaderText = u => (u.name ? `${u.name} (${u.roleLabel})` : u.roleLabel)
 
 export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null) {
   if (!inv) return inv
+  if (saved && isInternalTransfer(saved)) saved = normalizeInternalTransfer({ ...inv, ...saved })
+  inv = normalizeInternalTransfer(inv)
   if (saved && saved.type === inv.type && (saved.paymentMode || null) === (inv.paymentMode || null) && (inv.type !== 'transfer' || saved.transType === inv.transType)) {
     return bankTransferPayment({ ...inv, ...Object.fromEntries(PAYMENT_FIELDS.filter(k => own(saved, k)).map(k => [k, saved[k]])), _paymentSuggested: false })
   }
-  if (isBankTransfer(inv) || isCashBankInvoice(inv)) return bankTransferPayment(inv)
+  if (isInternalTransfer(inv) || isBankTransfer(inv) || isCashBankInvoice(inv)) return bankTransferPayment(inv)
   const policy = paymentWorkflow(settings)
   if (!policy || inv._paymentInitialized) return inv
   if (inv.type === 'sales' && !inv.branch && !doc?.branch) return inv
@@ -105,6 +110,7 @@ export function suggestDocumentPayments(result, doc, settings, accounts, saved =
 
 /** When a reviewer changes type/source/account, do not silently re-suggest on a later render. */
 export function reviewedPayment(inv, patch) {
+  if (patch.internalTransfer) inv = normalizeInternalTransfer(inv)
   const sourceChanged = own(patch, 'paySource') && patch.paySource !== inv?.paySource
   const changesPayment = Object.keys(patch).some(k => PAYMENT_FIELDS.includes(k) || ['type', 'paymentMode', 'transType'].includes(k))
   const next = { ...inv, ...patch, ...(changesPayment ? { _paymentInitialized: true } : {}) }

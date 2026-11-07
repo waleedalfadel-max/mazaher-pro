@@ -1,3 +1,7 @@
+import InternalTransferFields from '../components/InternalTransferFields.jsx'
+import InternalTransferManage from '../components/InternalTransferManage.jsx'
+import { INTERNAL_TRANSFER_TYPE, internalTransferTypes, internalTransferError } from '../lib/internalTransfer.js'
+import { approvalMessage, toHalalas } from '../lib/approvalV2.js'
 import { runningAccountBalances, accountDashboard, accountHref } from '../lib/accountStatement.js'
 import { Link, useNavigate } from 'react-router-dom'
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
@@ -17,7 +21,7 @@ import { fetchEveryRow } from '../lib/fetchAll'
 import { deleteSupplierPayment, isSupplierPaymentType, SUPPLIER_PAYMENT_EDIT_MSG, SUPPLIER_PAYMENT_ONLY_MSG } from '../lib/supplierPayments'
 import { Button, DateInput, Dialog, EmptyState, Field, IconButton, Input, Panel, Segment, Select, Status } from '../ui/components.jsx'
 import { formatDate, formatNumber, parseAmount } from '../ui/format.js'
-import { CASH_DEPOSIT, CASH_WITHDRAWAL, cashBankDirection, cashBankMovement, cashBankLabel } from '../lib/cashBankTransfer.js'
+import { cashBankDirection, cashBankMovement, cashBankLabel } from '../lib/cashBankTransfer.js'
 import { bankAccountLabel, chosenBankAccount, eligibleBankAccounts } from '../lib/branchSetup'
 
 // سجل الدفتر بالهوية الجديدة. الأرصدة الجارية والفلترة والحذف النهائي كما كانت حرفيًا؛ جدول بأعمدة مجمّعة على الكمبيوتر وبطاقات
@@ -123,13 +127,15 @@ const isManualShape = r => !r.document_id && !r.document_invoice_id && !r.file_u
 // نموذج الحركة (الإضافة والتعديل): الحقول نفسها كما كانت، والمبالغ مجمّعة حسب الحساب
 // الحساب البنكي (20261014140000): لمنشأة بحسابات، عند وجود مبلغ بنك. حساب وحيد متاح يُختار تلقائيًا (والخادم يفعل الشيء نفسه)
 const hasBankAmount = row => !!(parseAmount(row?.bank_in) || parseAmount(row?.bank_out))
-function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts = [] }) {
+function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts = [], settings, unified = false }) {
   const bankList = eligibleBankAccounts(accounts, row.branch || null)
+  const internal = unified && row.type === INTERNAL_TRANSFER_TYPE
   const direction = cashBankDirection(row.type)
-  const showBank = accounts.length > 0 && (direction || hasBankAmount(row))
+  const showBank = !internal && accounts.length > 0 && (direction || hasBankAmount(row))
   const amountKey = direction === 'deposit' ? 'cash_out' : 'bank_out'
   function changeType(type) {
     setRow(r => {
+      if (unified && (type === INTERNAL_TRANSFER_TYPE || internal)) return { ...r, type, ...Object.fromEntries(AMOUNT_KEYS.map(k => [k, ''])) }
       if (cashBankDirection(type)) return { ...r, type, ...cashBankMovement(type, direction ? r[amountKey] || '' : '') }
       return { ...r, type, ...(direction ? Object.fromEntries(AMOUNT_KEYS.map(key => [key, ''])) : {}) }
     })
@@ -143,13 +149,16 @@ function EntryForm({ row, setRow, types, placeholderDesc, errors = {}, accounts 
         </Field>
         <Field label="النوع">
           <Select value={row.type || ''} onChange={e => changeType(e.target.value)} placeholder="— اختر —"
-            options={types.map(t => ({ value: t, label: cashBankLabel(t) }))} />
+            options={(unified ? internalTransferTypes(types) : types).map(t => ({ value: t, label: t === INTERNAL_TRANSFER_TYPE ? 'تحويل داخلي' : cashBankLabel(t) }))} />
         </Field>
         <Field label="الوصف" span>
           <Input value={row.description || ''} placeholder={placeholderDesc} onChange={e => setRow(r => ({ ...r, description: e.target.value }))} />
         </Field>
       </div>
-      {direction ? <Field label="مبلغ التحويل" error={errors.transfer} hint={cashBankLabel(row.type)}>
+      {internal ? <div className="ts-form-grid">
+        <InternalTransferFields invoice={{ ...row, type: 'transfer', transType: INTERNAL_TRANSFER_TYPE }} accounts={accounts} settings={settings} onEdit={(k, v) => setRow(r => ({ ...r, [k]: v }))}/>
+        <Field label="مبلغ التحويل"><Input numeric value={row.amount || ''} placeholder="0.00" onChange={e => setRow(r => ({ ...r, amount: e.target.value }))}/></Field>
+      </div> : direction ? <Field label="مبلغ التحويل" error={errors.transfer} hint={cashBankLabel(row.type)}>
         <Input numeric value={row[amountKey] || ''} placeholder="0.00" onChange={e => { const value=e.target.value; setRow(r => ({ ...r, ...cashBankMovement(r.type, value) })) }} />
       </Field> : <div className="ldg-form-amounts">
         {ACCOUNTS.map(a => (
@@ -185,7 +194,7 @@ export default function Ledger() {
   // دفعات الموردين والتحويل بين الحسابين البنكيين تبقى بمساريهما في الخادم.
   const navigate = useNavigate()
   const canCorrect = canEdit && (role === 'accountant' || isSuperAdmin)
-  const docLocked = r => !!r?.document_invoice_id && !isSupplierPaymentType(r.type) && r.type !== BANK_TRANSFER_TYPE
+  const docLocked = r => !!r?.document_invoice_id && !isSupplierPaymentType(r.type) && r.type !== BANK_TRANSFER_TYPE && r.type !== INTERNAL_TRANSFER_TYPE
   const goCorrect = r => navigate(`/correct/${r.document_id}/${r.document_invoice_id}`)
   const compactInvoices = groupsCreditInvoices(projectName)
   const [allRows, setAllRows]       = useState([])
@@ -193,6 +202,7 @@ export default function Ledger() {
   const [types, setTypes]           = useState([])
   const [editRow, setEditRow]       = useState(null)
   const [bankTransferEdit, setBankTransferEdit] = useState(null)
+  const [internalTransferEdit, setInternalTransferEdit] = useState(null)
   const [activePeriod, setActivePeriod] = useState('month')
   const [filter, setFilter]         = useState({ ...getRange('month'), type: '' })
   const [newRow, setNewRow]           = useState(null)
@@ -318,6 +328,19 @@ export default function Ledger() {
     // التحقق قبل حجز رقم القيد: المدخل المرفوض لا يستهلك رقمًا ولا يرسل التاريخ السابق المخفي
     const v = validateEntry(newRow)
     if (!v.ok) return
+    if (newRow.type === INTERNAL_TRANSFER_TYPE) {
+      const error = internalTransferError({ ...newRow, type: 'transfer', transType: INTERNAL_TRANSFER_TYPE }, bankAccounts, balanceSettings)
+      const amount = toHalalas(newRow.amount)
+      if (error || !Number.isSafeInteger(amount) || amount <= 0) { setActionError(error || 'أدخل مبلغ تحويل موجبًا بمنزلتين عشريتين.'); return }
+      setSaving(true)
+      try {
+        const { data, error } = await supabase.rpc('internal_transfer_create', { p_request: newRow._requestId, p_date: newRow.date, p_amount: amount / 100,
+          p_from: newRow.internalTransfer.from, p_to: newRow.internalTransfer.to, p_description: newRow.description || '' })
+        if (error || !data?.ok) { setActionError(error ? reason(error) : approvalMessage(data)); return }
+        setNewRow(null); load(projectId)
+      } catch (e) { setActionError('تعذّر تأكيد الحفظ؛ أعد المحاولة للتحقق من الطلب نفسه. ' + reason(e)) } finally { setSaving(false) }
+      return
+    }
     // «سداد مورد» من «الموردين» وحدها (الخادم يرفضه هنا): لا يُحجز رقم قيد ولا يُرسل طلب
     if (isSupplierPaymentType(newRow.type)) { setActionError(SUPPLIER_PAYMENT_ONLY_MSG); return }
     const bankAccount = bankAccounts.length && hasBankAmount(newRow) ? chosenBankAccount(bankAccounts, null, newRow.bank_account_id) : ''
@@ -370,8 +393,8 @@ export default function Ledger() {
     ? (filter.from === filter.to ? formatDate(filter.from, { year: true }) : `${formatDate(filter.from, { year: filter.from.slice(0, 4) !== filter.to.slice(0, 4) })} – ${formatDate(filter.to, { year: true })}`)
     : 'كل التواريخ'
 
-  const openEdit = r => { setActionError(''); setTried(false); if (r.type === BANK_TRANSFER_TYPE) setBankTransferEdit({ id: r.document_invoice_id, action: 'update' }); else setEditRow({ ...r }) }
-  const askDelete = r => r.type === BANK_TRANSFER_TYPE ? setBankTransferEdit({ id: r.document_invoice_id, action: 'delete' }) : setDeleting(r)
+  const openEdit = r => { setActionError(''); setTried(false); if (r.type === INTERNAL_TRANSFER_TYPE) setInternalTransferEdit({ id: r.id, action: 'update' }); else if (r.type === BANK_TRANSFER_TYPE) setBankTransferEdit({ id: r.document_invoice_id, action: 'update' }); else setEditRow({ ...r }) }
+  const askDelete = r => r.type === INTERNAL_TRANSFER_TYPE ? setInternalTransferEdit({ id: r.id, action: 'delete' }) : r.type === BANK_TRANSFER_TYPE ? setBankTransferEdit({ id: r.document_invoice_id, action: 'delete' }) : setDeleting(r)
   const newCheck = newRow && tried ? validateEntry(newRow) : null
   const editCheck = editRow && tried ? validateEntry(editRow) : null
 
@@ -409,7 +432,6 @@ export default function Ledger() {
           </p>
         </div>
         {canEdit && <div className="flex gap-2">
-          {types.includes(CASH_WITHDRAWAL) && <Button disabled={loading || !!loadError} onClick={() => openNew(CASH_DEPOSIT)}>تحويل بين الصندوق والبنك</Button>}
           <Button variant="primary" icon={Plus} disabled={loading || !!loadError} onClick={() => openNew()}>إضافة قيد</Button>
         </div>}
       </div>
@@ -512,14 +534,15 @@ export default function Ledger() {
       )}
 
       {/* إضافة حركة */}
+      {internalTransferEdit && <InternalTransferManage entryId={internalTransferEdit.id} action={internalTransferEdit.action} accounts={bankAccounts} settings={balanceSettings} onClose={()=>setInternalTransferEdit(null)} onSaved={()=>load(projectId)}/>}
       {bankTransferEdit && <BankTransferManage invoiceId={bankTransferEdit.id} action={bankTransferEdit.action} accounts={bankAccounts} onClose={()=>setBankTransferEdit(null)} onSaved={()=>load(projectId)}/>}
       <Dialog open={!!newRow} onClose={() => !saving && setNewRow(null)} title="إضافة حركة جديدة"
-        description="تُسجَّل الحركة معتمدة برقم قيد جديد. أدخل المبلغ في خانة الحساب الذي تحرك."
+        description={newRow?.type === INTERNAL_TRANSFER_TYPE ? undefined : "تُسجَّل الحركة معتمدة برقم قيد جديد. أدخل المبلغ في خانة الحساب الذي تحرك."}
         footer={<>
           <Button variant="primary" disabled={saving || !newRow?.date || !newRow?.type} onClick={saveNew}>{saving ? 'جارٍ الحفظ…' : 'حفظ القيد'}</Button>
           <Button onClick={() => setNewRow(null)} disabled={saving}>رجوع</Button>
         </>}>
-        {newRow && <EntryForm row={newRow} setRow={setNewRow} types={types} placeholderDesc="اختياري" errors={newCheck?.errors} accounts={bankAccounts} />}
+        {newRow && <EntryForm row={newRow} setRow={setNewRow} unified settings={balanceSettings} types={types} placeholderDesc="اختياري" errors={newCheck?.errors} accounts={bankAccounts} />}
         {newCheck && !newCheck.ok && <p className="ts-field-error" role="alert" data-k="ledger.formError">{newCheck.summary}</p>}
         {newRow && actionError && <p className="ts-field-error" role="alert">{actionError}</p>}
       </Dialog>

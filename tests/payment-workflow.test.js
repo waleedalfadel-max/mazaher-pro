@@ -1,3 +1,4 @@
+import { INTERNAL_TRANSFER_TYPE } from '../src/lib/internalTransfer.js'
 import {isExcluded,isSales} from '../src/lib/financeRules.js'
 import {reportModel} from '../src/lib/reportExport.js'
 import {test} from 'node:test'
@@ -57,9 +58,10 @@ test('one sales report proposes separate accounts for network and customer trans
 test('app receipts settle receivables across company branches; other transfers never use uploader defaults',()=>{
  const app={type:'transfer',transType:'📥 تحصيل ذمم هنقر',amount:50}
  assert.equal(propose('owner',app).bankAccountId,'restricted');assert.equal(paymentBranch({branch:'North'},app,settings),null)
- for(const transType of ['تحصيل ذمم عميل','صرف عهدة'])assert.equal(propose('owner',{type:'transfer',transType}).bankAccountId,undefined)
+ assert.equal(propose('owner',{type:'transfer',transType:'تحصيل ذمم عميل'}).bankAccountId,undefined)
+ assert.equal(propose('owner',{type:'transfer',transType:'صرف عهدة'}).internalTransfer.from,'')
  // Bank-pair normalization deliberately clears the unused single-account field.
- assert.equal(propose('owner',{type:'transfer',transType:BANK_TRANSFER_TYPE}).bankAccountId,'')
+ assert.equal(propose('owner',{type:'transfer',transType:BANK_TRANSFER_TYPE}).bankAccountId,null)
 })
 test('loan outflows use uploader proposals but never synthesize principal confirmation',()=>{
  const inv={type:'transfer',transferPurpose:'loan_repayment',transType:'💳 قرض ١',amount:25,totalAmount:25,vatAmount:0}
@@ -79,7 +81,7 @@ test('liquidity retains signed restricted balances, excludes them and inactive/u
 test('internal transfer payload preserves both accounts even on an old expense-classified document',()=>{
  const inv=reviewedPayment({...expense,type:'transfer'},{transType:BANK_TRANSFER_TYPE,bankTransfer:{from:'main',to:'purchase'}})
  const p=buildInvoicePayload(inv,{categories:[],transTypes:[],purchaseCategory:'Old expense',original:expense})
- assert.equal(p.transType,BANK_TRANSFER_TYPE);assert.equal(p.paySource,'bank');assert.deepEqual(p.bankTransfer,{from:'main',to:'purchase'})
+ assert.equal(p.transType,INTERNAL_TRANSFER_TYPE);assert.equal(p.paySource,'bank');assert.deepEqual(p.internalTransfer,{from:'bank:main',to:'bank:purchase'})
 })
 
 test('pre-classified bank transfers derive their bank source on load, draft restore and payload preparation',()=>{
@@ -87,7 +89,7 @@ test('pre-classified bank transfers derive their bank source on load, draft rest
  for(const policy of [settings,{}])for(const paySource of [undefined,'','cash']) {
   const read={...inv,paySource,_paymentInitialized:true,bankAccountId:'old'}
   const next=suggestInvoicePayment(read,{},policy,accounts)
-  assert.equal(next.paySource,'bank');assert.equal(next.bankAccountId,'')
+  assert.equal(next.paySource,'bank');assert.equal(next.bankAccountId,null)
   assert.deepEqual(next.bankTransfer,inv.bankTransfer)
   const draft=suggestInvoicePayment(read,{},policy,accounts,{type:'transfer',transType:BANK_TRANSFER_TYPE,paySource:''})
   assert.equal(draft.paySource,'bank')

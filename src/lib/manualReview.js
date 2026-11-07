@@ -1,3 +1,4 @@
+import { isInternalTransfer } from './internalTransfer.js'
 import { fromHalalas, toHalalas, newRequestId } from './approvalV2.js'
 import { isLoanRepayment, hasLoanPrincipalConfirmation } from './loanRepayment.js'
 
@@ -20,6 +21,7 @@ export function manualInvoice(invoice, fields, categories) {
   if (!fields.confirmed) throw new Error('أكّد مراجعة الصورة والأرقام التي ستُسجَّل.')
   const next = { ...invoice, _id: invoice._id || newRequestId(), description: String(fields.description || '').trim(), date: fields.date }
   if (fields.bankAccountId !== undefined) next.bankAccountId = fields.bankAccountId
+  if (fields.internalTransfer !== undefined) next.internalTransfer = { ...fields.internalTransfer }
   if (fields.bankTransfer !== undefined) next.bankTransfer = { ...fields.bankTransfer }
   if (fields.bankAccounts !== undefined) next.bankAccounts = { ...fields.bankAccounts }
   // هوية مورد «آجل — باسم المورد» ثابتة من لحظة فتح المراجعة (fields.supplierName، وهو المعروض في النافذة): تعديل الوصف مستقل
@@ -50,7 +52,7 @@ export function manualInvoice(invoice, fields, categories) {
     for (const key of ['paymentLines', 'returnLines', 'salesRowsReview', 'salesBreakdown', 'reportTotalBeforeReturns', 'reportNetWithTax']) delete next[key]
   } else {
     const total = amount(fields.totalAmount, 'إجمالي المستند')
-    const vat = amount(fields.vatAmount, 'الضريبة', true)
+    const vat = isInternalTransfer(invoice) ? 0 : amount(fields.vatAmount, 'الضريبة', true)
     if (total <= 0) throw new Error('إجمالي المستند يجب أن يكون أكبر من صفر.')
     if (vat > total) throw new Error('الضريبة لا تتجاوز إجمالي المستند.')
     if (isLoanRepayment(invoice) && vat !== 0) throw new Error('افصل الرسوم وضريبتها عن مبلغ سداد أصل القرض قبل اعتماده.')
