@@ -1,3 +1,5 @@
+import InternalTransferFields from '../components/InternalTransferFields.jsx'
+import { INTERNAL_TRANSFER_TYPE, isInternalTransfer, internalTransferError, internalTransferTypes, normalizeInternalTransfer } from '../lib/internalTransfer.js'
 import { salesRouteRemainder } from '../lib/salesPaymentAccounts.js'
 import OwnerWithdrawalFields from '../components/OwnerWithdrawalFields.jsx'
 import { WITHDRAWAL_OPTION, isOwnerWithdrawal, toOwnerWithdrawal, fromOwnerWithdrawal, withdrawalBlockReason } from '../lib/ownerWithdrawal.js'
@@ -547,6 +549,7 @@ export default function PendingDocuments() {
 
   // اعتماد فاتورة واحدة — يرمي خطأ عند فشل أو dup
   async function _approveOne(doc, res, forceNew) {
+    if (isInternalTransfer(res)) throw new Error('يحتاج التحويل الداخلي إلى مسار الاعتماد المحدّث للمنشأة.')
     // مصروفات على مستوى المنشأة (إعداد expenses_scope): قيد المصروف بلا فرع ولو رُفع المستند من مستخدم فرع (والخادم يفعل الشيء نفسه في الاعتماد الجديد)
     const expenseBranch = expensesAtProjectLevel(projectSettings) ? null : (doc.branch || null)
     const pid        = doc.project_id || pidRef.current
@@ -950,6 +953,10 @@ export default function PendingDocuments() {
     if (target !== 'all') invs = invs.filter(x => x._id === target)
     if (!invs.length) return
     for (const inv of invs) {
+      if (isInternalTransfer(inv)) {
+        const issue = internalTransferError(inv, bankAccounts, projectSettings), amount = toHalalas(inv.totalAmount ?? inv.amount)
+        if (issue || !Number.isSafeInteger(amount) || amount <= 0) { updateDoc(doc.id, { _state: doc._state, _error: issue || 'أدخل مبلغ تحويل موجبًا بمنزلتين عشريتين.' }); return }
+      }
       const loanReason = withdrawalBlockReason(inv, docTransTypes) || loanBlockReason(inv, docTransTypes)
       if (loanReason) { updateDoc(doc.id, { _state: doc._state, _v2Error: { code: 'loan_incomplete', reason: loanReason, invoice_id: inv._id } }); return }
       if (inv.type === 'expense' && inv.items?.length) {
@@ -1529,6 +1536,7 @@ const typeChange = (inv, v) => {
   if (v === WITHDRAWAL_OPTION.value) return isOwnerWithdrawal(inv) ? null : toOwnerWithdrawal(inv)
   if (v === LOAN_OPTION.value) return isLoanRepayment(inv) ? null : toLoanRepayment(inv)
   if (v === RECEIPT_TYPE) return isReceipt(inv) ? null : toReceipt(inv)
+  if (v === 'transfer') return normalizeInternalTransfer({ ...(isOwnerWithdrawal(inv) ? fromOwnerWithdrawal(inv, v) : isLoanRepayment(inv) ? fromLoanRepayment(inv, v) : isReceipt(inv) ? fromReceipt(inv, v) : inv), type: 'transfer', transType: INTERNAL_TRANSFER_TYPE, transferPurpose: undefined, internalTransfer: { from: '', to: '' }, paySource: '', items: [], vatAmount: 0 })
   if (isOwnerWithdrawal(inv)) return fromOwnerWithdrawal(inv, v)
   if (isLoanRepayment(inv)) return fromLoanRepayment(inv, v)
   return isReceipt(inv) ? fromReceipt(inv, v) : undefined
@@ -1549,9 +1557,9 @@ const SALES_CHANNELS = [
   { key: 'keeta',         label: 'كيتا' },
   { key: 'mrsool',        label: 'مرسول' },
 ]
-const accountTransTypes = (types, setup) => types.filter(t => !accountDashboard(setup?.settings) || !t.includes('صرف عهدة'))
+const accountTransTypes = types => internalTransferTypes(types)
 function HistoricalCustodyNote({invoice,setup}) {
-  return accountDashboard(setup?.settings) && (invoice?.paySource==='custody' || invoice?.transType?.includes('صرف عهدة')) ? <Note tone="warning">هذه القراءة تستخدم عهدة الموظف السابقة، وليست حساب العهدة البنكي. لتمويل حساب العهدة اختر تحويلًا بين الحسابات البنكية، ولشراء مدفوع منه اختر البنك وحساب العهدة.</Note> : null
+  return !isInternalTransfer(invoice) && accountDashboard(setup?.settings) && (invoice?.paySource==='custody' || invoice?.transType?.includes('صرف عهدة')) ? <Note tone="warning">هذه القراءة تستخدم عهدة الموظف السابقة، وليست حساب العهدة البنكي. لتمويل حساب العهدة اختر تحويلًا بين الحسابات البنكية، ولشراء مدفوع منه اختر البنك وحساب العهدة.</Note> : null
 }
 const TRANSFER_KINDS = t => t.includes('صرف عهدة') || t.includes('تحصيل ذمم') || t.includes('إيداع نقدي') || t.includes('تحويل داخلي')
 const blankItem = () => ({ description: '', amount: '', category_main: '', category_sub: '' })
@@ -1564,7 +1572,7 @@ const Num = React.forwardRef(function Num({ onChange, value, ...props }, ref) {
 })
 
 function catOptions(list, current) {
-  const opts = list.map(n => ({ value: n, label: cashBankLabel(n) }))
+  const opts = list.map(n => ({ value: n, label: n === INTERNAL_TRANSFER_TYPE ? 'تحويل داخلي' : cashBankLabel(n) }))
   return current && !list.includes(current) ? [{ value: current, label: current }, ...opts] : opts
 }
 
@@ -1572,6 +1580,7 @@ function catOptions(list, current) {
 const BANK_CHANNELS = [{ k: 'network', field: 'networkSales', label: 'الشبكة' }, { k: 'transfer', field: 'transferSales', label: 'التحويل' }]
 function BankAccountField({ invoice, branch, setup, onEdit }) {
   const accounts = setup?.bankAccounts || []
+  if (isInternalTransfer(invoice)) return <InternalTransferFields invoice={invoice} accounts={accounts} settings={setup?.settings} onEdit={onEdit}/>
   if (isBankTransfer(invoice)) return <BankTransferFields invoice={invoice} accounts={accounts} settings={setup?.settings} onEdit={onEdit}/>
   branch = paymentBranch({ branch }, invoice, setup?.settings)
   if (!accounts.length || !needsBankAccount(invoice)) return null
@@ -2013,7 +2022,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
   useEffect(() => { setManualIndex(null) }, [doc.analysis_result?._readingId])
   const rawRes        = doc._edit || doc.analysis_result
   const isMultiInvoice = rawRes?.invoices?.length > 1
-  const res           = isMultiInvoice ? null : (rawRes?.invoices?.[0] ?? rawRes)
+  const res           = isMultiInvoice ? null : normalizeInternalTransfer(rawRes?.invoices?.[0] ?? rawRes)
   const busy          = ['analyzing','approving','rejecting','rereading'].includes(doc._state)
   const analyzed      = doc.status === 'analyzed' || doc._state === 'analyzed'
   // إعادة القراءة ممنوعة متى حُسمت فاتورة من الصورة (اعتُمدت أو استُبعدت)؛ والخادم يرفضها أيضًا
@@ -2030,7 +2039,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
   // "نوع المستند = تحويل" مخصص فقط للتحويلات الداخلية الحقيقية — قصر خيارات "التصنيف الأساسي"
   // على الأنواع التحويلية فقط، مع الحفاظ على أي قيمة محفوظة سابقاً حتى لو لم تعد ضمن الفلتر
   const isTransferDoc      = res?.type === 'transfer'
-  const filteredTransTypes = isTransferDoc ? [...new Set([...accountTransTypes(transTypes,setup).filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : accountTransTypes(transTypes,setup)
+  const filteredTransTypes = isTransferDoc ? accountTransTypes(transTypes,setup).filter(TRANSFER_KINDS) : accountTransTypes(transTypes,setup)
 
   // مقارنة على الأساس نفسه (src/lib/documentTotals.js): البنود شاملة الضريبة مع الإجمالي الشامل،
   // والبنود المقروءة قبل الضريبة تُميَّز عن البند الناقص بدل أن تُعرض نقصًا بقيمة الضريبة
@@ -2233,7 +2242,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
       })()}
       {analyzed && isMultiInvoice && (
         <Panel title={`${plural(rawRes.invoices.length, 'فاتورة واحدة', 'فاتورتان', 'فواتير', 'فاتورة')} في هذه الصورة`} icon={Layers} subtitle="افتح كل فاتورة لتعديلها. تُعتمد كلها معًا، أو كل فاتورة وحدها.">
-          {expensesAtProjectLevel(setup?.settings) && doc._branchEditable && branches.length > 0 && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
+          {expensesAtProjectLevel(setup?.settings) && doc._branchEditable && branches.length > 0 && !isInternalTransfer(res) && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
             <div className="rp-section ts-form-grid">
               <Field label="الفرع" hint="للمبيعات والتحويلات في الصورة؛ المصروفات تُسجَّل على مستوى المنشأة.">
                 <Select value={doc.branch || ''} placeholder="— اختر الفرع —" onChange={e => onBranchChange(e.target.value)}
@@ -2293,13 +2302,13 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                   <Input value={res.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} />
                 </Field>
               )}
-              {doc._branchEditable && branches.length > 0 && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
+              {doc._branchEditable && branches.length > 0 && !isInternalTransfer(res) && !documentExpensesAtProjectLevel(setup?.settings, rawRes) && (
                 <Field label="الفرع">
                   <Select value={doc.branch || ''} placeholder="— اختر الفرع —" onChange={e => onBranchChange(e.target.value)}
                     options={branches.map(b => ({ value: b, label: b }))} />
                 </Field>
               )}
-              {!isSales && !isBankTransfer(res) && !isCashBankInvoice(res) && (
+              {!isSales && !isInternalTransfer(res) && !isBankTransfer(res) && !isCashBankInvoice(res) && (
                 <Field label="مصدر الدفع" error={vErr.missingPay ? 'مطلوب' : undefined} hint={isLoan ? 'المصدر الذي خرج منه مبلغ السداد.' : 'يحدد الرصيد الذي ينقص، أو دينًا على المورد.'}>
                   <Select value={res.paySource || ''} placeholder="— اختر —" data-k="pay-source" onChange={e => { onEdit('paySource', e.target.value); onClearValidation() }}
                     options={isWithdrawal ? paymentOptions(setup,res.paySource).filter(o => ['bank','cash'].includes(o.value)) : isLoan ? paymentOptions(setup,res.paySource).filter(o => o.value !== 'payable') : [...paymentOptions(setup,res.paySource), ...(suppliers.length > 0 ? [{ value: 'credit', label: 'آجل — مورد من القائمة' }] : []),
@@ -2317,7 +2326,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                   <Input value={supplierName} placeholder="اسم المورد" onChange={e => onSupplierNameChange(e.target.value)} />
                 </Field>
               )}
-              {!isSales && <BankAccountField invoice={res} branch={res?.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : doc.branch} setup={setup} onEdit={onEdit} />}
+              {!isSales && !isInternalTransfer(res) && <BankAccountField invoice={res} branch={res?.type === 'expense' && expensesAtProjectLevel(setup?.settings) ? null : doc.branch} setup={setup} onEdit={onEdit} />}
               {/* الاعتماد الجديد: التصنيف على البند نفسه (من قائمة التصنيفات)، ولو كان بندًا واحدًا؛ نوع القيد ومعالجته منه */}
               {!isSales && !isLoan && !isWithdrawal && !(isExpenseItems && (itemCount > 1 || isV2)) && (
                 <Field label={<>التصنيف الأساسي{doc._aiSuggestedType && res.transType ? <span className="rp-ai-tag">اقتراح القراءة</span> : null}</>}
@@ -2326,7 +2335,8 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                     options={catOptions(filteredTransTypes, res.transType)} />
                 </Field>
               )}
-              {!isSales && !isLoan && !isWithdrawal && !isExpenseItems && (
+              {isInternalTransfer(res) && <BankAccountField invoice={res} setup={setup} onEdit={onEdit} />}
+              {!isSales && !isLoan && !isWithdrawal && !isInternalTransfer(res) && !isExpenseItems && (
                 <Field label="التصنيف الفرعي">
                   {subCats.length > 0
                     ? <Select value={resolvedSub} placeholder="— اختر الفئة الفرعية —" onChange={e => onEdit('category_sub', e.target.value)}
@@ -2369,9 +2379,9 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                 <Field label="المبلغ">
                   <Num value={res.totalAmount ?? res.amount ?? ''} onChange={e => onEdit(res.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)} />
                 </Field>
-                <Field label="ضريبة القيمة المضافة">
+                {!isInternalTransfer(res) && <Field label="ضريبة القيمة المضافة">
                   <Num value={res.vatAmount || ''} onChange={e => onEdit('vatAmount', e.target.value)} />
-                </Field>
+                </Field>}
               </div>
             </div>
           )}
@@ -2409,6 +2419,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
 // ── InvoiceSubPanel — فاتورة واحدة ضمن صورة فيها عدة فواتير ─────────────────
 // صفحة تصحيح الفاتورة المعتمدة (CorrectInvoice.jsx) تستعمل المحرر نفسه بزر حفظ التصحيح ومفتوحًا
 export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup, branch, onEdit, onReplace, readOnly, onApprove, onManualApprove, onReject, approving, blocked, v2, decision, suppliers = [], payableSuppliers = [], documentId, history, receiptContext, onReceiptContext, serverDuplicate, approveLabel = 'اعتماد هذه الفاتورة وحدها', defaultOpen = false }) {
+  invoice = normalizeInternalTransfer(invoice)
   const decided = decision && decision.status !== 'pending'
   if (decided) return (
     <div className="rp-subinv rp-subinv--decided">
@@ -2428,7 +2439,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
   const isMultiItem  = (invoice.items?.length || 0) > 1
   const isFutureDate = invoice.date && invoice.date > fmtDate(new Date())
   const isTransferDoc      = invoice.type === 'transfer'
-  const filteredTransTypes = isTransferDoc ? [...new Set([...accountTransTypes(transTypes,setup).filter(TRANSFER_KINDS), ...(paymentWorkflow(setup?.settings) ? [BANK_TRANSFER_TYPE] : [])])] : accountTransTypes(transTypes,setup)
+  const filteredTransTypes = isTransferDoc ? accountTransTypes(transTypes,setup).filter(TRANSFER_KINDS) : accountTransTypes(transTypes,setup)
   const totalDisp = isSales
     ? SALES_CHANNELS.reduce((t, c) => t + (Number(invoice[c.key]) || 0), 0)
     : Number(invoice.totalAmount || invoice.amount) || 0
@@ -2480,7 +2491,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
           {v2 && !isSales && (
             <Field label="رقم الفاتورة"><Input value={invoice.invoiceNumber || ''} dir="ltr" onChange={e => onEdit('invoiceNumber', e.target.value)} /></Field>
           )}
-          {!isSales && !isBankTransfer(invoice) && !isCashBankInvoice(invoice) && (
+          {!isSales && !isInternalTransfer(invoice) && !isBankTransfer(invoice) && !isCashBankInvoice(invoice) && (
             <Field label="مصدر الدفع" error={payError ? 'مطلوب' : undefined}>
               <Select value={invoice.paySource || ''} placeholder="— اختر —" data-k={`pay-source-${index}`} onChange={e => { onEdit('paySource', e.target.value); setPayError(false) }}
                 options={payOptions} />
@@ -2510,7 +2521,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
               <Num value={invoice.totalAmount ?? invoice.amount ?? ''} onChange={e => onEdit(invoice.totalAmount != null ? 'totalAmount' : 'amount', e.target.value)} />
             </Field>
           )}
-          {!isSales && !isLoan && !isWithdrawal && !isMultiItem && (
+          {!isSales && !isLoan && !isWithdrawal && (!isMultiItem || isInternalTransfer(invoice)) && (
             <Field label="التصنيف الأساسي">
               <Select value={invoice.transType || ''} placeholder="— اختر —" onChange={e => onEdit('transType', e.target.value)}
                 options={catOptions(filteredTransTypes, isTransferDoc ? invoice.transType : '')} />
@@ -2525,7 +2536,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
         {isLoan && <LoanRepaymentFields settings={setup?.settings} invoice={invoice} transTypes={transTypes} readOnly={readOnly}
           onPatch={patch => onReplace?.({ ...invoice, ...patch })} />}
         {isSales && <SalesReading invoice={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} />}
-        {!isSales && !isLoan && !isWithdrawal && (
+        {!isSales && !isLoan && !isWithdrawal && !isInternalTransfer(invoice) && (
           <div className="rp-subinv-items">
             <h4>البنود <span className="ts-num">{items.length}</span></h4>
             {v2 && invoice.type === 'expense' && <ExpenseBasis invoice={invoice} onEdit={onEdit} readOnly={readOnly} />}
@@ -2544,7 +2555,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
             {why && <span className="rp-action-why" data-k={`invoice-blocked-${index}`}><Info className="ts-icon--sm" aria-hidden="true" />{why}</span>}
             {onApprove && (
               <Button size="sm" icon={Check} disabled={approving || !!why} onClick={() => {
-                if (invoice.type === 'transfer' && !invoice.paySource && !isCashBankInvoice(invoice)) { setPayError(true); return }
+                if (invoice.type === 'transfer' && !invoice.paySource && !isInternalTransfer(invoice) && !isCashBankInvoice(invoice)) { setPayError(true); return }
                 setPayError(false)
                 onApprove()
               }}>{approveLabel}</Button>

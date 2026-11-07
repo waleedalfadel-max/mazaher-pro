@@ -185,7 +185,7 @@ export function balanceAfter(balance, inv) {
 
 /** سجل الإيصال (history من الخادم) بجملة: الدفعة المرتبطة حُذفت فعاد الإيصال للمراجعة. */
 export function receiptHistoryNote(history) {
-  const bank = Array.isArray(history) ? [...history].reverse().find(h => h?.action === 'bank_transfer_deleted') : null
+  const bank = Array.isArray(history) ? [...history].reverse().find(h => ['bank_transfer_deleted','internal_transfer_deleted'].includes(h?.action)) : null
   if (bank) return `عاد التحويل للمراجعة بعد حذف طرفيه من القيد ${bank.journal_number || ''}. السبب: ${bank.reason || '—'}. البيانات الظاهرة هي التي أكدها المراجع؛ القراءة الأصلية محفوظة.`
   const last = Array.isArray(history) ? [...history].reverse().find(h => h?.event === 'payment_deleted') : null
   if (!last) return null

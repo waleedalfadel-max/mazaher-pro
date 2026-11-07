@@ -91,7 +91,7 @@ test('manual loan review changes amount/description without changing chosen loan
 })
 test('expense document choice still applies to expenses; a transfer selection always wins over it',()=>{
   assert.equal(payload(original).transType,types[0])
-  assert.equal(payload({...original,type:'transfer',transType:types.at(-1)}).transType,types.at(-1))
+  assert.equal(payload({...original,type:'transfer',transType:types.at(-1)}).transType,'🔄 تحويل داخلي')
 })
 
 test('review #20: selecting a loan and accepting the read total is insufficient without explicit principal confirmation',()=>{

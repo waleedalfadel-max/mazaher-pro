@@ -24,6 +24,6 @@ test('cash and bank directions match the two statements without classifying a tr
 test('a reviewed cash transfer derives its source from the direction and keeps the chosen bank', () => {
   const row={type:'transfer',transType:CASH_DEPOSIT,bankAccountId:'b',paySource:'custody'}
   assert.equal(bankTransferPayment(row).paySource,'cash')
-  assert.deepEqual(reviewedPayment(row,{transType:CASH_WITHDRAWAL}),{...row,transType:CASH_WITHDRAWAL,paySource:'bank',_paymentInitialized:true,_paymentSuggested:false})
+  assert.deepEqual(reviewedPayment(row,{transType:CASH_WITHDRAWAL}),{...row,transType:'🔄 تحويل داخلي',bankAccountId:null,internalTransfer:{from:'bank:b',to:'cash'},paySource:'bank',_paymentInitialized:true,_paymentSuggested:false})
   assert.equal(cashBankMovement(CASH_WITHDRAWAL,10).cash_in,10)
 })

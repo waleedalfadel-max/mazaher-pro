@@ -1,3 +1,5 @@
+import InternalTransferManage from '../components/InternalTransferManage.jsx'
+import { INTERNAL_TRANSFER_TYPE } from '../lib/internalTransfer.js'
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
 import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
 import EntryDescription from '../components/EntryDescription.jsx'
@@ -163,7 +165,7 @@ function JournalLedgerPage({ unified, embedded }) {
   const navigate = useNavigate()
   const canCorrect = canEdit && (role === 'accountant' || isSuperAdmin)
   const docLocked = r => !!r?.document_invoice_id && !isSupplierPaymentType(r.type)
-  const goCorrect = r => navigate(`/correct/${r.document_id}/${r.document_invoice_id}`)
+  const goCorrect = r => r.type === INTERNAL_TRANSFER_TYPE ? setTransferEdit({ id: r.id, action: 'update' }) : navigate(`/correct/${r.document_id}/${r.document_invoice_id}`)
   const [rows, setRows]                 = useState([])
   const [loading, setLoading]           = useState(true)
   const [loadError, setLoadError]       = useState('')
@@ -173,6 +175,8 @@ function JournalLedgerPage({ unified, embedded }) {
   const [attachCounts, setAttachCounts] = useState({})   // journal_number → count
   const [modalEntry, setModalEntry]     = useState(null)
   const [deleting, setDeleting]         = useState(null)
+  const [transferEdit, setTransferEdit] = useState(null)
+  const askDelete = r => r.type === INTERNAL_TRANSFER_TYPE ? setTransferEdit({ id: r.id, action: 'delete' }) : setDeleting(r)
   const [busy, setBusy]                 = useState(false)
   const [actionError, setActionError]   = useState('')
   const [banks, setBanks] = useState([])
@@ -183,7 +187,7 @@ function JournalLedgerPage({ unified, embedded }) {
   const [view, setView] = useState(unified ? 'days' : 'list')
   const loadSeq = useRef(0)
 
-  useEffect(() => { setAccount('all'); setEntryType(''); setSearch(''); setModalEntry(null); setDeleting(null); setRows([]); setBanks([]); if (projectId) load(projectId, filter) }, [projectId])
+  useEffect(() => { setAccount('all'); setEntryType(''); setSearch(''); setModalEntry(null); setDeleting(null); setTransferEdit(null); setRows([]); setBanks([]); if (projectId) load(projectId, filter) }, [projectId])
 
   // القيود والمستندات والمرفقات كاملة؛ أي فشل ← رسالة بلا صفوف. نتيجة أقدم من آخر طلب تُهمل.
   async function load(pid, f) {
@@ -193,7 +197,7 @@ function JournalLedgerPage({ unified, embedded }) {
     const entries = await loadPeriodEntries(supabase, { projectId: pidOk, from: f.from, to: f.to, columns: COLUMNS, dateAscending: true })
     const [counts, accounts] = entries.error ? [null, null] : await Promise.all([
       loadAttachmentCounts(supabase, { projectId: pidOk, journalNumbers: entries.data.map(r => r.journal_number) }),
-      unified ? loadJournalAccounts(supabase, pidOk, entries.data) : Promise.resolve({ data: { banks: [], settings: {}, suppliers: [] }, error: null }),
+      (unified || entries.data.some(r => r.type === INTERNAL_TRANSFER_TYPE)) ? loadJournalAccounts(supabase, pidOk, entries.data) : Promise.resolve({ data: { banks: [], settings: {}, suppliers: [] }, error: null }),
     ])
     if (seq !== loadSeq.current) return
     const failed = entries.error ? entries : counts.error ? counts : accounts.error ? { error: accounts.error, part: 'الحسابات' } : null
@@ -354,7 +358,7 @@ function JournalLedgerPage({ unified, embedded }) {
                       <td data-k="jn" className="jrl-jn ts-num"><JournalEntryLink entry={r}>{jnLabel(r, idx)}</JournalEntryLink></td>
                       <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
                       <td data-k="type" className="ldg-type" title={r.type || ''}>{cleanLabel(r.type) || '—'}</td>
-                      <td data-k="desc" className="ldg-desc"><EntryDescription row={r}/><CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/></td>
+                      <td data-k="desc" className="ldg-desc"><EntryDescription row={r}/><CreditInvoiceSummary row={r} onDelete={canEdit ? askDelete : undefined} onCorrect={canCorrect ? goCorrect : undefined}/></td>
                       <td data-k="debit" className="ts-end ldg-move">{shownDebit(r) !== 0 ? <span className="is-in ts-num">{fmt(shownDebit(r))}</span> : <span className="ldg-nil">—</span>}</td>
                       <td data-k="credit" className="ts-end ldg-move">{shownCredit(r) !== 0 ? <span className="is-out ts-num">{fmt(shownCredit(r))}</span> : <span className="ldg-nil">—</span>}</td>
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
@@ -362,7 +366,7 @@ function JournalLedgerPage({ unified, embedded }) {
                       <td data-k="att" className="jrl-c" data-count={attachCounts[r.journal_number] || 0}>{attButton(r)}</td>
                       {canEdit && (
                         <td>{!r._creditRows && r.status !== 'cancelled' && (docLocked(r) ? (canCorrect && <IconButton bare label="تصحيح الفاتورة" icon={PencilLine} data-k="jl-correct" onClick={() => goCorrect(r)} />)
-                          : <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); setDeleting(r) }} />)}</td>
+                          : <IconButton bare label="حذف" icon={Trash2} className="ldg-del" onClick={() => { setActionError(''); askDelete(r) }} />)}</td>
                       )}
                     </tr>
                   ))}
@@ -381,7 +385,7 @@ function JournalLedgerPage({ unified, embedded }) {
                   <Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status>
                 </div>
                 <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
-                {r.description && <div className="ldg-card-desc"><EntryDescription row={r}/></div>}<CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/>
+                {r.description && <div className="ldg-card-desc"><EntryDescription row={r}/></div>}<CreditInvoiceSummary row={r} onDelete={canEdit ? askDelete : undefined} onCorrect={canCorrect ? goCorrect : undefined}/>
                 <dl className="ldg-card-moves">
                   <div className="is-in"><dt>داخل</dt><dd className="ts-num">{fmt(shownDebit(r))}</dd></div>
                   <div className="is-out"><dt>خارج</dt><dd className="ts-num">{fmt(shownCredit(r))}</dd></div>
@@ -390,7 +394,7 @@ function JournalLedgerPage({ unified, embedded }) {
                   {r.file_url && <Button size="sm" variant="quiet" icon={FileText} onClick={() => openFile(r.file_url)}>المستند</Button>}
                   {canAttachOf(r) && <Button size="sm" variant="quiet" icon={Paperclip} onClick={() => setModalEntry(r)}>المرفقات ({attachCounts[r.journal_number] || 0})</Button>}
                   {canEdit && !r._creditRows && r.status !== 'cancelled' && (docLocked(r) ? (canCorrect && <Button size="sm" variant="quiet" icon={PencilLine} onClick={() => goCorrect(r)}>تصحيح الفاتورة</Button>)
-                    : <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); setDeleting(r) }}>حذف</Button>)}
+                    : <Button size="sm" variant="quiet" className="ldg-del" icon={Trash2} onClick={() => { setActionError(''); askDelete(r) }}>حذف</Button>)}
                 </div>
               </article>
             ))}
@@ -403,6 +407,7 @@ function JournalLedgerPage({ unified, embedded }) {
         <AttachDialog readOnly={unified && !canEdit} entry={modalEntry} projectId={projectId} role={role} onClose={() => setModalEntry(null)} onChanged={() => load(projectId, filter)} />
       )}
 
+      {transferEdit && <InternalTransferManage entryId={transferEdit.id} action={transferEdit.action} accounts={banks} settings={settings} onClose={()=>setTransferEdit(null)} onSaved={()=>load(projectId,filter)}/>}
       {/* تأكيد الحذف (الحذف نفسه كما كان: نهائي) */}
       <Dialog open={!!deleting} onClose={() => !busy && setDeleting(null)} title="حذف الحركة نهائيًا؟"
         description={deleting && isSupplierPaymentType(deleting.type) ? 'تُحذف دفعة المورد كاملة مع جميع أجزائها من الحسابات، ويعود إيصالها للمراجعة.' : 'يُحذف الصف من الدفتر ولا يمكن التراجع عن هذا الإجراء.'}

@@ -1,3 +1,4 @@
+import { isInternalTransfer, internalTransferError } from './internalTransfer.js'
 import { isOwnerWithdrawal, withdrawalBlockReason } from './ownerWithdrawal.js'
 import { categoryChoice } from './categoryLinks.js'
 // الاعتماد الجديد (v2): العمليات كلها في الخادم (دوال approval_* في قاعدة البيانات، معاملة واحدة لكل اعتماد).
@@ -136,7 +137,7 @@ const FIELD_LABEL = { description: 'المورد أو الوصف', date: 'الت
   totalSales: 'إجمالي التقرير المطبوع', reportedSalesVat: 'ضريبة المبيعات المطبوعة',
   // إيصال سداد مورد (20261020120000)
   beneficiary: 'المستفيد', reference: 'مرجع العملية', supplierKind: 'قائمة المورد', supplierId: 'المورد', paymentMode: 'طريقة الاعتماد',
-  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', salesBankRoutes: 'حسابات وسائل الدفع', bankTransfer: 'حسابا التحويل الداخلي', splitPayment: 'تقسيم السداد', paymentAllocations: 'مبالغ السداد وحساباتها' }
+  linkJournal: 'الدفعة المربوطة', newPaymentReason: 'سبب أنها دفعة أخرى', linkReason: 'سبب إرفاق مستند آخر بالدفعة', bankAccountId: 'الحساب البنكي', bankAccounts: 'حسابات قنوات المبيعات', salesBankRoutes: 'حسابات وسائل الدفع', bankTransfer: 'حسابا التحويل الداخلي', internalTransfer: 'حسابا التحويل الداخلي', splitPayment: 'تقسيم السداد', paymentAllocations: 'مبالغ السداد وحساباتها' }
 const fieldText = v => Array.isArray(v) ? JSON.stringify(v) : v && typeof v === 'object' ? JSON.stringify(v, Object.keys(v).sort()) : String(v ?? '')
 const same = (a, b) => fieldText(a) === fieldText(b)
 
@@ -175,6 +176,13 @@ export function reviewChanges(original, final) {
  */
 export function buildInvoicePayload(inv, { original, categories, transTypes, purchaseCategory, supplierId }) {
   inv = validExpenseReviews(bankTransferPayment(inv))   // تأكيد سقط بتغيير لاحق لا يُرسل
+  const internal = isInternalTransfer(inv)
+  if (internal) {
+    const error = internalTransferError(inv)
+    if (error) throw new Error(error)
+    const amount = toHalalas(inv.totalAmount ?? inv.amount)
+    if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('أدخل مبلغ تحويل موجبًا بمنزلتين عشريتين.')
+  }
   const withdrawal = isOwnerWithdrawal(inv)
   if (withdrawal) { const reason = withdrawalBlockReason(inv, transTypes); if (reason) throw new Error(reason) }
   const loan = isLoanRepayment(inv)
@@ -206,7 +214,7 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
     const tax = toHalalas(inv.reportedSalesVat)
     if (!Number.isNaN(tax) && tax != null) payload.reportedSalesVat = tax / 100
   }
-  if (loan || withdrawal) {
+  if (loan || withdrawal || internal) {
     // The server's transfer path reads amount first: send exactly the visible amount, even for an older saved draft.
     payload.amount = fromHalalas(toHalalas(loanAmount(inv)))
     payload.totalAmount = payload.amount
@@ -378,6 +386,13 @@ export function approvalMessage(res) {
     link_required: 'اختر الدفعة المسجلة التي يخصها الإيصال.',
     payment_mode_required: 'اختر: تسجيل دفعة جديدة، أو ربط بدفعة مسجلة.',
     payment_deleted: `الدفعة ${d.journal_number || ''} المسجلة من هذا الإيصال حُذفت من «سجل الدفتر» بعد اعتماده، فعاد الإيصال بانتظار الاعتماد. حُدّثت الصفحة؛ راجعه ثم اعتمده من جديد إن كان صحيحًا.`,
+    amount_invalid: 'أدخل مبلغًا موجبًا بمنزلتين عشريتين وتاريخًا صحيحًا.',
+    internal_transfer_pair_required: 'سجّل التحويل من خيار «تحويل داخلي».',
+    internal_transfer_accounts: 'اختر حسابين مختلفين للتحويل.',
+    internal_transfer_custody: 'اختر حساب المشتريات البنكي من القائمة بدل عهدة الموظفين السابقة.',
+    internal_transfer_pair_edit: 'عدّل التحويل كاملًا من سجل الدفتر.',
+    request_conflict: 'تغيّرت بيانات طلب سبق حفظه. حدّث الصفحة للتحقق من التحويل.',
+    request_deleted: 'سبق حذف هذا التحويل. افتح نموذجًا جديدًا.',
     bank_transfer_accounts: 'اختر حسابين بنكيين مختلفين: حساب الخروج وحساب الدخول.',
     bank_transfer_pair_edit: 'عدّل التحويل بين الحسابين من حواره؛ يجب حفظ طرفيه معًا.',
     bank_transfer_pair_required: 'سجّل التحويل من مستند التحويل ليُنشأ طرفاه معًا.',

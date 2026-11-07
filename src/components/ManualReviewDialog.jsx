@@ -1,3 +1,5 @@
+import InternalTransferFields from './InternalTransferFields.jsx'
+import { isInternalTransfer, internalTransferError } from '../lib/internalTransfer.js'
 import BankTransferFields from './BankTransferFields.jsx'
 import { isBankTransfer, paymentBranch } from '../lib/paymentWorkflow.js'
 import { useState } from 'react'
@@ -35,7 +37,10 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
     let result
     try {
       let values = fields
-      if (isBankTransfer(invoice)) {
+      if (isInternalTransfer(invoice)) {
+        const error = internalTransferError(values, banks, setup?.settings)
+        if (error) throw new Error(error)
+      } else if (isBankTransfer(invoice)) {
         const pair = fields.bankTransfer || {}
         if (!pair.from || !pair.to || pair.from === pair.to || ![pair.from, pair.to].every(id => accounts.some(a => a.id === id))) throw new Error('اختر حسابين بنكيين مختلفين للتحويل.')
       } else if (bankNeeded && banks.length) {
@@ -74,8 +79,8 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
           <Input inputMode="decimal" dir="ltr" value={fields[key] ?? ''} onChange={e => edit(key, e.target.value)} />
         </Field>) : <>
           {loan && <Field label="القرض / القسط"><strong data-k="manual-loan-type">{invoice.transType || 'غير محدد — اختره في المستند'}</strong></Field>}
-          <Field label={loan ? 'مبلغ سداد أصل القرض المعتمد' : 'الإجمالي المعتمد شامل الضريبة'}><Input inputMode="decimal" dir="ltr" value={fields.totalAmount} onChange={e => edit('totalAmount', e.target.value)} /></Field>
-          <Field label="الضريبة ضمن الإجمالي"><Input inputMode="decimal" dir="ltr" value={fields.vatAmount} onChange={e => edit('vatAmount', e.target.value)} /></Field>
+          <Field label={isInternalTransfer(invoice) ? 'مبلغ التحويل' : loan ? 'مبلغ سداد أصل القرض المعتمد' : 'الإجمالي المعتمد شامل الضريبة'}><Input inputMode="decimal" dir="ltr" value={fields.totalAmount} onChange={e => edit('totalAmount', e.target.value)} /></Field>
+          {!isInternalTransfer(invoice) && <Field label="الضريبة ضمن الإجمالي"><Input inputMode="decimal" dir="ltr" value={fields.vatAmount} onChange={e => edit('vatAmount', e.target.value)} /></Field>}
         </>}
         {sales && <Field label="صافي الإغلاق المطبوع بعد المرتجعات" hint="انقله من التقرير شامل الضريبة.">
           <Input inputMode="decimal" dir="ltr" value={fields.printedNet} onChange={e => edit('printedNet', e.target.value)} />
@@ -87,8 +92,9 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
           <Field label="التصنيف الفرعي"><Select value={fields.subcategoryId} placeholder="— بدون فرعي —" onChange={e => edit('subcategoryId', e.target.value)}
             options={children.map(c => ({ value: c.id, label: c.name }))} /></Field>
         </>}
-        {isBankTransfer(invoice) && <BankTransferFields invoice={fields} accounts={banks} settings={setup?.settings} onEdit={edit}/>}
-        {!isBankTransfer(invoice) && bankNeeded && !!banks.length && (sales ? bankChannels.map(([, channel, label]) =>
+        {isInternalTransfer(invoice) && <InternalTransferFields invoice={fields} accounts={banks} settings={setup?.settings} onEdit={edit}/>}
+        {!isInternalTransfer(invoice) && isBankTransfer(invoice) && <BankTransferFields invoice={fields} accounts={banks} settings={setup?.settings} onEdit={edit}/>}
+        {!isInternalTransfer(invoice) && !isBankTransfer(invoice) && bankNeeded && !!banks.length && (sales ? bankChannels.map(([, channel, label]) =>
           <Field key={channel} label={`حساب ${label}`}><Select
             value={chosenBankAccount(banks, accountBranch, salesChannelAccount(fields, channel))}
             placeholder="— اختر الحساب —" options={accounts.map(a => ({ value: a.id, label: bankAccountLabel(a) }))}
@@ -98,7 +104,7 @@ export default function ManualReviewDialog({ invoice, categories, setup, branch,
             onChange={e => edit('bankAccountId', e.target.value)} /></Field>)}
         <Field label="ملاحظة المراجعة اليدوية" span><Textarea rows={2} value={fields.reason} onChange={e => edit('reason', e.target.value)} placeholder="مثال: راجعت الصورة، والقراءة كررت تفاصيل الصنف." /></Field>
       </div>
-      {sales ? <p>مجموع صافي القنوات <Money value={sum} />{Number.isFinite(printed) && !netMatches && <> · الفرق عن الإغلاق <Money value={sum - printed / 100} /></>}</p> : <p data-k="manual-pay">مصدر الدفع: {pay[invoice.paySource] || 'يُحدد في المستند'}{['credit', 'payable'].includes(invoice.paySource) ? <> — المورد: <strong>{supplierName || 'غير محدد'}</strong></> : null}. المورد ومصدر الدفع كما اخترتهما في الفاتورة؛ لتغييرهما ارجع إلى حقولها.</p>}
+      {sales ? <p>مجموع صافي القنوات <Money value={sum} />{Number.isFinite(printed) && !netMatches && <> · الفرق عن الإغلاق <Money value={sum - printed / 100} /></>}</p> : !isInternalTransfer(invoice) && <p data-k="manual-pay">مصدر الدفع: {pay[invoice.paySource] || 'يُحدد في المستند'}{['credit', 'payable'].includes(invoice.paySource) ? <> — المورد: <strong>{supplierName || 'غير محدد'}</strong></> : null}. المورد ومصدر الدفع كما اخترتهما في الفاتورة؛ لتغييرهما ارجع إلى حقولها.</p>}
       {loan && <label className="ts-check"><input type="checkbox" data-k="manual-loan-principal-confirmed" checked={hasLoanPrincipalConfirmation(fields)}
         onChange={e => { const checked = e.target.checked; setFields(f => ({ ...f, loanPrincipalConfirmation: loanPrincipalConfirmation(f, checked), confirmed: false })) }} />
         {LOAN_CONFIRMATION_LABEL}
