@@ -3,7 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { fetchEveryRow } from '../lib/fetchAll.js'
-import { accountDashboard, accountOptions, statementAccountOptions, buildAccountStatement, liabilityFigures, accountHref, BALANCE_SCOPE } from '../lib/accountStatement.js'
+import { accountOptions, statementAccountOptions, buildAccountStatement, liabilityFigures, accountHref, BALANCE_SCOPE } from '../lib/accountStatement.js'
 import { Button, Field, Input, Money, Note, Panel } from '../ui/components.jsx'
 import { formatDate } from '../ui/format.js'
 import { exportFileName, modelToXlsx } from '../lib/reportExport.js'
@@ -102,13 +102,5 @@ function AccountPage({ embedded }) {
       <Button disabled={page<=1} onClick={()=>setPage(p=>p-1)}>السابق</Button> <span>{page} / {Math.max(1,Math.ceil(statement.rows.length/50))}</span> <Button disabled={page*50>=statement.rows.length} onClick={()=>setPage(p=>p+1)}>التالي</Button>
     </>}
     </div></Panel>
-    {data && accountDashboard(data.settings) && <Panel title="الالتزامات الأخرى وحساب السداد"><div className="ts-panel-body">
-      <p>الرصيد المرجعي للالتزام: {liabilities.baseline ? <><Money value={liabilities.baseline.balance}/> — يشمل الحركات حتى {liabilities.baseline.date} — المصدر: {liabilities.baseline.reference}</> : 'غير محدد؛ أدخل الإجمالي وتاريخه ومصدره من إعدادات إدارة تحسيب.'}</p>
-      <p>الإيداعات الموجّهة لحساب السداد {liabilities.baseline ? 'بعد نقطة البداية' : 'من بداية التسجيل'}: <Money value={liabilities.directed}/></p>
-      <p data-k="liability-remaining">رصيد الالتزام المتبقي: {liabilities.signedRemaining == null ? 'غير محدد' : <Money value={liabilities.signedRemaining}/>}</p>
-      <Note>{liabilities.confirmed ? 'السالب هو الالتزام المتبقي. وفق آلية الخصم الآلي المؤكدة، كل إيداع معتمد بعد نقطة البداية يقلّل الالتزام حتى الصفر. الرصيد المرجعي يشمل الحركات السابقة فلا تُخصم مرة أخرى. لا يُنشئ هذا العرض قيود سداد أو مصروفات.' : 'الإيداع وحده ليس إثبات سداد. لا يُخصم من الالتزام دون تأكيد آلية الخصم الآلي أو تحديث الرصيد المرجعي.'}</Note>
-      {liabilities.excess > 0 && <p>إيداعات تتجاوز رصيد الالتزام: <Money value={liabilities.excess}/>؛ تحتاج مراجعة.</p>}
-      {liabilities.accountId && <Link to={accountHref('bank:'+liabilities.accountId,to,from)}>عرض حركات حساب السداد</Link>}
-    </div></Panel>}
   </div>
 }
