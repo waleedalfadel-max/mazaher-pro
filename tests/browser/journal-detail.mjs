@@ -54,7 +54,7 @@ try {
 
   await page.getByText('المستندات والتفاصيل', { exact: true }).click()
   assert.equal(await page.locator('#root .journal-operation').count(), 0, 'no operation cards')
-  assert.deepEqual(await page.locator('#root .accounting-journal thead th').allTextContents(), ['الحساب', 'البيان', 'مدين', 'دائن'])
+  assert.deepEqual(await page.locator('#root .accounting-journal thead th').allTextContents(), ['الحساب والبيان', 'مدين', 'دائن'])
   await page.getByRole('button', { name: 'طباعة القيد', exact: true }).click()
   assert.equal(await page.evaluate(() => window.printCalls), 1)
   await page.emulateMedia({ media: 'print' })
