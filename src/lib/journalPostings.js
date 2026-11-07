@@ -1,7 +1,8 @@
 import { cents } from './accountStatement.js'
-import { isSales, isCounted, isCOGSEntry, isWithdrawal, isBalanceStart, salesVatOf } from './financeRules.js'
+import { isSales, isCounted, isCOGSEntry, isWithdrawal, isDebt, isBalanceStart, salesVatOf } from './financeRules.js'
 import { isSupplierPaymentType } from './supplierPayments.js'
 import { compactEntryDescription } from './entryDescription.js'
+import { loanKey, loanDisplayLabel } from './loanBalances.js'
 
 const clean = s => String(s || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
 const sum = lines => lines.reduce((n, l) => n + l.debit - l.credit, 0)
@@ -53,6 +54,19 @@ export function journalPostings(rows, { banks = [], suppliers = [], settings = {
     else if (settlement) {
       if (net !== 0) issues.push('طرف السداد أو التحصيل غير مكتمل')
       if (vat) issues.push('ضريبة السداد تحتاج مراجعة')
+    } else if (isDebt(row.type)) {
+      // Use the same explicitly recorded loan as the loans page. A type alone
+      // does not establish a liability, and mixed/unknown payments stay flagged.
+      const key = loanKey(row.type), config = settings.loan_balances
+      const matches = key && config?.version === 1 && Array.isArray(config.items)
+        ? config.items.filter(loan => loan?.key === key) : []
+      if (matches.length !== 1) issues.push('القرض المرتبط بالقسط غير محدد')
+      if (net >= 0 || vat || cents(row.output_vat_amount)
+        || ['cash_out', 'bank_out', 'custody_out'].some(k => cents(row[k]) < 0)
+        || ['cash_in', 'bank_in', 'custody_in', 'receivable_in', 'receivable_out', 'payable_in', 'payable_out'].some(k => cents(row[k]))) {
+        issues.push('توزيع مبلغ القسط يحتاج مراجعة')
+      }
+      if (!issues.length) lines.push(line(clean(loanDisplayLabel(row.type, settings)), -net, row))
     } else if (isSales(row.type)) {
       const explicit = row.output_vat_amount != null
       let outputVat = explicit ? cents(row.output_vat_amount) : 0
