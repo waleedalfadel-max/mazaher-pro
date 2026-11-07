@@ -62,6 +62,30 @@ test('pending/cancelled do not enter posted totals; source remains unchanged', (
   const before = structuredClone(rows), p = journalPostings(rows, context)
   assert.equal(p.debit, 30); assert.equal(p.credit, 30); assert.equal(p.complete, true); assert.deepEqual(rows, before)
 })
+test('recorded loan repayment debits its named liability and credits the funding accounts without expense or VAT', () => {
+  const ctx = { ...context, settings: { ...context.settings, loan_balances: { version: 1, items: [
+    { key: 'car', label: 'قرض المركبة', date: '2026-11-01', balance: 18000, paid_at_baseline: 2000 },
+    { key: 'loan1', label: 'قرض التجهيز', date: '2026-11-01', balance: 12000, paid_at_baseline: 1000 },
+  ] } } }
+  const row = { type: '💳 قسط سيارة', bank_out: 1150.25, bank_account_id: 'main', total_amount: 1150.25 }
+  const before = structuredClone({ row, ctx })
+  assert.deepEqual(lines(posting(row, ctx)), [['قرض المركبة', 115025, 0], ['الراجحي الرئيسي', 0, 115025]])
+  assert.equal(posting(row, ctx).complete, true)
+  assert.deepEqual(lines(posting({ ...row, type: 'قرض 1', cash_out: 150.25, bank_out: 1000 }, ctx)), [
+    ['قرض التجهيز', 115025, 0], ['الصندوق', 0, 15025], ['الراجحي الرئيسي', 0, 100000],
+  ])
+  for (const changed of [{ bank_account_id: null }, { vat_amount: 15 }, { output_vat_amount: 15 },
+    { bank_in: 10 }, { payable_out: 50 }, { cash_out: -10 }, { bank_out: 0, bank_in: 1150.25 }]) {
+    assert.equal(posting({ ...row, ...changed }, ctx).complete, false)
+  }
+  for (const config of [undefined, { version: 2, items: ctx.settings.loan_balances.items },
+    { version: 1, items: [] }, { version: 1, items: [ctx.settings.loan_balances.items[0], ctx.settings.loan_balances.items[0]] }]) {
+    const p = posting(row, { ...ctx, settings: { ...ctx.settings, loan_balances: config } })
+    assert.equal(p.complete, false)
+    assert.ok(p.segments[0].issues.includes('القرض المرتبط بالقسط غير محدد'))
+  }
+  assert.deepEqual({ row, ctx }, before)
+})
 test('account lookup includes both supplier lists, paginates and fails closed with tenant scope', async () => {
   const tables = journalFixture(), log = []
   tables.payable_suppliers = [{ id: 'ps1', project_id: 'p1', name: 'مورد آجل' }, { id: 'foreign', project_id: 'p2', name: 'secret' }]
