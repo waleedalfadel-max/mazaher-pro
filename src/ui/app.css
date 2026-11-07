@@ -379,6 +379,11 @@ button.rp-upload-open:hover strong { color: var(--ts-petrol-text); text-decorati
 .ldg-table th.ldg-acc { text-align: center; border-inline-start: 1px solid var(--ts-line); }
 .ldg-table th.ldg-bal-head { background: #EEF5F4; }
 .ldg-table td.ldg-desc { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.entry-description { display: block; max-inline-size: 220px; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; text-align: start; }
+.entry-description--button { padding: 0; border: 0; background: none; color: inherit; font: inherit; line-height: 1.6; cursor: pointer; }
+.entry-description--button:hover { color: var(--ts-petrol); text-decoration: underline; }
+.entry-description--button:focus-visible { outline: 2px solid var(--ts-petrol); outline-offset: 3px; }
+.entry-description-full { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
 .ldg-table td.ldg-type { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .ldg-table tbody tr:hover td { background: #F8FAF9; }
 .ldg-amt.is-out { color: var(--ts-danger); }

@@ -1,5 +1,6 @@
 import { groupCreditInvoices } from '../lib/creditInvoicePresentation.js'
 import CreditInvoiceSummary from '../components/CreditInvoiceSummary.jsx'
+import EntryDescription from '../components/EntryDescription.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Download, ExternalLink, FileText, Info, NotebookText, Paperclip, PencilLine, Plus, RefreshCw, Trash2, Upload } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -337,7 +338,7 @@ export default function JournalLedger({ unified = false, embedded = false }) {
             <div className="ts-panel-body">
               <Button size="sm" icon={Download} disabled={!!exporting} onClick={() => exportDay(group)}>تصدير اليوم PDF</Button>
               <p className="ts-field-hint">{group.rows.length} حركة · حسب الفلاتر الحالية</p>
-              <ul className="sup-txns">{group.rows.map(r => <li key={r.id}><div><strong>{r.journal_number || '—'} · {cleanLabel(r.type)}</strong><p>{r.description}</p><CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/><small>{fmt(shownDebit(r))} وارد · {fmt(shownCredit(r))} صادر</small></div><div>{docButton(r)}{attButton(r)}{canEdit && !r._creditRows && <IconButton bare label="حذف الحركة" icon={Trash2} onClick={() => setDeleting(r)} />}</div></li>)}</ul>
+              <ul className="sup-txns">{group.rows.map(r => <li key={r.id}><div><strong>{r.journal_number || '—'} · {cleanLabel(r.type)}</strong><EntryDescription row={r}/><CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/><small>{fmt(shownDebit(r))} وارد · {fmt(shownCredit(r))} صادر</small></div><div>{docButton(r)}{attButton(r)}{canEdit && !r._creditRows && <IconButton bare label="حذف الحركة" icon={Trash2} onClick={() => setDeleting(r)} />}</div></li>)}</ul>
             </div>
           </Panel>)}</div>}
           {(!unified || view === 'list') && <>
@@ -362,7 +363,7 @@ export default function JournalLedger({ unified = false, embedded = false }) {
                       <td data-k="jn" className="jrl-jn ts-num">{jnLabel(r, idx)}</td>
                       <td data-k="date" data-iso={r.date || ''} className="ldg-date">{day(r.date)}</td>
                       <td data-k="type" className="ldg-type" title={r.type || ''}>{cleanLabel(r.type) || '—'}</td>
-                      <td data-k="desc" className="ldg-desc" title={r.description || ''}>{r.description || '—'}<CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/></td>
+                      <td data-k="desc" className="ldg-desc"><EntryDescription row={r}/><CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/></td>
                       <td data-k="debit" className="ts-end ldg-move">{shownDebit(r) > 0 ? <span className="is-in ts-num">{fmt(shownDebit(r))}</span> : <span className="ldg-nil">—</span>}</td>
                       <td data-k="credit" className="ts-end ldg-move">{shownCredit(r) > 0 ? <span className="is-out ts-num">{fmt(shownCredit(r))}</span> : <span className="ldg-nil">—</span>}</td>
                       <td data-k="status"><Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status></td>
@@ -389,7 +390,7 @@ export default function JournalLedger({ unified = false, embedded = false }) {
                   <Status tone={STATUS_TONE[r.status] || 'neutral'}>{STATUS_LABEL[r.status] || r.status}</Status>
                 </div>
                 <div className="ldg-card-type">{cleanLabel(r.type) || '—'}</div>
-                {r.description && <div className="ldg-card-desc">{r.description}</div>}<CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/>
+                {r.description && <div className="ldg-card-desc"><EntryDescription row={r}/></div>}<CreditInvoiceSummary row={r} onDelete={canEdit ? setDeleting : undefined} onCorrect={canCorrect ? goCorrect : undefined}/>
                 <dl className="ldg-card-moves">
                   <div className="is-in"><dt>مدين</dt><dd className="ts-num">{fmt(shownDebit(r))}</dd></div>
                   <div className="is-out"><dt>دائن</dt><dd className="ts-num">{fmt(shownCredit(r))}</dd></div>

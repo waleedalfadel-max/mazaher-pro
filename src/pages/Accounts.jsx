@@ -9,6 +9,7 @@ import { formatDate } from '../ui/format.js'
 import { exportFileName, modelToXlsx } from '../lib/reportExport.js'
 import { downloadBlob } from '../lib/reportPdf.js'
 import { getSignedUrl } from '../lib/storage.js'
+import EntryDescription from '../components/EntryDescription.jsx'
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
 export default function Accounts({ embedded = false }) {
@@ -91,7 +92,7 @@ function AccountPage({ embedded }) {
       <Button disabled={exporting} onClick={()=>exportAs('xlsx')}>Excel</Button> <Button disabled={exporting} onClick={()=>exportAs('pdf')}>PDF</Button>
       {search && <p>البحث يرشّح الصفوف فقط؛ الرصيد والملخص يشملان كل حركات الفترة.</p>}
       <div className="rpt-table-wrap"><table className="rpt-table" data-k="account-movements"><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>داخل</th><th>خارج</th><th>الرصيد</th><th>المنفذ</th><th>المستند</th></tr></thead>
-        <tbody>{statement.rows.slice((page-1)*50,page*50).map(r=><tr key={r.id}><td>{formatDate(r.date,{year:true})}</td><td>{r.journal_number||'—'}</td><td>{r.description||r.type}</td><td><Money value={r.incoming}/></td><td><Money value={r.outgoing}/></td><td><Money value={r.balance}/></td><td>{r.created_by_name||'غير مسجل'}</td><td>{r.file_url && <Button size="sm" onClick={()=>openReceipt(r.file_url)}>عرض</Button>}</td></tr>)}</tbody></table></div>
+        <tbody>{statement.rows.slice((page-1)*50,page*50).map(r=><tr key={r.id}><td>{formatDate(r.date,{year:true})}</td><td>{r.journal_number||'—'}</td><td><EntryDescription row={r}/></td><td><Money value={r.incoming}/></td><td><Money value={r.outgoing}/></td><td><Money value={r.balance}/></td><td>{r.created_by_name||'غير مسجل'}</td><td>{r.file_url && <Button size="sm" onClick={()=>openReceipt(r.file_url)}>عرض</Button>}</td></tr>)}</tbody></table></div>
       {!statement.rows.length && <p>لا حركات في الاختيار الحالي.</p>}
       <Button disabled={page<=1} onClick={()=>setPage(p=>p-1)}>السابق</Button> <span>{page} / {Math.max(1,Math.ceil(statement.rows.length/50))}</span> <Button disabled={page*50>=statement.rows.length} onClick={()=>setPage(p=>p+1)}>التالي</Button>
     </>}
