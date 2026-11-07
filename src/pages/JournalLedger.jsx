@@ -294,11 +294,11 @@ function JournalLedgerPage({ unified, embedded }) {
       <Panel className="ldg-filters jx-filters" title="الفترة والبحث" icon={CalendarDays}>
         <div className="ts-panel-body ldg-filter-body">
           <Segment label="الفترة" value={activePeriod} onChange={choosePeriod} options={QUICK_PERIODS} />
-          {unified && <details className="journal-extra-filters"><summary>خيارات العرض والتصفية</summary><div className="ts-form-grid">
+          {unified && <div className="journal-extra-filters" role="group" aria-label="خيارات العرض والتصفية"><div className="ts-form-grid">
             <Field label="الحساب"><Select value={account} onChange={e => setAccount(e.target.value)} options={[{value:'all',label:'جميع الحسابات'}, ...statementAccountOptions(banks, settings)]} /></Field>
             <Field label="نوع العملية"><Select value={entryType} onChange={e => setEntryType(e.target.value)} options={[{value:'',label:'كل الأنواع'}, ...[...new Set(rows.map(r => r.type).filter(Boolean))].sort().map(v => ({value:v,label:cleanLabel(v)}))]} /></Field>
-            <Segment label="طريقة العرض" value={view} onChange={setView} options={[{value:'days',label:'قيود محاسبية'},{value:'list',label:'حركات الحسابات'}]} />
-          </div></details>}
+            <div className="ts-field"><span className="ts-field-label">طريقة العرض</span><Segment label="طريقة العرض" value={view} onChange={setView} options={[{value:'days',label:'قيود محاسبية'},{value:'list',label:'حركات الحسابات'}]} /></div>
+          </div></div>}
           <div className="ldg-filter-row jx-filter-row">
             <Field label="من"><DateInput value={filter.from} onChange={iso => setDate('from', iso)} /></Field>
             <Field label="إلى"><DateInput value={filter.to} onChange={iso => setDate('to', iso)} /></Field>

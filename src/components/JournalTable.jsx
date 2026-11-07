@@ -25,6 +25,6 @@ export default function JournalTable({ groups, context = {}, printing = false, s
 function Rows({ row, lines, issues, cancelled, showStatus }) {
   if (cancelled) return <tr className="aj-cancelled" data-entry-id={row.id}><td colSpan={4}>ملغى — {row.type || 'حركة مالية'}</td></tr>
   return <>{showStatus && status[row.status] && <tr className="aj-reference"><td colSpan={4}>{status[row.status]}</td></tr>}{lines.map((l, i) => <tr key={i} data-entry-id={row.id} className={i === 0 ? 'aj-first' : ''}>
-    <td>{l.account}<small className="aj-mobile-description">{l.description}</small></td><td className="aj-description-cell">{l.description || ''}</td><td className="aj-number">{money(l.debit)}</td><td className="aj-number">{money(l.credit)}</td>
+    <td>{l.account}<small className="aj-mobile-description">{l.description}</small></td>{i === 0 && <td className="aj-description-cell" rowSpan={lines.length}>{lines.find(line => line.description)?.description || '—'}</td>}<td className="aj-number">{money(l.debit)}</td><td className="aj-number">{money(l.credit)}</td>
   </tr>)}{issues.length > 0 && <tr data-entry-id={row.id} className="aj-issue"><td colSpan={4}>{issues.join(' · ')}</td></tr>}</>
 }
