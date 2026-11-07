@@ -31,6 +31,7 @@ export function journalClient(tables, { max = 2, fail = () => false, log = [] } 
     const q = { table, filters: [], orders: [], offset: 0 }
     const builder = {
       select() { return this }, eq(k, v) { q.filters.push(['eq', k, v]); return this },
+      not(k, op, v) { if (op !== 'eq') throw new Error('Unsupported synthetic operator'); q.filters.push(['not', k, v]); return this },
       in(k, v) { q.filters.push(['in', k, v]); return this },
       order(k, { ascending = true } = {}) { q.orders.push([k, ascending]); return this },
       maybeSingle() { q.single = true; return this },
@@ -39,7 +40,7 @@ export function journalClient(tables, { max = 2, fail = () => false, log = [] } 
         log.push(structuredClone(q))
         if (!q.filters.some(([op, k]) => op === 'eq' && k === 'project_id')) return Promise.reject(new Error('Missing tenant filter')).then(resolve, reject)
         if (fail(q)) return Promise.resolve({ data: null, error: { message: 'test_failure' } }).then(resolve, reject)
-        const rows = (tables[table] || []).filter(r => q.filters.every(([op, k, v]) => op === 'in' ? v.includes(r[k]) : r[k] === v)).sort((a, b) => {
+        const rows = (tables[table] || []).filter(r => q.filters.every(([op, k, v]) => op === 'in' ? v.includes(r[k]) : op === 'not' ? r[k] !== v : r[k] === v)).sort((a, b) => {
           for (const [k, asc] of q.orders) { if (a[k] < b[k]) return asc ? -1 : 1; if (a[k] > b[k]) return asc ? 1 : -1 } return 0
         })
         return Promise.resolve({ data: q.single ? rows[0] || null : rows.slice(q.offset, q.offset + Math.min(max, q.limit || max)), error: null }).then(resolve, reject)
