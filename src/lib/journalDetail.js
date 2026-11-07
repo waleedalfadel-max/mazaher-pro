@@ -1,6 +1,7 @@
 import { fetchByChunks, fetchEveryRow } from './fetchAll.js'
+import { loadJournalAccounts } from './journalAccounts.js'
 
-const COLUMNS = 'id,project_id,journal_number,date,type,description,status,branch,total_amount,vat_amount,output_vat_amount,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,payable_in,payable_out,bank_account_id,supplier_id,document_id,document_invoice_id,file_url,original_name,created_at,created_by_name'
+const COLUMNS = 'id,project_id,journal_number,date,type,description,status,branch,total_amount,vat_amount,output_vat_amount,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,payable_in,payable_out,bank_account_id,supplier_id,document_id,document_invoice_id,file_url,original_name,created_at,created_by_name,category_main,category_sub,financial_class'
 const empty = () => Promise.resolve({ data: [], error: null })
 const unique = values => [...new Set(values.filter(Boolean))]
 const errorResult = (part, error) => ({ data: null, error: error || { message: 'not_found' }, part })
@@ -19,13 +20,11 @@ export async function loadJournalDetail(client, { projectId, entryId }) {
       : { data: [anchor.data], error: null }
     if (result.error || !result.data.some(r => r.id === entryId)) return errorResult('حركات القيد', result.error)
     const rows = result.data
-    const documentIds = unique(rows.map(r => r.document_id)), supplierIds = unique(rows.map(r => r.supplier_id))
+    const documentIds = unique(rows.map(r => r.document_id))
     const byIds = (table, columns, ids) => ids.length ? fetchByChunks(ids, 100, chunk => fetchEveryRow(() => client.from(table)
       .select(columns).eq('project_id', projectId).in('id', chunk).order('id'))) : empty()
-    const [banks, settings, suppliers, items, documents, legacyDocuments, attachments] = await Promise.all([
-      fetchEveryRow(() => client.from('bank_accounts').select('id,name').eq('project_id', projectId).order('id')),
-      client.from('project_settings').select('settings').eq('project_id', projectId).maybeSingle(),
-      byIds('suppliers', 'id,name', supplierIds),
+    const [accounts, items, documents, legacyDocuments, attachments] = await Promise.all([
+      loadJournalAccounts(client, projectId, rows),
       fetchEveryRow(() => {
         const q = client.from('document_items').select('id,ledger_entry_id,document_id,document_invoice_id,description,amount,vat_amount,category_main,category_sub,sort_order').eq('project_id', projectId)
         return (journalNumber ? q.eq('journal_number', journalNumber) : q.eq('ledger_entry_id', entryId)).order('sort_order').order('id')
@@ -36,7 +35,7 @@ export async function loadJournalDetail(client, { projectId, entryId }) {
       journalNumber ? fetchEveryRow(() => client.from('attachments').select('id,file_name,file_url').eq('project_id', projectId)
         .eq('journal_number', journalNumber).order('uploaded_at').order('id')) : empty(),
     ])
-    for (const [part, res] of [['الحسابات', banks], ['أسماء الحسابات', settings], ['الموردين', suppliers], ['بنود المستند', items], ['المستندات', documents], ['المستندات', legacyDocuments], ['المرفقات', attachments]]) {
+    for (const [part, res] of [['الحسابات', accounts], ['بنود المستند', items], ['المستندات', documents], ['المستندات', legacyDocuments], ['المرفقات', attachments]]) {
       if (res.error) return errorResult(part, res.error)
     }
     const files = new Map()
@@ -44,8 +43,7 @@ export async function loadJournalDetail(client, { projectId, entryId }) {
       ...rows.map(r => ({ id: r.id, file_url: r.file_url, file_name: r.original_name || 'مستند القيد' }))]) {
       if (f.file_url && !files.has(f.file_url)) files.set(f.file_url, f)
     }
-    return { error: null, data: { journalNumber, rows, banks: banks.data, suppliers: suppliers.data,
-      settings: settings.data?.settings || {}, items: items.data, files: [...files.values()] } }
+    return { error: null, data: { journalNumber, rows, ...accounts.data, items: items.data, files: [...files.values()] } }
   } catch (error) { return errorResult('تفاصيل القيد', error) }
 }
 

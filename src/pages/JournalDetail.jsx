@@ -5,12 +5,12 @@ import { ArrowRight, ExternalLink, Printer, RefreshCw } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getSignedUrl } from '../lib/storage'
-import { loadJournalDetail, journalAccountMovements } from '../lib/journalDetail.js'
-import { Button, Note, Status } from '../ui/components.jsx'
+import { loadJournalDetail } from '../lib/journalDetail.js'
+import { Button, Note } from '../ui/components.jsx'
 import { formatDate, formatNumber } from '../ui/format.js'
+import JournalTable from '../components/JournalTable.jsx'
 import './JournalDetail.css'
 
-const statuses = { approved: ['معتمد', 'success'], auto: ['تلقائي', 'info'], pending: ['معلق', 'warning'], cancelled: ['ملغي', 'danger'], modified: ['معدّل', 'neutral'] }
 const amount = value => <bdi className="ts-num">{formatNumber(value)} ر.س</bdi>
 const clean = value => String(value || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
 
@@ -22,30 +22,16 @@ export function JournalDetailContent({ detail, projectName, onOpenFile, printing
       <div><span className="journal-brand">تحسيب</span><h1>تفاصيل القيد</h1><p>{projectName}</p></div>
       <div><strong><bdi>{detail.journalNumber || 'قيد بدون رقم'}</bdi></strong><p>{dates.map(d => formatDate(d, { year: true })).join('، ')}</p><span>{detail.rows.length} عمليات</span></div>
     </header>
-    {detail.rows.map((row, index) => {
-      const movements = journalAccountMovements(row, detail), status = statuses[row.status] || [row.status || 'غير محدد', 'neutral']
-      return <section key={row.id} className="journal-operation" data-entry-id={row.id}>
-        <div className="journal-operation-heading"><h2>{index + 1}. {clean(row.type) || 'حركة مالية'}</h2><Status tone={status[1]}>{status[0]}</Status></div>
-        <dl className="journal-meta">
-          <div><dt>التاريخ</dt><dd>{formatDate(row.date, { year: true })}</dd></div>
-          {row.branch && <div><dt>الفرع</dt><dd>{row.branch}</dd></div>}
-          <div><dt>المبلغ المسجل</dt><dd>{amount(row.total_amount)}</dd></div>
-          {!!Number(row.vat_amount) && <div><dt>ضريبة المشتريات المسجلة</dt><dd>{amount(row.vat_amount)}</dd></div>}
-          {!!Number(row.output_vat_amount) && <div><dt>ضريبة المبيعات المسجلة</dt><dd>{amount(row.output_vat_amount)}</dd></div>}
-          {row.created_by_name && <div><dt>المنفذ</dt><dd>{row.created_by_name}</dd></div>}
-        </dl>
-        {row.description && <p className="journal-description">{row.description}</p>}
-        {movements.length > 0 && <table className="journal-movements"><caption>حركات الحسابات</caption><thead><tr><th>الحساب</th><th>زيادة</th><th>نقص</th></tr></thead><tbody>
-          {movements.map(m => <tr key={m.key}><td>{m.label}</td><td>{m.increase !== 0 ? amount(m.increase) : '—'}</td><td>{m.decrease !== 0 ? amount(m.decrease) : '—'}</td></tr>)}
-        </tbody></table>}
-      </section>
-    })}
+    <JournalTable groups={[{ key: detail.journalNumber || detail.rows[0]?.id, entry: detail.rows[0], rows: detail.rows }]} context={detail} printing={printing} showReferences={false}/>
+    {!printing && <details className="journal-source-details"><summary>المستندات والتفاصيل</summary>
+      {detail.rows.map(row => <div key={row.id} className="journal-source-row"><strong>{clean(row.type)}</strong>{row.branch && <span> · {row.branch}</span>}{row.created_by_name && <span> · {row.created_by_name}</span>}<p className="journal-description">{row.description}</p></div>)}
     {detail.items.length > 0 && <section className="journal-items"><h2>بنود المستند</h2><table className="journal-movements"><thead><tr><th>البند</th><th>التصنيف</th><th>المبلغ</th><th>الضريبة</th></tr></thead><tbody>
       {detail.items.map(item => <tr key={item.id}><td>{item.description || '—'}</td><td>{[item.category_main, item.category_sub].filter(Boolean).join(' / ') || '—'}</td><td>{amount(item.amount)}</td><td>{amount(item.vat_amount)}</td></tr>)}
     </tbody></table></section>}
     {detail.files.length > 0 && <section className="journal-files"><h2>المستندات والمرفقات</h2><ul>
       {detail.files.map(file => <li key={file.file_url}><span>{file.file_name || 'مستند القيد'}</span>{!printing && <Button size="sm" variant="quiet" icon={ExternalLink} onClick={() => onOpenFile(file.file_url)}>فتح</Button>}</li>)}
     </ul></section>}
+    </details>}
   </div>
 }
 
