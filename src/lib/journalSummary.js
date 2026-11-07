@@ -3,7 +3,7 @@ import { isCounted, isSales } from './financeRules.js'
 import { compactEntryDescription } from './entryDescription.js'
 import { fetchEveryRow } from './fetchAll.js'
 
-export const JOURNAL_SUMMARY_COLUMNS = 'id,project_id,date,created_at,type,description,status,journal_number,branch,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,payable_in,payable_out,bank_account_id,total_amount'
+export const JOURNAL_SUMMARY_COLUMNS = 'id,project_id,date,created_at,type,description,status,journal_number,branch,cash_in,cash_out,bank_in,bank_out,custody_in,custody_out,receivable_in,receivable_out,payable_in,payable_out,bank_account_id,total_amount,category_main,category_sub,financial_class,supplier_id,vat_amount,output_vat_amount'
 const keyOf = r => JSON.stringify([r.project_id, r.date, r.journal_number || r.id, r.status])
 const clean = s => String(s || '').replace(/^[^\p{L}\p{N}]+/u, '').trim()
 

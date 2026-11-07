@@ -15,12 +15,13 @@ import { Button, DateInput, Dialog, EmptyState, Field, IconButton, Panel, Search
 import { statementAccountOptions, accountMovement } from '../lib/accountStatement.js'
 import { journalSummaries, summaryDays, summaryMovement } from '../lib/journalSummary.js'
 import { isCounted } from '../lib/financeRules.js'
+import { loadJournalAccounts } from '../lib/journalAccounts.js'
 import { canEditLedger } from '../lib/adminAccess.js'
 import { formatDate, formatNumber } from '../ui/format.js'
 
-// العرض الموحد يبدأ بملخص يومي يجمع بنود المرجع نفسه، والتفاصيل عند الطلب.
-// داخل/خارج حركة الصندوق والبنك والعهدة؛ ليست أطراف قيد مزدوج. الإجماليات للمعتمد والتلقائي فقط.
-// التجميع للعرض والطباعة بلا إنشاء قيود أو تعديل مصادرها. فشل التحميل لا يعرض نتائج جزئية.
+// العرض الموحد جدول مدين/دائن من الأثر والتصنيف المسجلين، والتفاصيل عند الطلب.
+// عرض حركات الحسابات يبقى داخل/خارج؛ لا يُخلط بالمبالغ المحاسبية. الإجماليات للمعتمد والتلقائي.
+// التجميع للعرض والطباعة بلا إنشاء قيود. الطرف المجهول ظاهر للمراجعة، وفشل التحميل لا يعرض نتائج جزئية.
 
 function fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -36,7 +37,7 @@ const QUICK_PERIODS = [
   { value: 'year',      label: 'السنة الحالية' },
   { value: 'custom',    label: 'فترة أخرى' },
 ]
-const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url,document_id,bank_account_id,receivable_in,receivable_out,project_id,document_invoice_id,supplier_id,payable_in,payable_out,vat_amount,category_main,category_sub,branch'
+const COLUMNS = 'id,date,type,description,cash_in,bank_in,custody_in,cash_out,bank_out,custody_out,total_amount,status,journal_number,created_at,file_url,document_id,bank_account_id,receivable_in,receivable_out,project_id,document_invoice_id,supplier_id,payable_in,payable_out,vat_amount,category_main,category_sub,branch,financial_class,output_vat_amount'
 const ROLE_AR = { owner: 'المالك', accountant: 'المحاسب', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير', superadmin: 'إدارة تحسيب' }
 
 function getRange(type) {
@@ -176,6 +177,7 @@ function JournalLedgerPage({ unified, embedded }) {
   const [actionError, setActionError]   = useState('')
   const [banks, setBanks] = useState([])
   const [settings, setSettings] = useState({})
+  const [suppliers, setSuppliers] = useState([])
   const [account, setAccount] = useState('all')
   const [entryType, setEntryType] = useState('')
   const [view, setView] = useState(unified ? 'days' : 'list')
@@ -188,16 +190,15 @@ function JournalLedgerPage({ unified, embedded }) {
     const seq = ++loadSeq.current
     setLoading(true); setLoadError('')
     const pidOk = pid || projectId
-    const [bankResult, settingsResult] = unified ? await Promise.all([
-      supabase.from('bank_accounts').select('id,name,bank,is_active').eq('project_id', pidOk),
-      supabase.from('project_settings').select('settings').eq('project_id', pidOk).maybeSingle(),
-    ]) : [{ data: [], error: null }, { data: null, error: null }]
     const entries = await loadPeriodEntries(supabase, { projectId: pidOk, from: f.from, to: f.to, columns: COLUMNS, dateAscending: true })
-    const counts = entries.error ? null : await loadAttachmentCounts(supabase, { projectId: pidOk, journalNumbers: entries.data.map(r => r.journal_number) })
+    const [counts, accounts] = entries.error ? [null, null] : await Promise.all([
+      loadAttachmentCounts(supabase, { projectId: pidOk, journalNumbers: entries.data.map(r => r.journal_number) }),
+      unified ? loadJournalAccounts(supabase, pidOk, entries.data) : Promise.resolve({ data: { banks: [], settings: {}, suppliers: [] }, error: null }),
+    ])
     if (seq !== loadSeq.current) return
-    const failed = bankResult.error ? { error: bankResult.error, part: 'الحسابات' } : settingsResult.error ? { error: settingsResult.error, part: 'إعدادات الحسابات' } : entries.error ? entries : counts.error ? counts : null
+    const failed = entries.error ? entries : counts.error ? counts : accounts.error ? { error: accounts.error, part: 'الحسابات' } : null
     if (failed) { setRows([]); setAttachCounts({}); setLoadError(`${failed.part}: ${reason(failed.error)}`) }
-    else { setRows(entries.data); setAttachCounts(counts.data); setBanks(bankResult.data || []); setSettings(settingsResult.data?.settings || {}) }
+    else { setRows(entries.data); setAttachCounts(counts.data); setBanks(accounts.data.banks); setSettings(accounts.data.settings); setSuppliers(accounts.data.suppliers) }
     setLoading(false)
   }
 
@@ -248,7 +249,12 @@ function JournalLedgerPage({ unified, embedded }) {
   }, [rows, visibleRows, unified, account, settings, banks])
   const displayRows = useMemo(() => unified ? groupCreditInvoices(visibleRows, rows) : visibleRows, [visibleRows, rows, unified])
   const creditPurchases = displayRows.filter(r => r._creditRows).reduce((n,r) => n + Math.round(r.payable_in * 100), 0) / 100
-  const summaries = useMemo(() => journalSummaries(visibleRows, rows, { account, settings, banks }), [visibleRows, rows, account, settings, banks])
+  const summaries = useMemo(() => {
+    const selected = new Set(journalSummaries(visibleRows).map(g => g.key))
+    // Selecting an account or matching a description must never remove the
+    // counterpart of a journal in the accounting view.
+    return journalSummaries(rows).filter(g => selected.has(g.key))
+  }, [visibleRows, rows])
   const groups = useMemo(() => summaryDays(summaries), [summaries])
 
   const refYear = Number((filter.to || fmtDate(new Date())).slice(0, 4))
@@ -291,7 +297,7 @@ function JournalLedgerPage({ unified, embedded }) {
           {unified && <details className="journal-extra-filters"><summary>خيارات العرض والتصفية</summary><div className="ts-form-grid">
             <Field label="الحساب"><Select value={account} onChange={e => setAccount(e.target.value)} options={[{value:'all',label:'جميع الحسابات'}, ...statementAccountOptions(banks, settings)]} /></Field>
             <Field label="نوع العملية"><Select value={entryType} onChange={e => setEntryType(e.target.value)} options={[{value:'',label:'كل الأنواع'}, ...[...new Set(rows.map(r => r.type).filter(Boolean))].sort().map(v => ({value:v,label:cleanLabel(v)}))]} /></Field>
-            <Segment label="طريقة العرض" value={view} onChange={setView} options={[{value:'days',label:'مختصر'},{value:'list',label:'تفصيلي'}]} />
+            <Segment label="طريقة العرض" value={view} onChange={setView} options={[{value:'days',label:'قيود محاسبية'},{value:'list',label:'حركات الحسابات'}]} />
           </div></details>}
           <div className="ldg-filter-row jx-filter-row">
             <Field label="من"><DateInput value={filter.from} onChange={iso => setDate('from', iso)} /></Field>
@@ -318,14 +324,14 @@ function JournalLedgerPage({ unified, embedded }) {
         </div>
       ) : (
         <>
-          <div className="jx-totals" data-k="jl.totals">
+          {(!unified || view === 'list') && <div className="jx-totals" data-k="jl.totals">
             <div><span>داخل للحسابات — المعتمد</span><strong className="ts-num is-in" data-k="jl.totalDebit">{fmt(totals.debit)}</strong></div>
             <div><span>خارج من الحسابات — المعتمد</span><strong className="ts-num is-out" data-k="jl.totalCredit">{fmt(totals.credit)}</strong></div>
             <div><span>{unified ? 'القيود المعروضة' : 'الحركات المعروضة'}</span><strong className="ts-num" data-k="jl.totalCount">{unified ? summaries.length : visibleRows.length}</strong></div>
-          </div>
+          </div>}
 
           {unified && view === 'list' && creditPurchases > 0 && <div className="ts-note ts-note--info" data-k="credit-purchases-total">مشتريات آجلة معروضة: <strong className="ts-num">{fmt(creditPurchases)}</strong> · أُضيفت لمستحقات الموردين، ولا تدخل في الوارد والصادر النقدي أعلاه.</div>}
-          {unified && view === 'days' && <JournalSummary days={groups}/>}
+          {unified && view === 'days' && <JournalSummary days={groups} context={{ banks, settings, suppliers }}/>}
           {(!unified || view === 'list') && <>
           {/* الكمبيوتر */}
           <Panel className="ldg-table-panel" clip>

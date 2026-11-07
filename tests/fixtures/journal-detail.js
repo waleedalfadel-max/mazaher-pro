@@ -14,7 +14,7 @@ export function journalFixture() {
       { ...base, id: 'no-number-2', journal_number: null, document_id: null, document_invoice_id: null, total_amount: 20, cash_in: 20 },
     ],
     bank_accounts: [{ id: 'main', project_id: 'p1', name: 'اسم البنك القديم' }, { id: 'purchase', project_id: 'p1', name: 'حساب المشتريات' }],
-    project_settings: [{ project_id: 'p1', settings: { statement_accounts: [{ value: 'cash', label: 'الصندوق' }, { value: 'bank:main', label: 'الراجحي الرئيسي' }, { value: 'bank:purchase', label: 'حساب المشتريات' }] } }],
+    project_settings: [{ project_id: 'p1', settings: { onboarding: { tax: { status: 'مسجل' } }, statement_accounts: [{ value: 'cash', label: 'الصندوق' }, { value: 'bank:main', label: 'الراجحي الرئيسي' }, { value: 'bank:purchase', label: 'حساب المشتريات' }] } }],
     suppliers: [{ id: 's1', project_id: 'p1', name: 'المورد التجريبي' }],
     documents: [{ id: 'd1', project_id: 'p1', journal_number: 'QD-2026-100', file_url: 'https://example.invalid/original.pdf', file_name: 'الفاتورة الأصلية.pdf' }],
     attachments: [{ id: 'a1', project_id: 'p1', journal_number: 'QD-2026-100', file_url: 'https://example.invalid/receipt.pdf', file_name: 'سند السداد.pdf', uploaded_at: '2026-11-01' }],

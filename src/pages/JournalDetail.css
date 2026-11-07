@@ -24,6 +24,9 @@
 .journal-files ul { padding: 0; list-style: none; }
 .journal-files li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
 .journal-print-root { display: none; }
+.journal-source-details { margin-top: 20px; border-top: 1px solid #dde5e6; padding-top: 12px; }
+.journal-source-details > summary { cursor: pointer; color: #087e8b; }
+.journal-source-row { padding: 12px 0; border-bottom: 1px solid #edf0f1; }
 @media (max-width: 600px) {
   .journal-detail-content { padding: 16px; }
   .journal-detail-header h1 { font-size: 21px; }
