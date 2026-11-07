@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { analyzeDocument, ReadingReplyError } from '../lib/claude'
 import { ReadingTimeoutError } from '../lib/readingTimeout.js'
 import { hasLineVat, correctLineVat, lineVatText, staleLineVatCorrection, undoLineVatCorrection } from '../lib/lineVat.js'
+import { expenseVatRounding } from '../lib/expenseVatRounding.js'
 import { getOrCreateJournalNumber } from '../lib/journalNumber'
 import { fetchAsBase64, getSignedUrl } from '../lib/storage'
 import { getTransactionTypes, getProjectSettings } from '../lib/projectSettings'
@@ -1860,6 +1861,7 @@ function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
   const totalKey = res.totalAmount != null ? 'totalAmount' : 'amount'
   const suggestedBasis = exact ? expenseBasisSuggestion(res) : null
   const nearBasis = exact && !suggestedBasis ? expenseBasisNearMatch(res) : null
+  const vatRounding = exact ? expenseVatRounding(res) : null
   if (exact) return (
     <div className="rp-totals">
       <ExpenseReadingHelp invoice={res} exact={exact} onReplace={onReplace} readOnly={readOnly}/>
@@ -1881,6 +1883,11 @@ function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
       {exact.status === 'match' && (
         <div className="rp-total-row rp-total-row--ok"><span>{[exact.basis === 'exclusive' ? 'البنود' : 'مجموع البنود', exact.discount ? '− الخصم' : '', exact.basis === 'exclusive' ? '+ الضريبة' : ''].filter(Boolean).join(' ')} = الإجمالي، بالهللة</span><Check className="ts-icon--sm" aria-hidden="true" /></div>
       )}
+      {vatRounding && <div data-k="vat-document-rounding"><Note title="فرق تقريب ضريبة محسوب">
+        مجموع ضريبة البنود {money(vatRounding.printed / 100)} ر.س، وضريبة الفاتورة {money(vatRounding.invoice / 100)} ر.س.
+        {' '}يُوزّع فرق {money(Math.abs(vatRounding.difference) / 100)} ر.س على ضريبة البنود عند الاعتماد، وتبقى قيمة الفاتورة كما هي.
+        {' '}يُحفظ التوزيع مع الأرقام المقروءة للمراجعة.
+      </Note></div>}
       {exact.status === 'mismatch' && (
         <div className="rp-total-row rp-total-row--diff" role="status">
           <span>فرق غير مفسّر: البنود {exact.diff > 0 ? 'تزيد' : 'تنقص'} عن الإجمالي. طابق مبالغ البنود وخصوماتها والضريبة مع المستند؛ لا يُعتمد بفرق</span><Money value={Math.abs(exact.diff) / 100} />
@@ -1946,7 +1953,7 @@ function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
 
 const LINK_REASON = { same_number_other_supplier: 'الرقم نفسه لمورد آخر', same_supplier_date_total: 'المورد واليوم والمبلغ نفسها',
   legacy_entry_match: 'قيد مسجّل سابقًا بالتاريخ والمبلغ والمورد نفسها' }
-function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
+function V2Error({ err, invoiceLabel, busy, onReject, onDupConfirm, onCorrectSales }) {
   const [reason, setReason] = useState('')
   if (!err) return null
   const l = err.linked
@@ -1971,7 +1978,7 @@ function V2Error({ err, busy, onReject, onDupConfirm, onCorrectSales }) {
     </div>
   )
   return (
-    <Note tone={warn ? 'warning' : 'error'} icon={CircleAlert} title={approvalMessage(err)} facts={facts}
+    <Note tone={warn ? 'warning' : 'error'} icon={CircleAlert} title={`${invoiceLabel ? `${invoiceLabel}: ` : ''}${approvalMessage(err)}`} facts={facts}
       action={err.code === 'suspected_duplicate' ? reasonBox('لماذا ليس مكررًا؟ (يُحفظ مع الاعتماد)', 'ليس مكررًا — اعتماد', r => onDupConfirm(err.invoice_id, r, l))
         : err.code === 'sales_report_exists' ? reasonBox('سبب تصحيح التقرير الموجود', 'تصحيح التقرير الموجود', r => onCorrectSales(r))
         : ['duplicate_invoice', 'no_change', 'sales_report_exists_legacy'].includes(err.code)
@@ -2173,7 +2180,10 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
       {reopenedNote && <div data-k="receipt-reopened"><Note tone="warning" icon={CircleAlert} title="عاد هذا المستند للمراجعة">{reopenedNote}</Note></div>}
       {doc._v2Error?.code === 'supplier_overpayment_confirmation'
         ? <SupplierOverpaymentNotice error={doc._v2Error} busy={busy || readOnly} onConfirm={onOverpaymentConfirm} onCancel={onOverpaymentCancel} />
-        : <V2Error err={doc._v2Error} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />}
+        : <V2Error err={doc._v2Error} invoiceLabel={isMultiInvoice && (() => {
+          const i = rawRes.invoices.findIndex(x => x._id === doc._v2Error?.invoice_id)
+          return i < 0 ? null : `فاتورة ${i + 1} — ${rawRes.invoices[i].description || 'بدون وصف'}`
+        })()} busy={busy} onReject={onReject} onDupConfirm={onDupConfirm} onCorrectSales={onCorrectSales} />}
       {doc._v2Error?.code === 'sales_report_exists' && <CorrectionAccounts linked={doc._v2Error.linked} invoice={res} branch={doc.branch} setup={setup} onEdit={onEditCorrection || onEdit} />}
       {doc._validationError && (
         <Note tone="error" icon={CircleAlert} title="حقول مطلوبة قبل الاعتماد">
@@ -2235,6 +2245,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
           <div className="rp-subinvs">
             {rawRes.invoices.map((inv, idx) => (
               <InvoiceSubPanel key={inv._id || idx} invoice={inv} index={idx} transTypes={transTypes} categories={categories}
+                defaultOpen={!!doc._v2Error?.invoice_id && doc._v2Error.invoice_id === inv._id}
                 setup={setup} branch={doc.branch}
                 v2={isV2} decision={isV2 ? invStatus(inv._id) : null}
                 onEdit={(f, v) => onEditInvoice(idx, f, v)} onReplace={next => onReplaceInvoice(idx, next)} readOnly={readOnly}
