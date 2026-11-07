@@ -1,12 +1,13 @@
 .accounting-journal-wrap { width: 100%; }
 .accounting-journal { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: right; font-size: 14px; }
-.accounting-journal .aj-account { width: 32%; }
-.accounting-journal .aj-description { width: 36%; }
+.accounting-journal .aj-account { width: 34%; }
+.accounting-journal .aj-description { width: 34%; }
 .accounting-journal .aj-amount { width: 16%; }
-.accounting-journal th, .accounting-journal td { padding: 8px 10px; vertical-align: top; overflow-wrap: anywhere; }
+.accounting-journal th, .accounting-journal td { padding: 4px 10px; line-height: 1.5; vertical-align: top; overflow-wrap: anywhere; }
+.accounting-journal .aj-description-cell { vertical-align: middle; }
 .accounting-journal thead { background: #edf5f5; }
 .accounting-journal .aj-number { text-align: end; white-space: nowrap; }
-.accounting-journal .aj-reference td { background: #f7f9f9; border-top: 1px solid #dce5e6; color: #52666f; font-size: 12px; padding-block: 6px; }
+.accounting-journal .aj-reference td { background: #f7f9f9; border-top: 1px solid #dce5e6; color: #52666f; font-size: 12px; padding-block: 4px; }
 .accounting-journal .aj-first td { border-top: 1px solid #edf0f1; }
 .accounting-journal tfoot { font-weight: 700; border-top: 2px solid #829a9e; }
 .accounting-journal .aj-issue td, .accounting-journal .aj-incomplete { color: #8a510c; font-size: 12px; }
@@ -18,12 +19,12 @@
   .accounting-journal thead, .accounting-journal tbody, .accounting-journal tfoot { display: block; }
   .accounting-journal tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(72px, .65fr) minmax(72px, .65fr); }
   .accounting-journal th, .accounting-journal td { display: block; min-width: 0; }
-  .accounting-journal th, .accounting-journal td { padding: 7px 4px; }
+  .accounting-journal th, .accounting-journal td { padding: 5px 4px; }
   .accounting-journal .aj-account { width: 48%; }
   .accounting-journal .aj-description { width: 0; }
   .accounting-journal .aj-amount { width: 26%; }
   .accounting-journal thead th:nth-child(2), .accounting-journal .aj-description-cell { display: none; }
-  .aj-mobile-description { display: block; color: #62747c; font-size: 11px; margin-top: 3px; }
+  .aj-mobile-description:not(:empty) { display: block; color: #62747c; font-size: 11px; margin-top: 3px; }
   .accounting-journal .aj-number { white-space: nowrap; overflow-wrap: normal; }
   .accounting-journal .aj-reference td, .accounting-journal .aj-issue td, .accounting-journal .aj-cancelled td, .accounting-journal .aj-incomplete { grid-column: 1 / -1; }
 }
