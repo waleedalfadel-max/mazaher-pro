@@ -8,7 +8,7 @@
   document.addEventListener('click',e=>{if(!menu.hidden&&!menu.contains(e.target)&&!button.contains(e.target))closeMenu();});
   document.querySelector('#yr').textContent=new Date().getFullYear();
   const status=document.querySelector('.pricing-status'),periods=document.querySelector('.periods'),summary=document.querySelector('.price-summary'),order=document.querySelector('.order-link');
-  const labels={1:'شهر واحد',3:'٣ أشهر',6:'٦ أشهر',12:'سنة'};
+  const labels={1:'شهر واحد',12:'سنة'};
   const price=v=>(typeof v==='number'||typeof v==='string')&&String(v).trim()!==''&&Number.isFinite(Number(v))&&Number(v)>=0;
   const money=v=>Number(v).toLocaleString('en-US',{maximumFractionDigits:2});
   const set=(selector,value)=>{document.querySelector(selector).textContent=value;};
@@ -32,7 +32,7 @@
       if(!Array.isArray(rows))throw Error('invalid catalog');
       program=rows.find(p=>p.slug==='tahseeb'&&p.status==='published');
       if(!program||!price(program.setup_fee))throw Error('unavailable');
-      const available=[1,3,6,12].filter(m=>price(program['price_'+m+'_months']));
+      const available=[1,12].filter(m=>price(program['price_'+m+'_months']));
       if(!available.length)throw Error('no plans');
       set('[data-setup]',money(program.setup_fee));
       document.querySelectorAll('[name="period"]').forEach(input=>{
@@ -46,4 +46,5 @@
   }
   loadPrices();
 })();
+
 
