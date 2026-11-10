@@ -6,6 +6,11 @@
 //   وإلا الاستنتاج من الاسم المحفوظ كما كان. تغيير اسم التصنيف أو رمزه لاحقًا لا يغيّر أرقام فترة سابقة.
 // • ما بقي بلا معرّف (ملتبس أو غير مطابق): مطابقة برقم القيد، والتصنيف بالاسم المحفوظ.
 import { isCOGS } from './financeClass.js'
+import { normCategory } from './categoryLinks.js'
+
+// Fixed and operating costs share the expense section. Keep their stored class,
+// but do not split one category into two visible rows because of this distinction.
+export const expenseGroupClass = cls => cls === 'cogs' ? 'cogs' : 'opex'
 
 export function itemsForEntry(entry, items) {
   if (!entry?.journal_number) return []
@@ -19,13 +24,20 @@ export function itemsForEntry(entry, items) {
  */
 export function allocateEntry(entry, amount, items, categoriesById = {}) {
   const cat = id => (id ? categoriesById[id] : null)
+  const mains = Object.values(categoriesById).filter(c => !c.parent_id)
+  const mainFor = (id, name) => {
+    const linked = cat(id)
+    if (linked) return linked
+    const matches = mains.filter(c => normCategory(c.name) === normCategory(name))
+    return matches.length === 1 ? matches[0] : null
+  }
   const cls = storedName => entry.financial_class || (isCOGS(storedName) ? 'cogs' : 'opex')
   const matching = itemsForEntry(entry, items)
   const weights = matching.map(it => Math.max(0, Math.round((Number(it.amount) || 0) * 100)))
   const totalW = weights.reduce((s, w) => s + w, 0)
   if (!matching.length || totalW <= 0) {
-    const c = cat(entry.category_id)
-    const main = c?.name || entry.type || '— غير محدد'
+    const c = mainFor(entry.category_id, entry.category_main || entry.type)
+    const main = c?.name || entry.category_main || entry.type || '— غير محدد'
     return [{ key: c ? 'id:' + c.id : null, subKey: null, main, sub: entry.category_sub || null, amount, label: entry.description, cls: cls(entry.type), item: null }]
   }
   const totalH = Math.round((Number(amount) || 0) * 100)
@@ -40,10 +52,15 @@ export function allocateEntry(entry, amount, items, categoriesById = {}) {
   const order = weights.map((w, i) => ({ i, frac: (absH * w) % totalW })).sort((x, y) => y.frac - x.frac || x.i - y.i)
   for (let k = 0; rest > 0; k = (k + 1) % order.length, rest--) shares[order[k].i]++
   return matching.map((it, i) => {
-    const c = cat(it.category_id)
+    const c = mainFor(it.category_id, it.category_main)
     const main = c?.name || it.category_main || entry.type || '— غير محدد'
     const sub = (it.subcategory_id && categoriesById[it.subcategory_id]?.name) || it.category_sub || null
+    // Historical repairs can link a line to its corrected ledger category while
+    // leaving the original reading's category text behind. For that same category,
+    // the ledger's saved treatment wins. Mixed legacy lines retain their own treatment.
+    const storedType = entry.type && entry.category_id && it.category_id === entry.category_id
+      ? entry.type : it.category_main || entry.type
     return { key: c ? 'id:' + c.id : null, subKey: it.subcategory_id && categoriesById[it.subcategory_id] ? 'id:' + it.subcategory_id : null, main, sub,
-      amount: sign * shares[i] / 100, label: it.description || entry.description, cls: cls(it.category_main || entry.type), item: it }
+      amount: sign * shares[i] / 100, label: it.description || entry.description, cls: cls(storedType), item: it }
   })
 }
