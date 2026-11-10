@@ -5,7 +5,7 @@
 // وتوزيع القيد على بنود مستنده بالدالة نفسها التي يستعملها تقرير المصروفات (allocateEntry). الفرق المقصود الوحيد عن التقارير الحالية:
 // المحتسب «المعتمد» و«التلقائي» فقط؛ «المعلقة» و«المرفوضة» وبلا حالة تُعرض منفصلة بعددها ومبلغها ولا تدخل الأرقام
 // (القاعدة المركزية isCounted في financeRules، كالمحرك والتقارير). كل المبالغ تُقارن بالهللات (أعداد صحيحة)، فلا تولّد كسور الحساب ملاحظة.
-import { allocateEntry } from './expenseBreakdown.js'
+import { allocateEntry, expenseGroupClass } from './expenseBreakdown.js'
 import { normCat } from './approvalV2.js'
 import { formatDate } from '../ui/format.js'
 import { summarizeEntries } from './financeSummary.js'
@@ -77,12 +77,13 @@ export function windowFigures(rows, w, { docItems = [], categoriesById = {} } = 
     for (const r of allocateEntry(e, net, docItems, categoriesById)) {
       const uncategorized = !r.key && (r.main === UNCAT_MAIN || !strip(r.main))
       const mainId = r.key || ('name:' + (strip(r.main) || r.main))
-      const mKey = mainId + '|' + r.cls
+      const mKey = mainId + '|' + expenseGroupClass(r.cls)
       if (!mains.has(mKey)) mains.set(mKey, { key: mKey, targetKey: mainId, label: strip(r.main) || r.main, cls: r.cls, f: 0, subs: new Map(),
         uncategorized, settlement: !r.key && strip(r.main).includes(SETTLEMENT),
         // بلا معرّف تصنيف ثابت: مجمّع بالاسم المحفوظ (بيانات سابقة لم يثبت ربطها) — يظهر كما هو ولا يُدمج بالتخمين
         unlinked: !r.key && !uncategorized && !strip(r.main).includes(SETTLEMENT) })
       const m = mains.get(mKey)
+      if (r.cls === 'fixed') m.cls = 'fixed'
       m.f += r.amount
       const linked = subOf(r)
       const subId = r.subKey || (linked ? 'id:' + linked.id : r.sub ? 'name:' + (strip(r.sub) || r.sub) : '')

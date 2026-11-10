@@ -1,7 +1,7 @@
 // أرقام صفحة التقارير لكل تبويب — وحدة خالصة يستعملها العرض والتصدير معًا (تُختبر في Node).
 // salesFigures وexpenseFigures منقولتان كما هما من src/pages/Reports.jsx (إعادة التصميم ca1092c)، والتغيير الوحيد: تفصيل المصروفات
 // يستبعد القيود الضريبية بالشرط نفسه الذي يستبعدها به المحرك من المصروفات (isTaxType)، فتطابق لوحة التحكم؛ وتُعاد في taxEntries.
-import { allocateEntry } from './expenseBreakdown.js'
+import { allocateEntry, expenseGroupClass } from './expenseBreakdown.js'
 import { isSales, isExcluded, isCOGS, isWithdrawal, isDebt, isTaxType, salesAmountNet, netSalesChannels, expenseAmountNet, isCounted } from './financeRules.js'
 
 export function fmtDate(d) {
@@ -102,8 +102,9 @@ export function expenseFigures({ entries: allEntries, docItems, categoriesById, 
     if (!rawMain || rawMain.includes('مبيعات') || !amount) return
     // المعالجة جزء من المفتاح: إن تغيّر رمز التصنيف لاحقًا بقي كل مبلغ في قسمه (مشتريات أو مصروفات) كما اعتُمد
     const rowCls = cls || (isCOGS(rawMain) ? 'cogs' : 'opex')
-    const mainKey = (key || strip(rawMain) || rawMain) + '|' + rowCls
+    const mainKey = (key || strip(rawMain) || rawMain) + '|' + expenseGroupClass(rowCls)
     if (!mainMap[mainKey]) mainMap[mainKey] = { total: 0, subs: {}, rows: [], label: rawMain, cls: rowCls }
+    if (rowCls === 'fixed') mainMap[mainKey].cls = 'fixed'
     if (hasEmoji(rawMain) && !hasEmoji(mainMap[mainKey].label)) mainMap[mainKey].label = rawMain
     mainMap[mainKey].total += amount
     mainMap[mainKey].rows.push({ label: label || rawSub || rawMain, amount })
