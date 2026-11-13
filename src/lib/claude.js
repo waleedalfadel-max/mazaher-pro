@@ -2,6 +2,7 @@ import { readingCategoryLinks } from './categoryLinks.js'
 import { accountDashboard } from './accountStatement.js'
 import { BANK_TRANSFER_TYPE, paymentWorkflow } from './paymentWorkflow.js'
 import { normalizeExpenseReading } from './expenseReading.js'
+import { expenseReadingIssues, expenseVerificationPrompt, verifiedExpenseReading } from './expenseReadingCheck.js'
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
 import { ReadingTimeoutError } from './readingTimeout.js'
@@ -380,7 +381,7 @@ ${paymentSourceRule}
     }
   }
 
-  async function readAttempt(block, maxTokens) {
+  async function readAttempt(block, maxTokens, verification = '') {
   const res = await analyzeFetch({
     method: 'POST',
     headers: {
@@ -392,7 +393,7 @@ ${paymentSourceRule}
       system: `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
       messages: [{
         role: 'user',
-        content: [block, { type: 'text', text: prompt }],
+        content: [block, { type: 'text', text: verification ? `${prompt}\n\n${verification}` : prompt }],
       }],
     }),
   })
@@ -435,13 +436,15 @@ ${paymentSourceRule}
   }
 
   let result = await readOnce(contentBlock)
+  let uprightBlock = contentBlock
   // تُدار كاملة إلى PNG؛ يفحص readOnce حجم الطلب ويجهّز نسخة أصغر فقط عند تجاوز الحد.
   // نتيجة القراءة الأولى لا تُستعمل للأرقام (قراءة النص المائل غير موثوقة: تقرير 2026-10-18).
   let reading = { calls: 1, rotated: 0 }
   const rot = isImage ? normRotation(result?.rotation) : 0
   if (rot) {
     const up = await uprightImage(fileBase64, mime, rot)
-    result = await readOnce({ type: 'image', source: { type: 'base64', media_type: up.mime, data: up.base64 } })
+    uprightBlock = { type: 'image', source: { type: 'base64', media_type: up.mime, data: up.base64 } }
+    result = await readOnce(uprightBlock)
     reading = { calls: 2, rotated: rot, size: [up.width, up.height], stillRotated: normRotation(result?.rotation) || undefined }
   }
 
@@ -453,6 +456,26 @@ ${paymentSourceRule}
   // تقرير المبيعات: القنوات من أسطر وسائل الدفع المنسوخة (المرادفات والتحويل والمرتجعات وغير المعروف) — src/lib/salesReport.js.
   // مرة واحدة عند القراءة: تعديلات المحاسب بعدها لا يُعاد حسابها.
   normalized.invoices = normalized.invoices.map(normalizeExpenseReading)
+  // One bounded second look, only for inconsistent purchases. No retry loop, no
+  // ledger writes, no fabricated balancing discount, and no change to receipts.
+  const verification = expenseVerificationPrompt(normalized.invoices)
+  if (verification) {
+    let candidates = null
+    try {
+      const checked = await readAttempt(uprightBlock, READ_MAX_TOKENS_RETRY, verification)
+      if (!normRotation(checked?.rotation)) candidates = checked.invoices
+    } catch (error) {
+      if (error?.isAuthError) throw error
+      // Preserve the usable first reading if the verification service fails.
+    }
+    normalized.invoices = normalized.invoices.map((inv, i) => {
+      const issues = expenseReadingIssues(inv)
+      if (!issues.length) return inv
+      const next = Array.isArray(candidates) && candidates.length === normalized.invoices.length
+        ? verifiedExpenseReading(inv, candidates[i]) : null
+      return next || { ...inv, readingVerification: { status: 'needs_review', issues } }
+    })
+  }
   normalized.invoices = normalized.invoices.map(inv => reconcileSalesColumns(inv, settings?.pos_payment_aliases))
   // إيصال سداد مورد: بدليل مطبوع وحده، وبلا بنود (src/lib/supplierReceipts.js)
   normalized.invoices = normalized.invoices.map(normalizeReceiptReading)

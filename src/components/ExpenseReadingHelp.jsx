@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button, Field, Input, Note, Select } from '../ui/components.jsx'
 import { basisConfirmed, confirmExpenseBasis, confirmExpenseRounding, validExpenseReviews } from '../lib/expenseReading.js'
+import { expenseReadingIssues } from '../lib/expenseReadingCheck.js'
 
 const BASIS_TEXT = { inclusive: 'شاملة الضريبة', exclusive: 'قبل الضريبة' }
 
@@ -10,7 +11,12 @@ export default function ExpenseReadingHelp({ invoice, exact, onReplace, readOnly
   const small = invoice.items?.length>0 && exact?.status==='mismatch' && Math.abs(exact.diff)<=2
   const confirmed = basisConfirmed(invoice)
   const rounding = validExpenseReviews(invoice).roundingReview
+  const issues = expenseReadingIssues(invoice)
   return <>
+    {issues.length > 0 && <Note tone="warning" title="موضع الاختلاف في القراءة">
+      {issues.join(' ')}
+    </Note>}
+    {invoice.readingVerification?.status === 'corrected' && <p className="ts-field-hint">أُعيد فحص الصورة وتصحيح تفاصيل القراءة. راجعها قبل الاعتماد.</p>}
     {Array.isArray(invoice.readingWarnings) && invoice.readingWarnings.length>0 && <Note tone="warning">{invoice.readingWarnings.join("؛ ")}</Note>}
     {invoice.readingCorrection?.to && <p className="ts-field-hint">
       {invoice.readingCorrection.to.basis==='inclusive' ? 'استُخدم إجمالي كل صنف الشامل للضريبة كما طُبع' : 'استُخدم صافي كل صنف قبل الضريبة كما طُبع'}، لأن مجموعه يطابق إجمالي الفاتورة بالهللة. القراءة الأولى محفوظة في دليل القراءة.

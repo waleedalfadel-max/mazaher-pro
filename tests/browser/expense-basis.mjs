@@ -25,16 +25,21 @@ await build({ stdin: { contents: `
   const categories=[{id:'main',name:'Test expense',ledger_type:'Test expense',is_active:true}];
   function Fixture({invoices,readOnly,manual}){
     const [rows,setRows]=useState(invoices);
+    const [busy,setBusy]=useState(false);
     window.draft=rows;
     const edit=(i,k,v)=>setRows(rows.map((r,j)=>i===j?{...r,[k]:v}:r));
     const capture=i=>window.payloads.push(buildInvoicePayload(rows[i],{original:invoices[i],categories,transTypes:[]}));
-    return <DocCard doc={{status:'analyzed',file_name:'synthetic.png',analysis_result:{invoices:rows}}}
+    return <DocCard doc={{status:'analyzed',_state:busy?'approving':'analyzed',file_name:'synthetic.png',analysis_result:{invoices:rows}}}
       v2={{version:1,mode:'active',invoices:rows.map(r=>({id:r._id,status:'pending'}))}} readOnly={readOnly}
       categories={categories} transTypes={['Test category']} branches={[]} suppliers={[]} payableSuppliers={[]}
       onManualApprove={manual?async(index,invoice)=>{
+        setBusy(true);
+        await new Promise(resolve=>setTimeout(resolve,50));
+        if(window.failApproval){setBusy(false);throw new Error('Synthetic server rejection');}
         const next=withManualInvoice({analysis_result:{invoices},_edit:{invoices:rows}},index,invoice);
         window.payloads.push(buildInvoicePayload(next._edit.invoices[index],{original:invoices[index],categories,transTypes:[]}));
         setRows(next._edit.invoices);
+        setBusy(false);
       }:null}
       setup={{settings:{},bankAccounts:[{id:'bank-a',name:'Bank A',is_active:true},{id:'bank-b',name:'Bank B',is_active:true}]}} onEdit={(k,v)=>edit(0,k,v)} onEditInvoice={edit}
       onEditItem={(i,patch)=>edit(0,'items',rows[0].items.map((it,j)=>j===i?{...it,...patch}:it))}
@@ -44,6 +49,7 @@ await build({ stdin: { contents: `
   }
   window.render=(kind='single',readOnly=false,manual=false)=>{
     window.payloads=[];
+    window.failApproval=false;
     const first={...structuredClone(base),_id:'one'};
     const second={...structuredClone(base),_id:'two',amountsBasis:'exclusive',items:[{description:'C',amount:92},{description:'D',amount:138}]};
     const sales={_id:'sales',type:'sales',date:'2026-01-02',description:'Synthetic report',cashSales:10,networkSales:20,transferSales:0,totalSales:999,salesReadingVersion:2,unknownPayments:[{label:'Unreadable',amount:30}],bankAccounts:{network:'bank-a'}};
@@ -51,6 +57,7 @@ await build({ stdin: { contents: `
     // 2026-10-28: three-row products read as nets but labelled inclusive (synthetic); nets + invoice VAT are one halala over.
     const nets={...structuredClone(base),_id:'nets',amountsBasis:'inclusive',totalAmount:30,vatAmount:3.91,items:['P1','P2','P3'].map(d=>({description:d,amount:8.7,printedLineTotal:8.7,printedLineBasis:'inclusive'}))};
     const small={...nets,_id:'small',items:[{description:'P1',amount:10},{description:'P2',amount:10},{description:'P3',amount:9.99}]};
+    if(kind==='handwritten'){root.render(<Fixture key={Math.random()} invoices={[{...first,totalAmount:null,vatAmount:0,items:[{description:'Handwritten',amount:110}]}]} readOnly={readOnly} manual={manual}/>);return}
     if(kind==='nets'||kind==='small'){root.render(<Fixture key={Math.random()} invoices={[kind==='nets'?nets:small]} readOnly={readOnly} manual={manual}/>);return}
     if(kind==='small2'){root.render(<Fixture key={Math.random()} invoices={[{...small,_id:'small-a'},{...structuredClone(small),_id:'small-b'}]} readOnly={readOnly} manual={manual}/>);return}
     const rows=kind==='multi'?[first,second]:[kind==='sales'?sales:kind==='transfer'?transfer:kind==='duplicate'?{...first,items:[...first.items,{description:'Unit price duplicated',amount:60}]}:first];
@@ -152,6 +159,30 @@ try {
   assert.equal(manual.manualReview.previous_items.length,3)
   assert.ok(manual.review_changes.some(s=>s.includes('اعتماد بمراجعة يدوية')))
   check('admin confirms a classification and final total despite OCR mismatch, retaining the audit')
+  await render('handwritten',false,true)
+  await page.getByLabel('إجمالي المستند', {exact:false}).fill('110')
+  await approve.click()
+  assert.equal(await page.evaluate(()=>window.payloads[0].totalAmount),'110')
+  assert.equal(await page.evaluate(()=>window.draft[0].totalAmount),'110')
+  check('editing a null OCR total updates the canonical total sent to the server')
+  await render('handwritten',false,true)
+  await page.getByRole('button',{name:'اعتماد يدوي',exact:true}).click()
+  dialog=page.getByRole('dialog')
+  await dialog.getByLabel('الإجمالي المعتمد شامل الضريبة').fill('١١٠')
+  await dialog.getByLabel('تصنيف الإجمالي المعتمد',{exact:true}).selectOption('main')
+  await dialog.getByLabel('ملاحظة المراجعة اليدوية').fill('Verified handwritten total')
+  await dialog.getByRole('checkbox').check()
+  await page.evaluate(()=>window.failApproval=true)
+  await dialog.getByRole('button',{name:'تأكيد واعتماد الأرقام اليدوية'}).click()
+  await dialog.getByText('Synthetic server rejection').waitFor()
+  assert.equal(await dialog.getByLabel('الإجمالي المعتمد شامل الضريبة').inputValue(),'١١٠')
+  assert.equal(await page.evaluate(()=>window.payloads.length),0)
+  await page.evaluate(()=>window.failApproval=false)
+  await dialog.getByRole('button',{name:'تأكيد واعتماد الأرقام اليدوية'}).click()
+  await dialog.waitFor({state:'hidden'})
+  assert.equal(await page.evaluate(()=>window.payloads[0].totalAmount),'110.00')
+  assert.equal(await page.evaluate(()=>window.payloads[0].amount),'110.00')
+  check('manual input survives the busy state and a server failure; retry sends the confirmed amount')
   await render('multi',false,true)
   await page.locator('details').evaluateAll(nodes=>nodes.forEach(n=>n.open=true))
   await page.locator('.rp-subinv').nth(1).getByRole('button',{name:'اعتماد يدوي لهذه الفاتورة'}).click()
@@ -171,6 +202,7 @@ try {
   await dialog.getByLabel('صافي النقدي',{exact:true}).fill('70')
   await dialog.getByLabel('صافي الشبكة / مدى',{exact:true}).fill('120')
   await dialog.getByLabel('صافي التحويل',{exact:true}).fill('40')
+  await dialog.getByLabel('صافي الإغلاق المطبوع بعد المرتجعات',{exact:true}).fill('230')
   assert.equal(await dialog.getByLabel('حساب الشبكة / مدى',{exact:true}).inputValue(),'bank-a')
   await dialog.getByLabel('ملاحظة المراجعة اليدوية').fill('Confirmed net channels from synthetic source.')
   await dialog.getByRole('checkbox').check()
@@ -188,14 +220,14 @@ try {
   await render('transfer',false,true)
   await page.getByRole('button',{name:'اعتماد يدوي',exact:true}).click()
   dialog=page.getByRole('dialog')
-  await dialog.getByLabel('الإجمالي المعتمد شامل الضريبة').fill('55')
-  await dialog.getByLabel('الحساب البنكي المعتمد').selectOption('bank-b')
+  await dialog.getByLabel('مبلغ التحويل').fill('55')
+  await dialog.getByLabel('تحويل إلى',{exact:true}).selectOption('bank:bank-b')
   await dialog.getByLabel('ملاحظة المراجعة اليدوية').fill('Confirmed transfer amount.')
   await dialog.getByRole('checkbox').check()
   await dialog.getByRole('button',{name:'تأكيد واعتماد الأرقام اليدوية'}).click()
   await dialog.waitFor({state:'hidden'})
   const transfer=await page.evaluate(()=>window.payloads[0])
-  assert.equal(transfer.amount,'55.00');assert.equal(transfer.transType,'إيداع نقدي');assert.equal(transfer.paySource,'cash');assert.equal(transfer.bankAccountId,'bank-b')
+  assert.equal(transfer.amount,'55.00');assert.equal(transfer.transType,'🔄 تحويل داخلي');assert.equal(transfer.paySource,'cash');assert.deepEqual(transfer.internalTransfer,{from:'cash',to:'bank:bank-b'})
   check('manual transfer keeps transaction routing and sends confirmed amount and displayed bank')
   await render('nets')
   await page.getByText('راجع أساس المبالغ وإجمالي كل صنف في الصورة',{exact:true}).waitFor()

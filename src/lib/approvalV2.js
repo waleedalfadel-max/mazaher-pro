@@ -206,6 +206,11 @@ export function buildInvoicePayload(inv, { original, categories, transTypes, pur
   // بلا نوع حركة للفاتورة (البند يحمل تصنيفه): نوع قيد تصنيف البند الأول، والخادم يأخذ نوع كل قيد من تصنيفه على أي حال
   const effectiveType = transType || items.find(it => it.category_id && it.ledger_type)?.ledger_type || ''
   const payload = { ...inv, transType: effectiveType, items, category_main: invCat?.name || invoiceName || null, category_id: invCat?.id || null, subcategory_id: categoryChoice(categories, { ...inv, category_main: invCat?.name || inv.category_main }, transType).subcategory_id }
+  // The form displays totalAmount ?? amount. A JSON null is NOT SQL NULL, so the
+  // server's coalesce previously chose a null OCR total instead of the edited amount.
+  // Send the same value the reviewer sees, including legitimate zero/invalid values
+  // (those must still fail validation, never fall back to a different old amount).
+  if (inv.type === 'expense') payload.totalAmount = inv.totalAmount ?? inv.amount ?? null
   if (inv.type === 'sales' && inv.printedNetReview) {
     const net = toHalalas(inv.printedNetReview.value)
     if (Number.isSafeInteger(net)) payload.printedNetReview = { ...inv.printedNetReview, value: fromHalalas(net) }
@@ -317,7 +322,7 @@ export function approvalMessage(res) {
     payment_split_disabled: 'تقسيم السداد غير متاح في هذه النسخة. حدّث الصفحة.',
     pay_required: 'اختر مصدر الدفع.',
     type_required: 'اختر التصنيف الأساسي.',
-    amount_required: 'المبلغ مطلوب.',
+    amount_required: 'أدخل إجمالي المستند أكبر من صفر، ثم أعد الاعتماد.',
     vat_invalid: 'الضريبة يجب أن تكون بين صفر والإجمالي.',
     invalid_amount: 'في المبالغ قيمة غير رقمية.',
     too_many_decimals: 'المبالغ بهللتين على الأكثر.',
