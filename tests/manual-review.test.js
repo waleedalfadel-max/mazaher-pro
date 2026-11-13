@@ -13,6 +13,34 @@ const original = {_id:'one',type:'expense',date:'2026-01-01',description:'Synthe
 const fields = {date:original.date,description:original.description,totalAmount:230,vatAmount:30,
   categoryId:'main',subcategoryId:'sub',reason:'Reviewed the original document; reading duplicated a price.',confirmed:true}
 
+test('a missing OCR total cannot shadow the amount shown and entered by the reviewer', () => {
+  for (const empty of [null, undefined]) {
+    const inv = { ...original, totalAmount: empty, amount: '110', vatAmount: 0, invoiceDiscount: 0,
+      items: [{ description: 'Handwritten purchase', amount: '110', category_main: 'Test expense' }] }
+    const payload = buildInvoicePayload(inv, { categories, transTypes: [] })
+    assert.equal(payload.totalAmount, '110')
+    assert.equal(exactTotals(payload).status, 'match')
+    assert.equal(inv.totalAmount, empty)
+  }
+  // A real zero or an invalid entered number must never resurrect an old amount.
+  for (const entered of [0, '', 'bad']) {
+    const payload = buildInvoicePayload({ ...original, totalAmount: entered, amount: 110 }, { categories, transTypes: [] })
+    assert.equal(payload.totalAmount, entered)
+  }
+})
+
+test('manual approval replaces null/zero OCR totals with the confirmed Arabic or Latin number', () => {
+  for (const empty of [null, 0]) for (const typed of ['110', '١١٠']) {
+    const inv = { ...original, totalAmount: empty, amount: empty, vatAmount: 0, items: [{ description: 'Handwritten', amount: null }] }
+    const reviewed = manualInvoice(inv, { ...fields, totalAmount: typed, vatAmount: 0 }, categories)
+    const payload = buildInvoicePayload(reviewed, { original: inv, categories, transTypes: [] })
+    assert.equal(payload.totalAmount, '110.00')
+    assert.equal(payload.amount, '110.00')
+    assert.equal(exactTotals(payload).status, 'match')
+    assert.equal(payload.manualReview.previous_total, empty)
+  }
+})
+
 test('manual total replaces OCR detail only after explicit review, with unchanged original and payment identity',()=>{
   const before=structuredClone(original)
   const next=manualInvoice(original,fields,categories)

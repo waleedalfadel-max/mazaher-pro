@@ -37,7 +37,7 @@ async function captureReading(uploadedBy, settings, invoices = [{ type: 'expense
   const context = vm.createContext({ TextEncoder, module: { exports: {} }, requests: [], reply: { rotation: 0, invoices } })
   vm.runInContext(bundle.outputFiles[0].text, context)
   const result = await context.module.exports.analyzeDocument('synthetic', 'image/png', 'fixture.png', uploadedBy, [], 'Test company', [], false, settings)
-  assert.equal(context.requests.length, 1)
+  assert.ok(context.requests.length >= 1 && context.requests.length <= 2, 'at most one verification request for an inconsistent reading')
   return { result: JSON.parse(JSON.stringify(result)),
     prompt: context.requests[0].messages[0].content.find(c => c.type === 'text').text }
 }

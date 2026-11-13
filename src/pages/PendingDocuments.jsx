@@ -1000,9 +1000,10 @@ export default function PendingDocuments() {
         p_expected_version: doc._v2.version, p_invoices: payload, p_decisions: decisions, p_document: document }))
     } catch (e) { error = e }
     if (error?.code === 'P0023') return v2Failed(doc, { code: 'reading_replaced' })
-    if (error || !data) { updateDoc(doc.id, { _state: 'analyzed', _v2Error: callError(error) }); return }
-    if (!data.ok) return v2Failed(doc, { ...data, approvalTarget: target })
+    if (error || !data) { const failure = callError(error); updateDoc(doc.id, { _state: 'analyzed', _v2Error: failure }); return { ok: false, ...failure } }
+    if (!data.ok) { v2Failed(doc, { ...data, approvalTarget: target }); return data }
     v2Done(doc, data)
+    return data
   }
 
   function v2Failed(doc, data) {
@@ -1272,8 +1273,9 @@ export default function PendingDocuments() {
           onManualApprove={manualAllowed ? async (index, invoice) => {
             if (doc.project_id !== projectId || modeOf(doc) === 'legacy') throw new Error('ادخل المنشأة أولًا وانتظر تجهيز المستند.')
             const reviewed = withManualInvoice(doc, index, invoice)
-            updateDoc(doc.id, { _edit: reviewed._edit })
-            await approveV2(reviewed, invoice._id)
+            updateDoc(doc.id, { _edit: reviewed._edit, _dirty: true })
+            const outcome = await approveV2(reviewed, invoice._id)
+            if (!outcome?.ok) throw new Error(outcome ? approvalMessage(outcome) : 'لم يكتمل الاعتماد. بياناتك محفوظة في هذه النافذة؛ راجع التنبيه في المستند ثم أعد المحاولة.')
           } : null}
           v2={modeOf(doc) !== 'legacy' ? { mode: modeOf(doc), ...(doc._v2 || {}) } : null}
           onDupConfirm={(invId, reason, linked) => {
@@ -1867,7 +1869,7 @@ function ExpenseBasis({ invoice, onEdit, readOnly }) {
 
 function ItemsTotals({ check, exact, res, onEdit, onReplace, readOnly }) {
   const id = useId()
-  const totalKey = res.totalAmount != null ? 'totalAmount' : 'amount'
+  const totalKey = res.type === 'expense' || res.totalAmount != null ? 'totalAmount' : 'amount'
   const suggestedBasis = exact ? expenseBasisSuggestion(res) : null
   const nearBasis = exact && !suggestedBasis ? expenseBasisNearMatch(res) : null
   const vatRounding = exact ? expenseVatRounding(res) : null
@@ -2153,7 +2155,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
 
   return (
     <fieldset className="rp-form" disabled={doc._state === 'rereading'} data-k="reread-fields" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-      {manualIndex != null && canManual && <ManualReviewDialog
+      {manualIndex != null && !!onManualApprove && <ManualReviewDialog
         invoice={isMultiInvoice ? rawRes.invoices[manualIndex] : res} categories={categories} setup={setup} branch={doc.branch}
         supplierName={(() => { const inv = isMultiInvoice ? rawRes.invoices[manualIndex] : res, ctx = invoiceSupplierContext(doc, inv, isMultiInvoice)
           return inv?.paySource === 'credit' ? (suppliers.find(x => x.id === ctx.supplierId)?.name || '') : ctx.name })()}
