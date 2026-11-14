@@ -44,13 +44,16 @@ export function documentPaymentChoices(result, pendingIds = null) {
  */
 export function uploaderPaymentRule(doc, settings, accounts = []) {
   const policy = paymentWorkflow(settings)
-  if (!policy) return null
   const role = doc?.created_by_role || doc?.uploaded_by
-  const userRule = doc?.created_by_user_id ? policy.uploader_users?.[doc.created_by_user_id] : null
-  const rule = userRule || policy.uploaders?.[role] || null
+  // The legacy uploader policy must be enforced by the review screen as a
+  // suggestion too. OCR can misread a card payment as the company's bank.
+  const legacySource = { purchasing: 'custody', cashier: 'cash', owner: 'bank' }[role]
+  if (!policy && !legacySource) return null
+  const userRule = doc?.created_by_user_id ? policy?.uploader_users?.[doc.created_by_user_id] : null
+  const rule = policy ? userRule || policy.uploaders?.[role] || null : { source: legacySource }
   const account = rule?.source === 'bank' ? (accounts || []).find(a => a.id === rule.account_id) : null
   return { rule, scope: userRule ? 'user' : rule ? 'role' : null, name: doc?.created_by_name || doc?.uploaded_by_name || '',
-    roleLabel: UPLOADER_ROLES[role] || role || '', sourceLabel: !rule ? '' : rule.source === 'cash' ? 'الصندوق' : (account ? bankAccountLabel(account) : 'حساب بنكي غير متاح') }
+    roleLabel: UPLOADER_ROLES[role] || role || '', sourceLabel: !rule ? '' : rule.source === 'cash' ? 'الصندوق' : rule.source === 'custody' ? 'العهدة' : (account ? bankAccountLabel(account) : !policy ? 'البنك' : 'حساب بنكي غير متاح') }
 }
 const uploaderText = u => (u.name ? `${u.name} (${u.roleLabel})` : u.roleLabel)
 
@@ -63,7 +66,17 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
   }
   if (isInternalTransfer(inv) || isBankTransfer(inv) || isCashBankInvoice(inv)) return bankTransferPayment(inv)
   const policy = paymentWorkflow(settings)
-  if (!policy || inv._paymentInitialized) return inv
+  if (inv._paymentInitialized) return inv
+  if (!policy) {
+    // Apply only to newly reviewed paid purchases, never to settlements,
+    // transfers, credit purchases or an explicit reviewer/draft choice.
+    const uploader = uploaderPaymentRule(doc, settings, accounts)
+    if (inv.type !== 'expense' || ['credit', 'payable'].includes(inv.paySource) || !uploader?.rule) return inv
+    return { ...inv, paySource: uploader.rule.source,
+      bankAccountId: uploader.rule.source === 'bank' ? inv.bankAccountId || '' : '',
+      _paymentInitialized: true,
+      _paymentSuggested: `المصدر المقترح لأن الرافع ${uploaderText(uploader)}: ${uploader.sourceLabel}. أكّده أو عدّله.` }
+  }
   if (inv.type === 'sales' && !inv.branch && !doc?.branch) return inv
   const next = { ...inv, _paymentInitialized: true }
   const available = eligibleBankAccounts(accounts, paymentBranch(doc, inv, settings))

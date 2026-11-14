@@ -155,6 +155,9 @@ const DRAFT_EXTRAS = ['branch', '_supplierId', '_supplierName', '_supplierResolu
 // ملخص يُعرض في القائمة من نتيجة القراءة (شامل الضريبة كما في المستند)
 // من رفع المستند والمصدر المقترح له (قاعدة المستخدم ثم الدور، src/lib/paymentWorkflow.js): ظاهر دائمًا عند المراجعة، ولو غيّر المحاسب المصدر
 function UploaderSourceLine({ doc, setup }) {
+  const result = doc._edit || doc.analysis_result
+  const rows = result?.invoices || (result ? [result] : [])
+  if (!paymentWorkflow(setup?.settings) && !rows.some(inv => inv.type === 'expense' && !['credit', 'payable'].includes(inv.paySource))) return null
   const u = uploaderPaymentRule(doc, setup?.settings, setup?.bankAccounts)
   if (!u || (!u.name && !u.roleLabel)) return null
   return <p className="ts-field-hint" data-k="uploader-source">
@@ -349,7 +352,7 @@ export default function PendingDocuments() {
       if (d.id !== id) return d
       const next = { ...d, ...patch }
       // Preserve confirmed/cleared payment choices across reload in this user's existing isolated browser draft.
-      if (paymentWorkflow(projectSettings) && patch._edit && patch._state === undefined
+      if (patch._edit && patch._state === undefined
           && JSON.stringify(documentPaymentChoices(d._edit)) !== JSON.stringify(documentPaymentChoices(patch._edit))) {
         const store = draftStore(), at = Date.now()
         const extras = Object.fromEntries(DRAFT_EXTRAS.filter(k => next[k] !== undefined).map(k => [k, next[k]]))

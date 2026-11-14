@@ -18,11 +18,11 @@ test('user rule beats the role rule: one purchaser cash, the other the custody b
   assert.match(bank._paymentSuggested, /Synthetic Murtada \(مسؤول المشتريات\): Synthetic custody/)
 })
 
-test('a user without a rule keeps the role rule; no policy means no suggestion', () => {
+test('a user without a rule keeps the role rule; legacy companies keep their uploader defaults', () => {
   const other = suggestInvoicePayment(expense, doc('user-new', 'Synthetic new'), settings, accounts)
   assert.equal(other.bankAccountId, 'custody')
   assert.equal(uploaderPaymentRule(doc('user-new', 'Synthetic new'), settings, accounts).scope, 'role')
-  assert.equal(uploaderPaymentRule(doc('user-cash', 'Synthetic Juma'), {}, accounts), null)
+  assert.equal(uploaderPaymentRule(doc('user-cash', 'Synthetic Juma'), {}, accounts).sourceLabel, 'العهدة')
 })
 
 test('the review line shows name, role and the source suggested for that user', () => {
