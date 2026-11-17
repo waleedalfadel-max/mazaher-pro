@@ -13,3 +13,13 @@ test('الأبعاد بعد التدوير: ربع الدورة يبدّل ال�
   assert.deepEqual(rotatedSize(1400, 788, 90), { w: 788, h: 1400 })
   assert.deepEqual(rotatedSize(1400, 788, 180), { w: 1400, h: 788 })
 })
+
+test('detail windows overlap and cover all four corners without replacing the original',async()=>{
+ const {detailWindows,readingDetailImages}=await import('../src/lib/readingImage.js')
+ assert.deepEqual(detailWindows(600,800),[])
+ const boxes=detailWindows(1400,2000)
+ assert.equal(boxes.length,4)
+ for(const [x,y] of [[0,0],[1399,0],[0,1999],[1399,1999],[700,1000]])assert.ok(boxes.some(b=>x>=b.x&&x<b.x+b.w&&y>=b.y&&y<b.y+b.h))
+ const pdf={type:'document',source:{data:'abc'}}
+ assert.deepEqual(await readingDetailImages(pdf),[pdf])
+})
