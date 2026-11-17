@@ -20,8 +20,8 @@ const MAX_TOKENS_CAP = 4000
 // أطول system بالتطبيق أقل من هذا بكثير — هامش واسع
 const MAX_SYSTEM_LEN = 8000
 
-// أقصى بنية فعلية: كتلة مستند/صورة + كتلة نص
-const MAX_CONTENT_BLOCKS = 4
+// Full source + four bounded overlapping detail images + one instruction block.
+const MAX_CONTENT_BLOCKS = 6
 const ALLOWED_BLOCK_TYPES = new Set(['text', 'image', 'document'])
 
 // حد طول النص داخل كتلة text — البرومبتات الحالية أقصر بكثير
