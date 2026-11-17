@@ -464,13 +464,14 @@ ${BANK_RECEIPT_PROMPT}
   // ledger writes, no fabricated balancing discount, and no change to receipts.
   const verification = expenseVerificationPrompt(normalized.invoices)
   if (verification) {
-    let candidates = null, verificationImages = [uprightBlock]
+    let candidates = null, verificationImages = [uprightBlock], verificationFailure = null
     try { verificationImages = await readingDetailImages(uprightBlock) } catch { /* Keep the full original on image-preparation failure. */ }
     try {
       const checked = await readAttempt(verificationImages, READ_MAX_TOKENS_RETRY, `${verification}\n${categorySection}\nأضف category_main وcategory_sub لكل صنف من القائمة المسموح بها حسب وصفه، أو اتركهما فارغين عند الشك.`, true)
       if (!normRotation(checked?.rotation)) candidates = checked.invoices
     } catch (error) {
       if (error?.isAuthError) throw error
+      verificationFailure = { phase: 'details', name: error?.name || 'Error', message: String(error?.message || '').slice(0, 300) }
       // Preserve the usable first reading if the verification service fails.
     }
     let summaries = null
@@ -479,14 +480,14 @@ ${BANK_RECEIPT_PROMPT}
       try {
         const witnessed = await readAttempt(verificationImages, 2000, EXPENSE_SUMMARY_PROMPT, true)
         if (Array.isArray(witnessed?.summaries) && witnessed.summaries.length === normalized.invoices.length) summaries = witnessed.summaries
-      } catch (error) { if (error?.isAuthError) throw error }
+      } catch (error) { if (error?.isAuthError) throw error; verificationFailure = { phase: 'summary', name: error?.name || 'Error', message: String(error?.message || '').slice(0, 300) } }
     }
     normalized.invoices = normalized.invoices.map((inv, i) => {
       const issues = expenseReadingIssues(inv)
       if (!issues.length) return inv
       const next = Array.isArray(candidates) && candidates.length === normalized.invoices.length
         ? verifiedExpenseReading(inv, candidates[i], summaries?.[i]) : null
-      return next || { ...inv, readingVerification: { status: 'needs_review', issues } }
+      return next || { ...inv, readingVerification: { status: 'needs_review', issues, detailCandidate: candidates?.[i] || null, summaryWitness: summaries?.[i] || null, failure: verificationFailure } }
     })
   }
   normalized.invoices = normalized.invoices.map(inv => reconcileSalesColumns(inv, settings?.pos_payment_aliases))
