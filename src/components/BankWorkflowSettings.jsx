@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, Field, Input, Note, Panel, Select } from '../ui/components.jsx'
 import { bankAccountLabel, eligibleBankAccounts } from '../lib/branchSetup.js'
+import { normalizeBankIdentifier } from '../lib/bankReceiptRouting.js'
 import { paymentWorkflow, UPLOADER_ROLES } from '../lib/paymentWorkflow.js'
 import { supabase } from '../lib/supabase'
 import { clearProjectCache } from '../lib/projectSettings.js'
@@ -13,6 +14,7 @@ const errors = { forbidden: 'إعداد مهام الحسابات لإدارة �
 export default function BankWorkflowSettings({ projectId, settings, banks, onSaved }) {
   const existing = paymentWorkflow(settings)
   const [value, setValue] = useState(() => structuredClone(existing || empty()))
+  const [identifierText, setIdentifierText] = useState({})
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const active = eligibleBankAccounts(banks, null)
   const options = active.map(a => ({ value: a.id, label: bankAccountLabel(a) }))
@@ -29,6 +31,8 @@ export default function BankWorkflowSettings({ projectId, settings, banks, onSav
     const next = { ...v, uploader_users }; if (!Object.keys(uploader_users).length) delete next.uploader_users; return next })
   async function save() {
     if (busy) return
+    const ids = Object.values(value.accounts || {}).flatMap(r => r.receipt_identifiers || [])
+    if (ids.some(id => !normalizeBankIdentifier(id)) || new Set(ids.map(normalizeBankIdentifier)).size !== ids.length) { setError('أدخل رقم الحساب أو الآيبان كاملًا دون إخفاء، ولا تربط الرقم نفسه بحسابين.'); return }
     setBusy(true); setError('')
     try {
       const r = await supabase.rpc('admin_bank_workflow_save', { p_workflow: value, p_expected: existing })
@@ -63,6 +67,10 @@ export default function BankWorkflowSettings({ projectId, settings, banks, onSav
       </div>
       {banks.map(a => <div key={a.id} className="py-3 border-b">
         <strong>{bankAccountLabel(a)}</strong>
+        <Field label={`أرقام الحساب والآيبان — ${a.name}`} hint="الأرقام الكاملة كما تظهر في الإيصالات، افصل بينها بفاصلة. تطابق الرقم يسبق اقتراح الرافع؛ الأرقام المخفية تحتاج مراجعة.">
+          <Input maxLength={350} value={identifierText[a.id] ?? (value.accounts?.[a.id]?.receipt_identifiers || []).join(', ')}
+            onChange={e => { setIdentifierText(t => ({ ...t, [a.id]: e.target.value })); setRule(a.id, { receipt_identifiers: e.target.value.split(/[,،\n]/).map(x => x.trim()).filter(Boolean) }) }} />
+        </Field>
         <Field label={`مهمة ${a.name}`}><Input maxLength={500} value={value.accounts?.[a.id]?.purpose || ''} onChange={e => setRule(a.id, { purpose: e.target.value })} /></Field>
         <label className="flex gap-2"><input type="checkbox" checked={value.accounts?.[a.id]?.operating_available !== false} onChange={e => setRule(a.id, { operating_available: e.target.checked })} />رصيد هذا الحساب بإشارته ضمن المتاح للتشغيل</label>
         <Field label={`وجهة التحويل المعتادة من ${a.name}`} hint="اقتراح عند تسجيل تحويل حقيقي؛ لا ينشئ تحويلات تلقائية."><Select value={value.accounts?.[a.id]?.transfer_to || ''} placeholder="بلا وجهة مقترحة" options={options.filter(o => o.value !== a.id)} onChange={e => setRule(a.id, { transfer_to: e.target.value || null })} /></Field>

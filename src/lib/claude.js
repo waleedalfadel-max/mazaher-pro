@@ -2,13 +2,14 @@ import { readingCategoryLinks } from './categoryLinks.js'
 import { accountDashboard } from './accountStatement.js'
 import { BANK_TRANSFER_TYPE, paymentWorkflow } from './paymentWorkflow.js'
 import { normalizeExpenseReading } from './expenseReading.js'
-import { expenseReadingIssues, expenseVerificationPrompt, verifiedExpenseReading } from './expenseReadingCheck.js'
+import { expenseReadingIssues, expenseVerificationPrompt, verifiedExpenseReading, changedExpenseSummary, EXPENSE_SUMMARY_PROMPT } from './expenseReadingCheck.js'
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
 import { ReadingTimeoutError } from './readingTimeout.js'
 export { ReadingTimeoutError }
 import { reconcileSalesColumns } from './salesReport.js'
 import { normalizeReceiptReading } from './supplierReceipts.js'
+import { BANK_RECEIPT_PROMPT } from './bankReceiptRouting.js'
 import { normRotation, uprightImage } from './readingImage.js'
 import { prepareReadingRequest, readingSizeError, READING_REQUEST_LIMIT } from './readingRequest.js'
 
@@ -143,7 +144,7 @@ export async function analyzeDocument(fileBase64, mimeType, fileName, uploadedBy
       uploadedBy === 'purchasing' ? 'custody (مسؤول المشتريات يدفع من العهدة دائماً)' :
       uploadedBy === 'owner'      ? 'bank (المالك يدفع من البنك دائماً)' :
       'custody'
-    } — لا تغيّره حتى لو ذُكر غيره في المستند (عدا سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash)`
+    } — قاعدة للفواتير بلا دليل حساب دفع؛ إيصالات البنك لها أولوية الدليل المطبوع. سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash`
 
   // normalize transTypes — قد تكون strings أو objects {label, category}
   const typesAsStrings = (Array.isArray(transTypes) ? [...transTypes, ...(workflow ? [BANK_TRANSFER_TYPE] : [])] : [])
@@ -240,6 +241,8 @@ ${lines.join('\n')}
 - انسخ مبالغ الأصناف المطبوعة فقط. لا تخترع بنداً باسم "الباقي"، ولا تعدّل مبلغاً أو إجمالياً لتجعل المجموع يتوازن.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+فواتير العثيم متعددة الأسطر: اقرأ القيم من موضعها بالترتيب مع عنوان العمود. كثيرا ما يظهر سعر الوحدة في السطر الأول، ثم صافي الكمية مع نسبة الضريبة، ثم ضريبة الصنف، ثم إجمالي الكمية الشامل. لا تحسب lineNet أو lineVat بقسمة الإجمالي على 1.15؛ الرقم غير المقروء null. انتبه إلى إجمالي صنف مكون من عبوتين أو ثلاث؛ الكمية ليست قيمة مالية. لا تستنتج عدد الأصناف من عدد قطع الشراء.
 
 قاعدة القراءة الحرفية:
 اقرأ النص المكتوب في الفاتورة حرفياً كما هو دون تخمين أو تصحيح إملائي.
@@ -349,6 +352,7 @@ ${bankCustody ? '- حوالة إلى حساب العهدة البنكي من ح�
 - إذا كان الإجمالي فقط بدون تفصيل: أعد paymentLines فارغة وصافي التقرير المطبوع إن وجد. لا توزّع أي مبلغ على قناة بالتخمين.
 - transType: يجب اختياره دائماً من القائمة أعلاه حرفياً بما فيه الإيموجي — الافتراضي ${defaultExpenseType} لأي فاتورة شراء
 ${paymentSourceRule}
+${BANK_RECEIPT_PROMPT}
 
 - date: YYYY-MM-DD — إذا غير واضح استخدم ${today}
 - حدّد ترتيب التاريخ المطبوع قبل تحويله. في صيغة يوم/شهر/سنة اختصار السنة هو الجزء الأخير، وليس اليوم: مثال تركيبي 18/09/26 يصبح 2026-09-18، لا 2018-09-26. لا تقلب اليوم والسنة لمجرد أن الناتج تاريخ صالح. إن كان الترتيب أو القرن غير محسوم فاذكر ذلك في readingWarnings والوصف بدل الجزم.
@@ -381,7 +385,7 @@ ${paymentSourceRule}
     }
   }
 
-  async function readAttempt(block, maxTokens, verification = '') {
+  async function readAttempt(block, maxTokens, verification = '', standalone = false) {
   const res = await analyzeFetch({
     method: 'POST',
     headers: {
@@ -393,7 +397,7 @@ ${paymentSourceRule}
       system: `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
       messages: [{
         role: 'user',
-        content: [block, { type: 'text', text: verification ? `${prompt}\n\n${verification}` : prompt }],
+        content: [block, { type: 'text', text: standalone ? verification : verification ? `${prompt}\n\n${verification}` : prompt }],
       }],
     }),
   })
@@ -456,7 +460,7 @@ ${paymentSourceRule}
   // تقرير المبيعات: القنوات من أسطر وسائل الدفع المنسوخة (المرادفات والتحويل والمرتجعات وغير المعروف) — src/lib/salesReport.js.
   // مرة واحدة عند القراءة: تعديلات المحاسب بعدها لا يُعاد حسابها.
   normalized.invoices = normalized.invoices.map(normalizeExpenseReading)
-  // One bounded second look, only for inconsistent purchases. No retry loop, no
+  // One bounded detail reread; a changed summary needs one blind witness. No retry loop, no
   // ledger writes, no fabricated balancing discount, and no change to receipts.
   const verification = expenseVerificationPrompt(normalized.invoices)
   if (verification) {
@@ -468,11 +472,19 @@ ${paymentSourceRule}
       if (error?.isAuthError) throw error
       // Preserve the usable first reading if the verification service fails.
     }
+    let summaries = null
+    if (Array.isArray(candidates) && candidates.length === normalized.invoices.length
+        && normalized.invoices.some((inv, i) => expenseReadingIssues(inv).length && changedExpenseSummary(inv, candidates[i]))) {
+      try {
+        const witnessed = await readAttempt(uprightBlock, 2000, EXPENSE_SUMMARY_PROMPT, true)
+        if (Array.isArray(witnessed?.summaries) && witnessed.summaries.length === normalized.invoices.length) summaries = witnessed.summaries
+      } catch (error) { if (error?.isAuthError) throw error }
+    }
     normalized.invoices = normalized.invoices.map((inv, i) => {
       const issues = expenseReadingIssues(inv)
       if (!issues.length) return inv
       const next = Array.isArray(candidates) && candidates.length === normalized.invoices.length
-        ? verifiedExpenseReading(inv, candidates[i]) : null
+        ? verifiedExpenseReading(inv, candidates[i], summaries?.[i]) : null
       return next || { ...inv, readingVerification: { status: 'needs_review', issues } }
     })
   }

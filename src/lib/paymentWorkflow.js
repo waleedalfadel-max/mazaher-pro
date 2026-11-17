@@ -4,6 +4,7 @@ import { suggestSalesPaymentAccounts } from './salesPaymentAccounts.js'
 import { eligibleBankAccounts, expensesAtProjectLevel, bankAccountLabel } from './branchSetup.js'
 import { isCashBankInvoice, cashBankDirection } from './cashBankTransfer.js'
 import { isLoanRepayment } from './loanRepayment.js'
+import { suggestReceiptPayment } from './bankReceiptRouting.js'
 
 export const BANK_TRANSFER_TYPE = '🔄 تحويل داخلي — بين الحسابات البنكية'
 export const UPLOADER_ROLES = { owner: 'المالك', purchasing: 'مسؤول المشتريات', cashier: 'الكاشير' }
@@ -63,6 +64,10 @@ export function suggestInvoicePayment(inv, doc, settings, accounts, saved = null
   inv = normalizeInternalTransfer(inv)
   if (saved && saved.type === inv.type && (saved.paymentMode || null) === (inv.paymentMode || null) && (inv.type !== 'transfer' || saved.transType === inv.transType)) {
     return bankTransferPayment({ ...inv, ...Object.fromEntries(PAYMENT_FIELDS.filter(k => own(saved, k)).map(k => [k, saved[k]])), _paymentSuggested: false })
+  }
+  if (!inv._paymentInitialized) {
+    const receipt = suggestReceiptPayment(inv, settings, accounts)
+    if (receipt) return receipt
   }
   if (isInternalTransfer(inv) || isBankTransfer(inv) || isCashBankInvoice(inv)) return bankTransferPayment(inv)
   const policy = paymentWorkflow(settings)
