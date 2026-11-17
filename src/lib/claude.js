@@ -10,7 +10,7 @@ export { ReadingTimeoutError }
 import { reconcileSalesColumns } from './salesReport.js'
 import { normalizeReceiptReading } from './supplierReceipts.js'
 import { BANK_RECEIPT_PROMPT } from './bankReceiptRouting.js'
-import { normRotation, uprightImage } from './readingImage.js'
+import { normRotation, uprightImage, readingDetailImages } from './readingImage.js'
 import { prepareReadingRequest, readingSizeError, READING_REQUEST_LIMIT } from './readingRequest.js'
 
 const MODEL = (import.meta.env.VITE_CLAUDE_MODEL || 'claude-opus-4-5').trim()
@@ -394,10 +394,10 @@ ${BANK_RECEIPT_PROMPT}
     body: await prepareReadingRequest({
       model: MODEL,
       max_tokens: maxTokens,
-      system: `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
+      system: standalone ? 'انسخ البيانات المطبوعة من الصورة بدقة. لا تحسب أرقامًا مفقودة. أجب بـ JSON فقط.' : `${CLASSIFICATION_RULES}\n\nأجب بـ JSON فقط بدون أي نص قبله أو بعده، بدون \`\`\`json أو أي markdown، بدون شرح.`,
       messages: [{
         role: 'user',
-        content: [block, { type: 'text', text: standalone ? verification : verification ? `${prompt}\n\n${verification}` : prompt }],
+        content: [...(Array.isArray(block) ? block : [block]), { type: 'text', text: standalone ? verification : verification ? `${prompt}\n\n${verification}` : prompt }],
       }],
     }),
   })
@@ -464,9 +464,10 @@ ${BANK_RECEIPT_PROMPT}
   // ledger writes, no fabricated balancing discount, and no change to receipts.
   const verification = expenseVerificationPrompt(normalized.invoices)
   if (verification) {
-    let candidates = null
+    let candidates = null, verificationImages = [uprightBlock]
+    try { verificationImages = await readingDetailImages(uprightBlock) } catch { /* Keep the full original on image-preparation failure. */ }
     try {
-      const checked = await readAttempt(uprightBlock, READ_MAX_TOKENS_RETRY, verification)
+      const checked = await readAttempt(verificationImages, READ_MAX_TOKENS_RETRY, `${verification}\n${categorySection}\nأضف category_main وcategory_sub لكل صنف من القائمة المسموح بها حسب وصفه، أو اتركهما فارغين عند الشك.`, true)
       if (!normRotation(checked?.rotation)) candidates = checked.invoices
     } catch (error) {
       if (error?.isAuthError) throw error
@@ -476,7 +477,7 @@ ${BANK_RECEIPT_PROMPT}
     if (Array.isArray(candidates) && candidates.length === normalized.invoices.length
         && normalized.invoices.some((inv, i) => expenseReadingIssues(inv).length && changedExpenseSummary(inv, candidates[i]))) {
       try {
-        const witnessed = await readAttempt(uprightBlock, 2000, EXPENSE_SUMMARY_PROMPT, true)
+        const witnessed = await readAttempt(verificationImages, 2000, EXPENSE_SUMMARY_PROMPT, true)
         if (Array.isArray(witnessed?.summaries) && witnessed.summaries.length === normalized.invoices.length) summaries = witnessed.summaries
       } catch (error) { if (error?.isAuthError) throw error }
     }

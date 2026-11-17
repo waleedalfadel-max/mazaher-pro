@@ -47,7 +47,10 @@ export function expenseVerificationPrompt(invoices) {
 ${JSON.stringify(targets)}
 أعد قراءة فواتير المشتريات المحددة من الصورة، خصوصًا رأس الأعمدة وجميع أسطر كل صنف والملخص النهائي. استخرج إجمالي الكمية، لا سعر الوحدة. تكملة وصف الصنف ليست صنفًا جديدًا. راجع كل رقم ضريبة من موضعه، ولا تستنتجه من الفرق.
 لا تغيّر الإجمالي أو الضريبة المطبوعة لإجبار التطابق، ولا تختلق خصمًا أو بندًا ولا تحذف صنفًا حقيقيًا. إذا لم تحسم الصورة الفرق فأبقِ الأرقام كما قرأتها واذكر موضع الشك. لا تستبدل البنود المفصلة ببند إجمالي.
-أعد invoices بنفس العدد والترتيب، وبنفس هوية كل فاتورة. اترك المبيعات وإيصالات الدفع والتحويلات كما هي. JSON فقط بنفس الحقول المطلوبة.`
+الصورة الأولى هي المستند الكامل، والصور التالية تفاصيل متداخلة منه، وليست فواتير إضافية. استعملها لتكبير الأرقام فقط؛ لا تعدّ الصنف مرتين.
+أعد invoices لكل مستند في الصورة الكاملة بنفس العدد والترتيب. هذا نسخ للأرقام وليس تصنيفًا محاسبيًا. لكل فاتورة مشتريات:
+{"type":"expense","date":"YYYY-MM-DD","invoiceNumber":"رقم الفاتورة","amountsBasis":"inclusive أو exclusive","totalAmount":0.00,"vatAmount":0.00,"invoiceDiscount":0,"printedItemCount":null,"printedQuantityTotal":null,"items":[{"description":"الاسم المطبوع","quantity":null,"unitPrice":null,"unitPriceBasis":null,"amount":0.00,"lineNet":null,"lineVat":null,"printedLineTotal":null,"printedLineBasis":null}],"readingWarnings":[]}
+الرقم غير الواضح null، ولا تقدره. استخرج إجمالي الصنف الشامل في printedLineTotal وprintedLineBasis=inclusive إذا كان مطبوعًا، ولو ظهر قبلَه صافي الصنف. في فواتير العثيم الأسطر المتتابعة: سعر الوحدة والكمية، ثم صافي الصنف وضريبته، ثم إجمالي الصنف ونسبة الضريبة. للمستند غير الشرائي أعد نوعه فقط. JSON فقط.`
 }
 
 // Accept consistent details for the same invoice. A changed summary additionally
@@ -80,6 +83,11 @@ export function verifiedExpenseReading(original, candidate, summaryWitness = nul
   for (const key of SUMMARY_KEYS) {
     if (summaryAgrees(next, summaryWitness, key)) result[key] = next[key] ?? (key === 'totalAmount' ? next.amount : 0)
   }
+  result.items = result.items.map((it, i) => {
+    const prior = original.items?.[i]
+    if (result.items.length !== original.items?.length || !prior?.category_main || it.category_main || prior.description !== it.description) return it
+    return { ...it, category_main: prior.category_main || '', category_sub: prior.category_sub || '', category_main_id: prior.category_main_id, category_sub_id: prior.category_sub_id }
+  })
   result.readingVerification = { status: 'corrected', previous: original, ...(summaryWitness ? { summaryWitness } : {}) }
   return result
 }

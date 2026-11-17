@@ -32,3 +32,28 @@ export async function uprightImage(base64, mime, deg) {
   g.translate(w / 2, h / 2); g.rotate(deg * Math.PI / 180); g.drawImage(bmp, -bmp.width / 2, -bmp.height / 2)
   return { base64: await canvasToBase64(out, 'image/png'), mime: 'image/png', rotated: deg, width: w, height: h }
 }
+
+// Supplemental overlapping views preserve the whole source as the FIRST image.
+// No paper-edge detection, missing strip or replacement of the stored original.
+export function detailWindows(width, height) {
+  if (width < 900 && height < 1200) return []
+  const w = Math.ceil(width * .7), h = Math.ceil(height * .6)
+  return [{x:0,y:0,w,h},{x:width-w,y:0,w,h},{x:0,y:height-h,w,h},{x:width-w,y:height-h,w,h}]
+}
+export async function readingDetailImages(block) {
+  if (block?.type !== 'image' || typeof createImageBitmap !== 'function') return [block]
+  const bmp = await loadBitmap(block.source.data, block.source.media_type)
+  try {
+    const details = []
+    for (const box of detailWindows(bmp.width, bmp.height)) {
+      const out = document.createElement('canvas'); out.width = box.w; out.height = box.h
+      const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0,0,box.w,box.h)
+      g.drawImage(bmp,box.x,box.y,box.w,box.h,0,0,box.w,box.h)
+      const raw = await canvasToBase64(out,'image/jpeg')
+      const { fitImageBase64 } = await import('./imageCompress.js')
+      const image = await fitImageBase64(raw,'image/jpeg',.35,Infinity)
+      details.push({type:'image',source:{type:'base64',media_type:image.mime,data:image.base64}})
+    }
+    return [block, ...details]
+  } finally { bmp.close() }
+}
