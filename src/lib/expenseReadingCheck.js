@@ -43,7 +43,8 @@ export function expenseVerificationPrompt(invoices) {
     return issues.length ? [{ invoice: i + 1, issues }] : []
   })
   if (!targets.length) return null
-  return `إعادة فحص من الصورة الأصلية قبل عرض القراءة للمراجع. الفحص الحسابي وجد هذه المواضع:
+  return `إعادة فحص من الصورة الأصلية قبل عرض القراءة للمراجع.
+${expenseInvoiceIdentityPrompt(invoices)} الفحص الحسابي وجد هذه المواضع:
 ${JSON.stringify(targets)}
 أعد قراءة فواتير المشتريات المحددة من الصورة، خصوصًا رأس الأعمدة وجميع أسطر كل صنف والملخص النهائي. استخرج إجمالي الكمية، لا سعر الوحدة. تكملة وصف الصنف ليست صنفًا جديدًا. راجع كل رقم ضريبة من موضعه، ولا تستنتجه من الفرق.
 لا تغيّر الإجمالي أو الضريبة المطبوعة لإجبار التطابق، ولا تختلق خصمًا أو بندًا ولا تحذف صنفًا حقيقيًا. إذا لم تحسم الصورة الفرق فأبقِ الأرقام كما قرأتها واذكر موضع الشك. لا تستبدل البنود المفصلة ببند إجمالي.
@@ -113,3 +114,12 @@ export function changedExpenseSummary(original, candidate) {
 export const EXPENSE_SUMMARY_PROMPT = `اقرأ من الصورة فقط ملخص كل فاتورة مشتريات ورقمها وتاريخها، بالترتيب. هذه قراءة مستقلة؛ لا تجمع البنود ولا تحسب الضريبة ولا تستنتج رقمًا مفقودًا.
 أعد JSON: {"summaries":[{"invoiceNumber":"رقم الفاتورة","date":"YYYY-MM-DD","totalAmount":{"label":"عنوان الإجمالي المطبوع","value":0.00},"vatAmount":{"label":"عنوان الضريبة المطبوع","value":0.00},"invoiceDiscount":null}]}.
 كل مبلغ لا يظهر بوضوح أو لا يطبع أصلا = null. انسخ الخصم فقط إن طبع في ملخص الفاتورة؛ لا تستخدم خصم صنف. للمستند غير الشرائي ضع null في موضعه داخل summaries. لا تكرر ملخص الفاتورة بسبب صور التفاصيل المكبرة.`
+
+
+// Numeric verification is bound to the already identified invoices. It never
+// changes their dates; footer software/version dates are not invoice identities.
+export function expenseInvoiceIdentityPrompt(invoices) {
+  const identities = invoices.map((inv, i) => ({ invoice: i + 1, type: inv.type, invoiceNumber: inv.invoiceNumber ?? null, date: inv.date ?? null }))
+  return `هوية الفواتير التي نراجع مبالغها فقط: ${JSON.stringify(identities)}.
+أعد date من الهوية أعلاه كما هو؛ لا تعاود استنتاج التاريخ في فحص المبالغ. رقم الفاتورة يجب أن يطابق الرقم المطبوع؛ لا تخلطه مع باركود أو رقم ضريبي. لا تستخدم تاريخ إصدار برنامج الكاشير المطبوع قرب الباركود أو أسفل الفاتورة. لا تغيّر الهوية لكي تتوافق الأرقام.`
+}

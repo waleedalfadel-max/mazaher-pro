@@ -99,6 +99,9 @@ test('request path independently transcribes changed summary without disclosing 
  const witness={invoiceNumber:corrected.invoiceNumber,date:corrected.date,vatAmount:{label:'VAT',value:0}}
  const {result,requests}=await read([wrap([before]),wrap([corrected]),{summaries:[witness]}])
  assert.equal(requests.length,3);assert.equal(result.invoices[0].vatAmount,0)
- assert.doesNotMatch(requests[2].messages[0].content[1].text,/الفحص الحسابي|20|110/)
+ assert.doesNotMatch(requests[2].messages[0].content[1].text,/الفحص الحسابي|"vatAmount":20|"totalAmount":110/)
  assert.equal(result.invoices[0].readingVerification.previous.vatAmount,20)
+ assert.match(requests[1].messages[0].content[1].text,/2026-01-01/)
+ assert.match(requests[2].messages[0].content[1].text,/2026-01-01/)
+ assert.match(requests[2].messages[0].content[1].text,/تاريخ إصدار برنامج الكاشير/)
 })

@@ -2,7 +2,7 @@ import { readingCategoryLinks } from './categoryLinks.js'
 import { accountDashboard } from './accountStatement.js'
 import { BANK_TRANSFER_TYPE, paymentWorkflow } from './paymentWorkflow.js'
 import { normalizeExpenseReading } from './expenseReading.js'
-import { expenseReadingIssues, expenseVerificationPrompt, verifiedExpenseReading, changedExpenseSummary, EXPENSE_SUMMARY_PROMPT } from './expenseReadingCheck.js'
+import { expenseReadingIssues, expenseVerificationPrompt, verifiedExpenseReading, changedExpenseSummary, EXPENSE_SUMMARY_PROMPT, expenseInvoiceIdentityPrompt } from './expenseReadingCheck.js'
 import { supabase } from './supabase'
 import { createAnalyzeFetch } from './analyzeRequest'
 import { ReadingTimeoutError } from './readingTimeout.js'
@@ -478,7 +478,7 @@ ${BANK_RECEIPT_PROMPT}
     if (Array.isArray(candidates) && candidates.length === normalized.invoices.length
         && normalized.invoices.some((inv, i) => expenseReadingIssues(inv).length && changedExpenseSummary(inv, candidates[i]))) {
       try {
-        const witnessed = await readAttempt(verificationImages, 2000, EXPENSE_SUMMARY_PROMPT, true)
+        const witnessed = await readAttempt(verificationImages, 2000, `${EXPENSE_SUMMARY_PROMPT}\n${expenseInvoiceIdentityPrompt(normalized.invoices)}`, true)
         if (Array.isArray(witnessed?.summaries) && witnessed.summaries.length === normalized.invoices.length) summaries = witnessed.summaries
       } catch (error) { if (error?.isAuthError) throw error; verificationFailure = { phase: 'summary', name: error?.name || 'Error', message: String(error?.message || '').slice(0, 300) } }
     }
