@@ -51,7 +51,7 @@ test('legacy companies send the production uploader rule for every role, includi
   ]
   for (const settings of [undefined, {}]) for (const [role, source] of roles) {
     const { prompt } = await captureReading(role, settings)
-    assert.ok(prompt.includes(`- paySource: ثابت حسب من رفع المستند — ${source} — لا تغيّره حتى لو ذُكر غيره في المستند (عدا سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash)`), role)
+    assert.ok(prompt.includes(`- paySource: ثابت حسب من رفع المستند — ${source} — قاعدة للفواتير بلا دليل حساب دفع؛ إيصالات البنك لها أولوية الدليل المطبوع. سداد المورد: paySource من الإيصال نفسه — حوالة أو تحويل بنكي = bank، سند صرف نقدي = cash`), role)
     assert.doesNotMatch(prompt, /paySource: اقتراح مبدئي/)
   }
 })

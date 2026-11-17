@@ -85,3 +85,20 @@ test('consistent invoices and payment-only receipts need no second request', asy
   assert.equal(requests.length, 1)
   assert.deepEqual(result.invoices[1], receipt)
 })
+
+test('summary correction needs an independent labeled witness; disagreement and missing evidence fail closed', () => {
+ const before={...corrected,vatAmount:20}, candidate={...corrected,vatAmount:0}
+ const witness={invoiceNumber:candidate.invoiceNumber,date:candidate.date,vatAmount:{label:'VAT',value:0}}
+ assert.equal(verifiedExpenseReading(before,candidate),null)
+ const out=verifiedExpenseReading(before,candidate,witness)
+ assert.equal(out.vatAmount,0);assert.equal(out.readingVerification.previous.vatAmount,20)
+ for(const patch of [{vatAmount:null},{vatAmount:{label:'',value:0}},{vatAmount:{label:'VAT',value:1}},{invoiceNumber:'OTHER'}])assert.equal(verifiedExpenseReading(before,candidate,{...witness,...patch}),null)
+})
+test('request path independently transcribes changed summary without disclosing candidate totals',async()=>{
+ const before={...corrected,vatAmount:20}
+ const witness={invoiceNumber:corrected.invoiceNumber,date:corrected.date,vatAmount:{label:'VAT',value:0}}
+ const {result,requests}=await read([wrap([before]),wrap([corrected]),{summaries:[witness]}])
+ assert.equal(requests.length,3);assert.equal(result.invoices[0].vatAmount,0)
+ assert.doesNotMatch(requests[2].messages[0].content[1].text,/الفحص الحسابي|20|110/)
+ assert.equal(result.invoices[0].readingVerification.previous.vatAmount,20)
+})

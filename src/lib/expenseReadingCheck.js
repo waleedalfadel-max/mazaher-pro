@@ -50,9 +50,9 @@ ${JSON.stringify(targets)}
 أعد invoices بنفس العدد والترتيب، وبنفس هوية كل فاتورة. اترك المبيعات وإيصالات الدفع والتحويلات كما هي. JSON فقط بنفس الحقول المطلوبة.`
 }
 
-// Accept a consistent rereading only within the same invoice and printed summary.
-// Keep the first reading when the second guess changes its identity/summary or hides evidence.
-export function verifiedExpenseReading(original, candidate) {
+// Accept consistent details for the same invoice. A changed summary additionally
+// needs a separate, blind transcription of its printed label and value.
+export function verifiedExpenseReading(original, candidate, summaryWitness = null) {
   if (candidate?.type !== 'expense' || !Array.isArray(candidate.items) || !candidate.items.length) return null
   for (const key of ['invoiceNumber', 'date'])
     if (present(original[key]) && original[key] !== candidate[key]) return null
@@ -60,7 +60,7 @@ export function verifiedExpenseReading(original, candidate) {
     const before = toHalalas(key === 'totalAmount' ? original.totalAmount ?? original.amount : original[key])
     const after = toHalalas(key === 'totalAmount' ? candidate.totalAmount ?? candidate.amount : candidate[key])
     if (key === 'totalAmount' && (!Number.isSafeInteger(before) || before <= 0)) continue
-    if ((before ?? 0) !== (after ?? 0)) return null
+    if ((before ?? 0) !== (after ?? 0) && !summaryAgrees(candidate, summaryWitness, key)) return null
   }
   for (const key of ['printedItemCount', 'printedQuantityTotal'])
     if (present(original[key]) && Number(original[key]) !== Number(candidate[key])) return null
@@ -77,6 +77,31 @@ export function verifiedExpenseReading(original, candidate) {
   }
   if (!present(original.totalAmount ?? original.amount) || toHalalas(original.totalAmount ?? original.amount) <= 0)
     result.totalAmount = next.totalAmount ?? next.amount
-  result.readingVerification = { status: 'corrected', previous: original }
+  for (const key of SUMMARY_KEYS) {
+    if (summaryAgrees(next, summaryWitness, key)) result[key] = next[key] ?? (key === 'totalAmount' ? next.amount : 0)
+  }
+  result.readingVerification = { status: 'corrected', previous: original, ...(summaryWitness ? { summaryWitness } : {}) }
   return result
 }
+
+
+const SUMMARY_KEYS = ['totalAmount', 'vatAmount', 'invoiceDiscount']
+function summaryAgrees(candidate, witness, key) {
+  if (!witness || witness.invoiceNumber !== candidate.invoiceNumber || witness.date !== candidate.date) return false
+  // A separately requested transcription of the printed label and value must
+  // confirm every changed summary field. Missing/unclear evidence is not zero.
+  const evidence = witness[key]
+  return typeof evidence?.label === 'string' && evidence.label.trim().length > 0
+    && Number.isSafeInteger(toHalalas(evidence.value))
+    && toHalalas(evidence.value) === toHalalas(candidate[key] ?? (key === 'totalAmount' ? candidate.amount : 0))
+}
+export function changedExpenseSummary(original, candidate) {
+  return candidate?.type === 'expense' && SUMMARY_KEYS.some(key => {
+    const before = toHalalas(original[key] ?? (key === 'totalAmount' ? original.amount : 0))
+    const after = toHalalas(candidate[key] ?? (key === 'totalAmount' ? candidate.amount : 0))
+    return before !== after
+  })
+}
+export const EXPENSE_SUMMARY_PROMPT = `اقرأ من الصورة فقط ملخص كل فاتورة مشتريات ورقمها وتاريخها، بالترتيب. هذه قراءة مستقلة؛ لا تجمع البنود ولا تحسب الضريبة ولا تستنتج رقمًا مفقودًا.
+أعد JSON: {"summaries":[{"invoiceNumber":"رقم الفاتورة","date":"YYYY-MM-DD","totalAmount":{"label":"عنوان الإجمالي المطبوع","value":0.00},"vatAmount":{"label":"عنوان الضريبة المطبوع","value":0.00},"invoiceDiscount":null}]}.
+كل مبلغ لا يظهر بوضوح أو لا يطبع أصلا = null. انسخ الخصم فقط إن طبع في ملخص الفاتورة؛ لا تستخدم خصم صنف. للمستند غير الشرائي ضع null في موضعه داخل summaries. لا تكرر ملخص الفاتورة بسبب صور التفاصيل المكبرة.`
