@@ -45,10 +45,14 @@ function scope(client, projectId, role, columns, count = false) {
   return client.from('documents').select(columns, count ? { count: 'exact' } : undefined).eq('project_id', projectId)
 }
 
-export function uploadHistoryQuery(client, { projectId, role, from, to, uploader, uploaderRole: roleFilter, status, page = 0 }) {
+export function uploadHistoryQuery(client, { projectId, role, from, to, uploader, uploaderRole: roleFilter, status, phrase = '', page = 0 }) {
   const bounds = uploadDateBounds(from, to)
-  let query = scope(client, projectId, role,
-    'id,file_name,file_type,file_url,status,uploaded_at,uploaded_by,uploaded_by_name,created_by_user_id,created_by_name,created_by_role', true)
+  if (!projectId || !canViewAllUploads(role)) throw new Error('لا يمكن عرض سجل المنشأة بهذا الحساب.')
+  const term = phrase.trim()
+  let query = term
+    ? client.rpc('search_uploaded_documents', { p_project: projectId, p_phrase: term }, { count: 'exact' })
+    : scope(client, projectId, role,
+      'id,file_name,file_type,file_url,status,uploaded_at,uploaded_by,uploaded_by_name,created_by_user_id,created_by_name,created_by_role', true)
   if (bounds.from) query = query.gte('uploaded_at', bounds.from)
   if (bounds.until) query = query.lt('uploaded_at', bounds.until)
   if (roleFilter) {

@@ -8,6 +8,10 @@
     },
     "api/chat.js": {
       "maxDuration": 30
+    },
+    "api/document-index.js": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/{tesseract.js/src/**,tesseract.js-core/*lstm*,@tesseract.js-data/{ara,eng}/4.0.0_best_int/*,pdfjs-dist/{legacy/build/pdf.worker.mjs,cmaps/*,standard_fonts/*}}"
     }
   },
   "rewrites": [
@@ -151,6 +155,12 @@
           "value": "public, max-age=31536000, immutable"
         }
       ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/document-index",
+      "schedule": "15 1 * * *"
     }
   ]
 }
