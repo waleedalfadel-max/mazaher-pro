@@ -11,7 +11,7 @@
     },
     "api/document-index.js": {
       "maxDuration": 300,
-      "includeFiles": "node_modules/{tesseract.js/src/**,tesseract.js-core/*lstm*,@tesseract.js-data/{ara,eng}/4.0.0_best_int/*,pdfjs-dist/{legacy/build/pdf.worker.mjs,cmaps/*,standard_fonts/*}}"
+      "includeFiles": "node_modules/{tesseract.js/src/**,tesseract.js-core/tesseract-core*.{js,wasm},@tesseract.js-data/{ara,eng}/4.0.0_best_int/*,pdfjs-dist/{legacy/build/pdf.worker.mjs,cmaps/*,standard_fonts/*}}"
     }
   },
   "rewrites": [
