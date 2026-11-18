@@ -12,7 +12,7 @@ const STATES = {
   approved: { label: 'معتمد', tone: 'success' }, analyzed: { label: 'مقروء — بانتظار المراجعة', tone: 'warning' },
   uploaded: { label: 'بانتظار القراءة', tone: 'neutral' }, rejected: { label: 'مرفوض', tone: 'danger' },
 }
-const EMPTY_FILTERS = { from: '', to: '', uploader: '', uploaderRole: '', status: '' }
+const EMPTY_FILTERS = { phrase: '', from: '', to: '', uploader: '', uploaderRole: '', status: '' }
 
 export default function UploadHistory({ projectId, role, userName, refreshKey, onOpen, onDelete }) {
   const [filters, setFilters] = useState(EMPTY_FILTERS)
@@ -76,8 +76,8 @@ export default function UploadHistory({ projectId, role, userName, refreshKey, o
         if (!controller.signal.aborted) setResult({ docs: [], count: 0, loading: false, error: 'تعذّر تحميل المستندات. أعد المحاولة بزر «تحديث».' })
       }
     }
-    load()
-    return () => controller.abort()
+    const timer = setTimeout(load, filters.phrase.trim() ? 250 : 0)
+    return () => { clearTimeout(timer); controller.abort() }
   }, [projectId, role, userName, filters, selectedUploader, page, refreshKey, reload, dateError])
 
   function change(key, value) {
@@ -101,6 +101,9 @@ export default function UploadHistory({ projectId, role, userName, refreshKey, o
     <Panel title="المستندات المرفوعة" icon={History} clip action={<Button icon={RotateCcw} onClick={refresh}>تحديث</Button>}>
       <div className="rp-history-tools">
         <p>جميع مستندات المنشأة، بما فيها المقروءة والمعتمدة. التاريخ هو تاريخ الرفع بتوقيت السعودية.</p>
+        <Field label="بحث في المستندات"><Input type="search" maxLength={200}
+          placeholder="ابحث بصنف أو مورد أو مصروف" value={filters.phrase}
+          onChange={e => change('phrase', e.target.value)} /></Field>
         <div className="rp-history-filters">
           <Field label="صفة الرافع"><Select value={filters.uploaderRole} onChange={e => change('uploaderRole', e.target.value)} options={[
             { value: '', label: 'جميع الصفات' }, ...Object.entries(UPLOADER_ROLES).map(([value, label]) => ({ value, label })),
@@ -130,6 +133,7 @@ export default function UploadHistory({ projectId, role, userName, refreshKey, o
                 <button className="rp-upload-open" type="button" onClick={() => onOpen(doc.file_url)} aria-label={`فتح ${doc.file_name}`}>
                   <span className="rp-doc-icon"><Icon className="ts-icon" aria-hidden="true" /></span>
                   <span className="rp-upload-name"><strong>{doc.file_name}</strong>
+                    {doc.match_excerpt && <span className="rp-history-match" dir="auto">{doc.match_excerpt}</span>}
                     <small>رفعه: {uploaderName(doc)} · {UPLOADER_ROLES[uploaderRole(doc)] || 'صفة غير مسجلة'}</small>
                     <small>{uploadTimeSaudi(doc.uploaded_at)}</small>
                   </span>

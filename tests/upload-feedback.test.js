@@ -56,7 +56,7 @@ const success = { content: [{ text: JSON.stringify({ invoices: [{ total: 115, it
 const session = { data: { session: { access_token: 'synthetic-token' } } }
 
 function harness(page, { responses = [{ status: 200, body: success }], saveError = false, missingSavedRow = false, uploadError = false } = {}) {
-  const states = [], documents = [], calls = []
+  const states = [], documents = [], calls = [], indexRequests = []
   let cursor = 0, requestIndex = 0, uploadCount = 0
   const react = {
     // مكوّنات الدوال (البدائل أعلاه) تُوسَّع فورًا إلى عناصرها
@@ -117,6 +117,10 @@ function harness(page, { responses = [{ status: 200, body: success }], saveError
       readAsDataURL() { this.onload({ target: { result: 'data:application/pdf;base64,JVBERi0=' } }) }
     },
     fetch: async (url, init) => {
+      if (url === '/api/document-index') {
+        indexRequests.push(JSON.parse(init.body).documentId)
+        return new Response('', { status: 503 })
+      }
       calls.push({ url, init })
       assert.equal(url, '/api/analyze')
       assert.equal(init.headers.authorization, 'Bearer synthetic-token')
@@ -129,7 +133,7 @@ function harness(page, { responses = [{ status: 200, body: success }], saveError
   vm.runInContext(bundles.get(page), context)
   const render = () => { cursor = 0; return context.module.exports.default() }
   return {
-    documents, calls, render, get uploadCount() { return uploadCount },
+    documents, calls, indexRequests, render, get uploadCount() { return uploadCount },
     async upload(count = 1) {
       const input = walk(render()).find(node => node.type === 'input' && node.props.type === 'file')
       const files = Array.from({ length: count }, (_, i) => ({ name: `test-${i}.pdf`, type: 'application/pdf', size: 100 }))
@@ -194,6 +198,7 @@ for (const page of pages) {
     const app = harness(page)
     const output = text(await app.upload())
     assert.equal(app.documents.length, 1)
+    assert.deepEqual(app.indexRequests, [app.documents[0].id])
     assert.equal(app.documents[0].status, 'analyzed')
     assert.match(output, page === 'InvoiceUpload' ? /تم التحليل/ : /تم استلام المستند/)
     assert.doesNotMatch(output, /تعذّر إكمال التحليل التلقائي/)

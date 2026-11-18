@@ -156,6 +156,13 @@ export default function InvoiceUpload() {
         }).select('id').single()
         if (err) throw new Error(err.message)
 
+        // Start the independent original-text index. The daily worker resumes interrupted uploads.
+        void supabase.auth.getSession().then(({ data }) => {
+          if (data.session) return fetch('/api/document-index', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session.access_token },
+            body: JSON.stringify({ documentId: docData.id }),
+          })
+        }).catch(() => {})
         updateFile(i, { status: 'analyzing' })
         try {
           const result = await analyzeDocument(fileBase64, uploadFile.type, files[i].file.name, role, cats || [], projectName || '', readingTypes, false, readingSettings?.settings || {})

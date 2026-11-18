@@ -122,3 +122,19 @@ test('viewing another uploader never enables deleting their records or an approv
   assert.equal(canDeleteOwnUpload({ status: 'analyzed', uploaded_by_name: 'name' }, 'self', 'name'), true)
   assert.equal(canDeleteOwnUpload({ status: 'analyzed', created_by_user_id: 'self' }, null, 'name'), false)
 })
+
+test('content search combines the server match with existing status and page filters', async () => {
+  let request
+  const client = createClient('https://fixture.invalid', 'synthetic-key', {
+    global: { fetch: async (url, init) => {
+      request = { url: new URL(url), body: JSON.parse(init.body), headers: new Headers(init.headers) }
+      return new Response('[]', { headers: { 'Content-Type':'application/json', 'Content-Range':'*/0' } })
+    } },
+  })
+  await uploadHistoryQuery(client, { ...base, phrase:'  لحم %  ',status:'approved', page:1 })
+  assert.match(request.url.pathname,/rpc\/search_uploaded_documents$/)
+  assert.deepEqual(request.body,{p_project:base.projectId,p_phrase:'لحم %'})
+  assert.equal(request.url.searchParams.get('status'),'eq.approved')
+  assert.equal(request.url.searchParams.get('offset'),'25')
+  assert.match(request.headers.get('Prefer'),/count=exact/)
+})
