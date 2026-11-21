@@ -13,7 +13,7 @@ import { Link } from 'react-router-dom'
 import { ChevronDown, ClipboardList, FileText, Hourglass, Info, Receipt, RefreshCw, ShoppingBasket, Upload, Wallet } from 'lucide-react'
 import { Metric, Money, Panel, Segment } from '../ui/components.jsx'
 import { getFinancialSummary, isSales, salesAmountNet, expenseAmountNet } from '../lib/financialEngine'
-import { uncountedText } from '../lib/financeRules.js'
+import { uncountedText, salesVatUndeterminedText } from '../lib/financeRules.js'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -212,6 +212,8 @@ export default function Dashboard() {
   const [activePeriod, setActivePeriod] = useState('month')
   const [range,        setRange]        = useState(getRange('month'))
   const [chartEntries, setChartEntries] = useState([])
+  // حالة التسجيل الضريبي من ملخص المحرك نفسه، فتطابق الرسوم بطاقة المبيعات (financeRules.salesVatBasis)
+  const [salesTax,     setSalesTax]     = useState(null)
 
   // بيانات المقارنة
   const [cmpOpen,    setCmpOpen]    = useState(false)
@@ -329,7 +331,9 @@ export default function Dashboard() {
       setReceivables(rcv.active.length || rcv.unassigned ? rcv : null)
       setStats({ totalSales:summary.totalSales, totalExpenses:summary.totalExpenses, profit:summary.netProfit,
         grossProfit:summary.grossProfit, cogs:summary.cogs||0, operatingExpenses:summary.operatingExpenses||0,
-        grossSales:summary.grossSales||0, outputVat:summary.outputVat||0, vatNetBeforePayment:summary.vatNetBeforePayment, uncounted: uncountedText(summary.uncounted) })
+        grossSales:summary.grossSales||0, outputVat:summary.outputVat||0, vatNetBeforePayment:summary.vatNetBeforePayment, uncounted: uncountedText(summary.uncounted),
+        salesVatUndetermined: salesVatUndeterminedText(summary.salesVatUndetermined) })
+      setSalesTax(summary.taxStatus ?? null)
       setChartEntries(summary.entries || [])
     } catch {
       if (request === mainRequest.current) setLoadError(!r.from || !r.to || r.from > r.to
@@ -436,12 +440,12 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       if (!isSales(e.type)) return
       const day = parseInt(e.date.split('-')[2])
-      cur[day] = (cur[day]||0) + salesAmountNet(e)
+      cur[day] = (cur[day]||0) + salesAmountNet(e, salesTax)
     })
     cmpEntries.forEach(e => {
       if (!isSales(e.type)) return
       const day = parseInt(e.date.split('-')[2])
-      cmp[day] = (cmp[day]||0) + salesAmountNet(e)
+      cmp[day] = (cmp[day]||0) + salesAmountNet(e, salesTax)
     })
     const days = new Set([...Object.keys(cur), ...Object.keys(cmp)].map(Number))
     return [...days].sort((a,b)=>a-b).map(day => ({
@@ -449,17 +453,17 @@ export default function Dashboard() {
       'الحالي':   cur[day] ?? null,
       'المقارنة': cmpEntries.length ? (cmp[day] ?? null) : undefined,
     }))
-  }, [chartEntries, cmpEntries])
+  }, [chartEntries, cmpEntries, salesTax])
 
   const channelPieData = useMemo(() => {
     const ch = {}
     chartEntries.forEach(e => {
       if (!isSales(e.type)) return
       const c = channelOf(e.type)
-      ch[c] = (ch[c]||0) + salesAmountNet(e)
+      ch[c] = (ch[c]||0) + salesAmountNet(e, salesTax)
     })
     return Object.entries(ch).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([name,value])=>({name,value}))
-  }, [chartEntries])
+  }, [chartEntries, salesTax])
 
   const expensePieData = useMemo(() => {
     const ex = {}
@@ -490,7 +494,7 @@ export default function Dashboard() {
     chartEntries.forEach(e => {
       const w = weeks.find(w => e.date >= w.from && e.date <= w.to)
       if (!w) return
-      if (isSales(e.type)) w['مبيعات']  += salesAmountNet(e)
+      if (isSales(e.type)) w['مبيعات']  += salesAmountNet(e, salesTax)
       else                  w['مصروفات'] += expenseAmountNet(e)
     })
 
@@ -507,23 +511,23 @@ export default function Dashboard() {
       cmpEntries.forEach(e => {
         if (!isSales(e.type)) return
         const w = cWeeks.find(w => e.date >= w.from && e.date <= w.to)
-        if (w) w.sales += salesAmountNet(e)
+        if (w) w.sales += salesAmountNet(e, salesTax)
       })
       weeks.forEach((w, i) => { w['مقارنة'] = cWeeks[i]?.sales || 0 })
     }
 
     return weeks.filter(w => w['مبيعات'] > 0 || w['مصروفات'] > 0)
-  }, [chartEntries, cmpEntries, range, cmpRange])
+  }, [chartEntries, cmpEntries, range, cmpRange, salesTax])
 
   const branchSalesData = useMemo(() => {
     if (chartEntries.length === 0) return []
     const bMap = {}
     chartEntries.forEach(e => {
       if (!isSales(e.type) || !e.branch) return
-      bMap[e.branch] = (bMap[e.branch] || 0) + salesAmountNet(e)
+      bMap[e.branch] = (bMap[e.branch] || 0) + salesAmountNet(e, salesTax)
     })
     return Object.entries(bMap).filter(([,v]) => v > 0).map(([name, مبيعات]) => ({ name, مبيعات }))
-  }, [chartEntries])
+  }, [chartEntries, salesTax])
 
   const totalChannelSales = channelPieData.reduce((s,d)=>s+d.value, 0)
   const totalExpensePie   = expensePieData.reduce((s,d)=>s+d.value, 0)
@@ -694,6 +698,7 @@ export default function Dashboard() {
       </div> : <>
       {/* الأرقام الأربعة المعتمدة في التصميم — من getFinancialSummary نفسه بلا تغيير في الحساب */}
       {stats?.uncounted && !loading && <div className="ts-note ts-note--warning" data-k="uncounted"><div className="ts-note-body">{stats.uncounted}</div></div>}
+      {stats?.salesVatUndetermined && !loading && <div className="ts-note ts-note--warning" data-k="sales-vat-undetermined"><div className="ts-note-body">{stats.salesVatUndetermined}</div></div>}
       {mazaherHome && stats && balances ? <MazaherHomeCards stats={stats} balances={balances} from={range.from} to={range.to} comparison={hasCompare ? cmpStats : null} comparisonLabel={cmpLabel} /> : accountDashboard(balances?.settings) && stats ? <AccountCards compactHome={compactHome} stats={stats} balances={balances} settings={balances.settings} receivables={receivables} supplierBalance={balances.supplierBalance} liabilities={balances.liabilities} from={range.from} to={range.to}/> : <div className="ts-metrics">
         {loading || !stats ? [0, 1, 2, 3].map(i => <div key={i} className="ts-metric rp-skeleton-card" />) : (
           <>
@@ -721,7 +726,7 @@ export default function Dashboard() {
       <details className="rp-scope">
         <summary><Info className="ts-icon--sm" aria-hidden="true" />ما الذي يشمله كل رقم؟<ChevronDown className="ts-icon--sm" aria-hidden="true" /></summary>
         <div className="rp-scope-list">
-          <div><strong>المبيعات: </strong>قيود أنواعها «مبيعات» أو «تحصيل جملة» في الفترة (نقدي وبنك وذمم التطبيقات)، مقسومة على 1.15 لاستبعاد ضريبة المخرجات. التحويلات الداخلية وتحصيل الذمم مستثناة.</div>
+          <div><strong>المبيعات: </strong>قيود أنواعها «مبيعات» أو «تحصيل جملة» في الفترة (نقدي وبنك وذمم التطبيقات)، بعد استبعاد ضريبة المخرجات: ضريبة التقرير المحفوظة، وعند غيابها تقدير 15% للمنشأة المسجلة ضريبيًا، ولا ضريبة لغير المسجلة. التحويلات الداخلية وتحصيل الذمم مستثناة.</div>
           <div><strong>المشتريات: </strong>قيود تكلفة البضاعة المباعة ومشتريات المواد ومواد التعبئة والتغليف، بعد طرح ضريبة المدخلات المسجلة عليها.</div>
           <div><strong>المصروفات التشغيلية: </strong>بقية المصروفات بعد طرح ضريبتها، بلا المشتريات ولا المسحوبات ولا الأقساط ولا الضريبة. لا تكرار بين الرقمين.</div>
           <div><strong>بانتظار المراجعة: </strong>مستندات مرفوعة أو مقروءة لم تُعتمد ولم تُرفض، من كل التواريخ، ولا تدخل الأرقام قبل اعتمادها.</div>

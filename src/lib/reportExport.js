@@ -3,7 +3,7 @@ import { balanceOverview } from './accountStatement.js'
 // reportModel يبني وصف القسم المختار (المؤشرات والجداول وصفوف الحساب والملاحظات) من أرقام الشاشة نفسها
 // (salesFigures وexpenseFigures في reportFigures.js، وvatFigures في vatTreatment.js، والأرصدة)، فيُبنى منه ملف PDF (reportPdf.js)
 // وملف Excel (modelToXlsx هنا) دون أي حساب آخر. قالب PDF القديم (صافي الربح والاسم القديم) لا يُستعمل.
-import { uncountedText } from './financeRules.js'
+import { uncountedText, salesVatUndeterminedText } from './financeRules.js'
 import { formatDate, formatNumber, plural } from '../ui/format.js'
 
 export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقرير المصروفات', vat: 'تقرير ضريبة القيمة المضافة', balance: 'تقرير الأرصدة', apps: 'كشف حساب التطبيقات' }
@@ -11,7 +11,7 @@ export const TITLES = { sales: 'تقرير المبيعات', purchases: 'تقر
 // وصف الأرقام لكل قسم — يُعرض في الشاشة («ما الذي تشمله هذه الأرقام؟») وفي الملفين بالنص نفسه
 export const SCOPE = {
   sales: [
-    ['المبيعات', 'قيود المبيعات في الفترة (كاش وشبكة وتطبيقات التوصيل)، بعد استبعاد ضريبة التقارير المحفوظة، أو تقدير 15% عند غيابها. التحويلات الداخلية وتحصيل الذمم لا تدخل.'],
+    ['المبيعات', 'قيود المبيعات في الفترة (كاش وشبكة وتطبيقات التوصيل)، بعد استبعاد ضريبة التقارير المحفوظة، أو عند غيابها تقدير 15% للمنشأة المسجلة ضريبيًا ولا ضريبة لغير المسجلة. التحويلات الداخلية وتحصيل الذمم لا تدخل.'],
     ['المتوسط اليومي', 'مبيعات الفترة مقسومة على عدد أيامها كلها، لا على أيام التشغيل وحدها.'],
     ['النمو', 'من أول الفترة حتى آخر يوم فيه مبيعات، مقابل الأيام نفسها من الشهر السابق.'],
     ['التطبيقات', 'هنقر وجاهز وكيتا ومرسول ونينجا، والنسبة من مبيعات الفرع نفسه.'],
@@ -23,7 +23,7 @@ export const SCOPE = {
     ['النسبة', 'من المبيعات قبل الضريبة للفترة والفرع نفسيهما.'],
   ],
   vat: [
-    ['ضريبة المخرجات', 'المبيعات شاملة الضريبة ناقص المبيعات قبل الضريبة (على أساس 15% لكل المبيعات).'],
+    ['ضريبة المخرجات', 'المبيعات شاملة الضريبة ناقص المبيعات قبل الضريبة: ضريبة التقارير المحفوظة، وعند غيابها 15% للمنشأة المسجلة ضريبيًا، ولا ضريبة لغير المسجلة.'],
     ['ضريبة المدخلات', 'الضريبة المسجلة على فواتير المشتريات والمصروفات في الفترة. لا تشمل سداد الضريبة للهيئة.'],
     ['مدفوعات الضريبة', 'قيود بنوع «ضريبة القيمة المضافة» خرجت من الصندوق أو البنك أو العهدة بلا ضريبة مسجلة عليها. تظهر في الأرصدة، ولا تدخل المصروفات.'],
     ['تحتاج تأكيدًا', 'قيود بنوع ضريبي لا يثبت من بياناتها أنها سداد (عليها ضريبة مسجلة، أو بنود فاتورة، أو نوع ضريبي آخر). لم تُحسب في أي رقم أعلاه.'],
@@ -183,7 +183,7 @@ export function reportModel(ctx) {
   if (tab === 'vat') {
     const d = ctx.data, v = d.vat, due = v.netBeforePayment >= 0
     blocks.push({ kind: 'metrics', id: 'vat.cards', items: [
-      { key: 'vat.output', label: 'ضريبة المخرجات', type: 'money', value: v.outputVat, foot: 'ضريبة التقارير المحفوظة؛ وعند غيابها تقدير 15%' },
+      { key: 'vat.output', label: 'ضريبة المخرجات', type: 'money', value: v.outputVat, foot: 'ضريبة التقارير المحفوظة؛ وعند غيابها تقدير 15% للمنشأة المسجلة' },
       { key: 'vat.input', label: 'ضريبة المدخلات', type: 'money', value: v.inputVat, foot: 'المسجلة على فواتير المشتريات' },
       { key: 'vat.net', label: 'صافي ضريبة الفترة قبل السداد', type: 'money', value: Math.abs(v.netBeforePayment), foot: due ? 'المخرجات أكبر: مستحق للهيئة عن الفترة' : 'المدخلات أكبر: فائض لصالح المنشأة' },
       { key: 'vat.payments', label: 'مدفوعات الضريبة خلال الفترة', type: 'money', value: v.paymentsTotal, foot: v.payments.length ? `${plural(v.payments.length, 'دفعة واحدة', 'دفعتان', 'دفعات', 'دفعة')}؛ لا تُطرح من صافي الفترة${v.refunds.length ? `، ومستردات ${formatNumber(v.refundsTotal, 2)}` : ''}` : 'لا سداد مسجّل في الفترة' },
@@ -240,6 +240,8 @@ export function reportModel(ctx) {
   // القيود غير المحتسبة (معلق/مرفوض/بلا حالة) — القاعدة نفسها في الشاشة والتحليل (financeRules)
   const unc = tab !== 'balance' ? uncountedText(ctx.engineSummary?.uncounted) : null
   if (unc) blocks.push({ kind: 'note', id: 'uncounted', text: unc })
+  const undetermined = tab !== 'balance' ? salesVatUndeterminedText(ctx.engineSummary?.salesVatUndetermined) : null
+  if (undetermined) blocks.push({ kind: 'note', id: 'sales-vat-undetermined', text: undetermined })
 
   const pad = n => String(n).padStart(2, '0')
   const g = generatedAt

@@ -3,8 +3,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { vatFigures } from '../src/lib/vatTreatment.js'
-import { summarizeEntries } from '../src/lib/financeSummary.js'
-import { windowFigures, referenceOf, buildAnalysis, contribsFor } from '../src/lib/financialAnalysis.js'
+import { summarizeEntries as summarizeEntriesOf } from '../src/lib/financeSummary.js'
+import { windowFigures as windowFiguresOf, referenceOf, buildAnalysis, contribsFor } from '../src/lib/financialAnalysis.js'
+// الأرقام الاصطناعية هنا لمنشأة مسجلة ضريبيًا (المقبوض = الصافي × 1.15): حالة التسجيل صريحة، فلا تقدير بلا حالة (financeRules.salesVatBasis)
+const summarizeEntries = rows => summarizeEntriesOf(rows, { taxStatus: 'مسجل' })
+const windowFigures = (rows, w, opts = {}) => windowFiguresOf(rows, w, { taxStatus: 'مسجل', ...opts })
 
 let n = 0
 const id = () => `x${++n}`

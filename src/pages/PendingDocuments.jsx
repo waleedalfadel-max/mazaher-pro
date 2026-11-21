@@ -53,6 +53,7 @@ import { RECEIPT_TYPE, isReceipt, toReceipt, fromReceipt, buildReceiptPayload, r
 import { withManualInvoice } from '../lib/manualReview.js'
 import { operatesBusiness } from '../lib/adminAccess.js'
 import { CHANNELS, CHANNEL_NAME, resolveUnknownPayment, salesReportCheck, reportedSalesVatCheck } from '../lib/salesReport.js'
+import { salesVatBasis, taxStatusOf } from '../lib/financeRules.js'
 import { bankAccountLabel, chosenBankAccount, documentExpensesAtProjectLevel, eligibleBankAccounts, expensesAtProjectLevel, needsBankAccount, salesChannelAccount, visibleSalesChannels, withSalesChannelAccount } from '../lib/branchSetup'
 import { applyRulesToDocument, indexRules } from '../lib/itemRules'
 import { clearDraft as dropDraft, dropLegacyDrafts, loadDraft, purgeDrafts, saveDraft as storeDraft } from '../lib/reviewDraft'
@@ -1676,10 +1677,13 @@ function CorrectionAccounts({ linked, invoice, branch, setup, onEdit }) {
 
 // ── تقرير المبيعات كما قُرئ (src/lib/salesReport.js) ────────────────────────────
 // أسطر وسائل الدفع بقنواتها، والمرتجعات، والإجمالي المطبوع والفرق، ووسائل الدفع غير المعروفة: تُنسب لقناة أو تُستبعد بسبب، ولا تُهمل.
-function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
+function SalesReading({ invoice, onEdit, onReplace, readOnly, settings }) {
   const [choice, setChoice] = useState({})
   const check = salesReportCheck(invoice)
   const tax = reportedSalesVatCheck(invoice)
+  // ضريبة بلا رقم مطبوع بالقاعدة نفسها في لوحة التحكم والتقارير والقيود اليومية (financeRules.salesVatBasis)؛
+  // بلا إعدادات محمّلة (المشرف العام) لا تُعرف حالة التسجيل فلا يُعرض تقدير
+  const salesVat = salesVatBasis({ cash_in: check.total ?? check.channels }, settings ? taxStatusOf(settings) : null)
   const b = invoice?.salesBreakdown
   const unknown = invoice?.unknownPayments || []
   const rows = b ? CHANNELS.filter(c => b.gross[c] || b.returns[c]) : []
@@ -1750,12 +1754,15 @@ function SalesReading({ invoice, onEdit, onReplace, readOnly }) {
             <Input disabled={readOnly} value={invoice.printedNetReview?.value === invoice.totalSales ? (invoice.printedNetReview?.reason || '') : ''}
               onChange={e => onEdit('printedNetReview', { value: invoice.totalSales, reason: e.target.value })} />
           </Field>}
-        <Field label="ضريبة المبيعات المطبوعة (اختياري)" hint="ضريبة التقرير بعد المرتجعات. عند تركها فارغة تُقدّر بافتراض خضوع كامل المبيعات لضريبة 15%. الصفر يُحفظ كما هو."
+        <Field label="ضريبة المبيعات المطبوعة (اختياري)" hint="ضريبة التقرير بعد المرتجعات. عند تركها فارغة: تُقدّر 15% إن كانت المنشأة مسجلة ضريبيًا، ولا ضريبة إن كانت غير مسجلة. الصفر يُحفظ كما هو."
           error={!tax.ok ? 'راجع ضريبة التقرير وإجماليه.' : undefined}>
           <Num value={invoice?.reportedSalesVat ?? ''} data-k="sales-printed-vat" disabled={readOnly} onChange={e => onEdit('reportedSalesVat', e.target.value)} />
         </Field>
-        <div className="rp-total-row" data-k="sales-output-vat"><span>{tax.provided ? 'ضريبة المخرجات من التقرير' : 'ضريبة المخرجات المقدّرة (15%)'}</span>
-          <Money value={tax.provided ? tax.value : (check.total ?? check.channels) / 1.15 * 0.15} /></div>
+        <div className="rp-total-row" data-k="sales-output-vat" data-basis={tax.provided ? 'explicit' : salesVat.basis}><span>{tax.provided ? 'ضريبة المخرجات من التقرير'
+          : salesVat.basis === 'estimate' ? 'ضريبة المخرجات المقدّرة (15%)'
+          : salesVat.basis === 'unregistered' ? 'لا ضريبة مخرجات: المنشأة غير مسجلة ضريبيًا'
+          : 'ضريبة المخرجات غير محددة: حالة التسجيل الضريبي للمنشأة غير محددة'}</span>
+          {tax.provided ? <Money value={tax.value} /> : salesVat.basis === 'unknown' ? <span>—</span> : <Money value={salesVat.vat} />}</div>
         {check.diff != null && (
           <div className={`rp-total-row${check.diff ? ' rp-total-row--warn' : ''}`} data-k="sales-diff"><span>الفرق بين وسائل الدفع والإجمالي</span><Money value={check.diff} /></div>
         )}
@@ -2401,7 +2408,7 @@ function DocCard({ readOnly, onReviewReading, onReread, canReread, v2, onManualA
                 ))}
                 {isV2 && <BankAccountField invoice={res} branch={doc.branch} setup={setup} onEdit={onEdit} />}
               </div>
-              <SalesReading invoice={res} onEdit={onEdit} onReplace={next => onReplaceInvoice(null, next)} readOnly={readOnly} />
+              <SalesReading invoice={res} onEdit={onEdit} onReplace={next => onReplaceInvoice(null, next)} readOnly={readOnly} settings={setup?.settings} />
               <div className="rp-totals">
                 <div className="rp-total-row rp-total-row--strong"><span>الإجمالي المحسوب</span><Money value={salesTotal} /></div>
               </div>
@@ -2540,7 +2547,7 @@ export function InvoiceSubPanel({ invoice, index, transTypes, categories, setup,
         {isWithdrawal && <OwnerWithdrawalFields invoice={invoice} transTypes={transTypes} readOnly={readOnly} onPatch={patch => onReplace?.({ ...invoice, ...patch })} />}
         {isLoan && <LoanRepaymentFields settings={setup?.settings} invoice={invoice} transTypes={transTypes} readOnly={readOnly}
           onPatch={patch => onReplace?.({ ...invoice, ...patch })} />}
-        {isSales && <SalesReading invoice={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} />}
+        {isSales && <SalesReading invoice={invoice} onEdit={onEdit} onReplace={onReplace} readOnly={readOnly} settings={setup?.settings} />}
         {!isSales && !isLoan && !isWithdrawal && !isInternalTransfer(invoice) && (
           <div className="rp-subinv-items">
             <h4>البنود <span className="ts-num">{items.length}</span></h4>

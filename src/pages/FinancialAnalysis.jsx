@@ -109,7 +109,7 @@ export default function FinancialAnalysis() {
       const { from, to } = fetchRange(p, trend)   // يغطي نافذة الاتجاه كاملة، والملخص مقيد بالفترة المختارة
       const raw = await loadAnalysisRows(supabase, { projectId, branch, from, to })
       if (!current()) return
-      const opts = { docItems: raw.docItems, categoriesById: raw.categoriesById }
+      const opts = { docItems: raw.docItems, categoriesById: raw.categoriesById, taxStatus: raw.taxStatus }
       const cur = windowFigures(raw.rows, p.cur, opts)
       const refWindows = refKind === 'baseline' ? p.baseline : [p.prev]
       const reference = referenceOf(refKind, refWindows.map(w => windowFigures(raw.rows, w, opts)), raw.dataStart)

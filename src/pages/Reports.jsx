@@ -9,7 +9,7 @@ import { fetchEveryRow, fetchByChunks } from '../lib/fetchAll.js'
 import { useAuth } from '../contexts/AuthContext'
 import { getProjectSettings, isCorrupted } from '../lib/projectSettings'
 import { getFinancialSummary, isSales, salesAmountNet } from '../lib/financialEngine'
-import { isCounted, uncountedText } from '../lib/financeRules.js'
+import { isCounted, uncountedText, salesVatUndeterminedText } from '../lib/financeRules.js'
 import { fmtDate, salesFigures, expenseFigures } from '../lib/reportFigures.js'
 import { vatFigures } from '../lib/vatTreatment.js'
 import { SCOPE, TITLES, exportFileName, modelToXlsx, reportModel } from '../lib/reportExport.js'
@@ -379,7 +379,7 @@ function ReportsPage() {
     setBalances({ ...accountBalances(allTime || []), entries: allTime || [] })
     const prevSalesTotal = (prevEntriesData || [])
       .filter(e => isCounted(e) && isSales(e.type))
-      .reduce((s, e) => s + salesAmountNet(e), 0)
+      .reduce((s, e) => s + salesAmountNet(e, engineResult.taxStatus), 0)
     setPrevPeriodSales({ total: prevSalesTotal, days: periodDaysLoad, prevFrom: prevFromD, prevTo: prevToD })
     setPrevEntries(prevEntriesData || [])
 
@@ -520,6 +520,9 @@ function ReportsPage() {
         <div className="rpt-body" data-tab={activeTab}>
           {activeTab !== 'balance' && uncountedText(engineSummary?.uncounted) && (
             <div className="ts-note ts-note--warning" data-k="uncounted"><Info className="ts-icon" aria-hidden="true" /><div className="ts-note-body">{uncountedText(engineSummary.uncounted)}</div></div>
+          )}
+          {activeTab !== 'balance' && salesVatUndeterminedText(engineSummary?.salesVatUndetermined) && (
+            <div className="ts-note ts-note--warning" data-k="sales-vat-undetermined"><Info className="ts-icon" aria-hidden="true" /><div className="ts-note-body">{salesVatUndeterminedText(engineSummary.salesVatUndetermined)}</div></div>
           )}
 
           {/* ══════════ المبيعات ══════════ */}
@@ -769,7 +772,7 @@ function ReportsPage() {
             return (
             <>
               <div className="ts-metrics" data-k="vat.cards">
-                <Metric label="ضريبة المخرجات" icon={Percent} foot="ضريبة التقارير المحفوظة؛ وعند غيابها تقدير 15%"><span data-k="vat.output"><Money value={v.outputVat} /></span></Metric>
+                <Metric label="ضريبة المخرجات" icon={Percent} foot="ضريبة التقارير المحفوظة؛ وعند غيابها تقدير 15% للمنشأة المسجلة"><span data-k="vat.output"><Money value={v.outputVat} /></span></Metric>
                 <Metric label="ضريبة المدخلات" icon={Receipt} foot="المسجلة على فواتير المشتريات"><span data-k="vat.input"><Money value={v.inputVat} /></span></Metric>
                 <Metric label="صافي ضريبة الفترة قبل السداد" icon={Landmark}
                   foot={<span data-k="vat.netDir">{due ? 'المخرجات أكبر: مستحق للهيئة عن الفترة' : 'المدخلات أكبر: فائض لصالح المنشأة'}</span>}>
