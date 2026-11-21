@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import { classifyTaxEntry, vatFigures, REVIEW_REASONS } from '../src/lib/vatTreatment.js'
 import { expenseFigures } from '../src/lib/reportFigures.js'
 import { isRealExpense, isTaxType } from '../src/lib/financeRules.js'
-import { summarizeEntries } from '../src/lib/financeSummary.js'
+import { summarizeEntries as summarizeEntriesOf } from '../src/lib/financeSummary.js'
+// الأرقام الاصطناعية هنا لمنشأة مسجلة ضريبيًا (المقبوض = الصافي × 1.15): حالة التسجيل صريحة، فلا تقدير بلا حالة (financeRules.salesVatBasis)
+const summarizeEntries = rows => summarizeEntriesOf(rows, { taxStatus: 'مسجل' })
 
 const VAT = '🏛️ ضريبة القيمة المضافة'
 const e = (o) => ({ id: o.id || Math.random().toString(36), date: '2026-09-15', cash_in: 0, bank_in: 0, custody_in: 0, cash_out: 0, bank_out: 0, custody_out: 0, vat_amount: null, status: 'approved', ...o })   // قيود معتمدة: غير المعتمد لا يُحتسب (financeRules.isCounted)

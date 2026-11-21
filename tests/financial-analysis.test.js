@@ -2,11 +2,13 @@
 // الأرقام للاختبار فقط. أرقام الحالات 1–12 من ملف المواصفات.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { windowFigures, referenceOf, buildAnalysis, leavesOf, targetFor, ratioOf, fmtPct, COUNTED_STATUSES } from '../src/lib/financialAnalysis.js'
+import { windowFigures as windowFiguresOf, referenceOf, buildAnalysis, leavesOf, targetFor, ratioOf, fmtPct, COUNTED_STATUSES } from '../src/lib/financialAnalysis.js'
 import { resolvePeriods, todayIn, trendMonths } from '../src/lib/analysisPeriods.js'
 import { loadAnalysisRows, checkAccess, AnalysisLoadError } from '../src/lib/analysisData.js'
 
 let seq = 0
+// الأرقام الاصطناعية هنا لمنشأة مسجلة ضريبيًا (المقبوض = الصافي × 1.15): حالة التسجيل صريحة، فلا تقدير بلا حالة (financeRules.salesVatBasis)
+const windowFigures = (rows, w, opts = {}) => windowFiguresOf(rows, w, { taxStatus: 'مسجل', ...opts })
 const id = () => `e${++seq}`
 // مبيعات بصافي معلوم: المقبوض = الصافي × 1.15 (افتراض المحرك)
 const sale = (date, net, extra = {}) => ({ id: id(), date, type: '💵 مبيعات كاش', cash_in: Math.round(net * 115) / 100, status: 'approved', ...extra })

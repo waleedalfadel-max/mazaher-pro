@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { fetchEveryRow } from './fetchAll.js'
 import { summarizeEntries } from './financeSummary.js'
 
+import { taxStatusOf } from './financeRules.js'
 import { VAT_RATE, WITHDRAWALS_TYPES, DEBT_TYPES, COGS_TYPES, isCOGS, isCOGSEntry, isSales, isExcluded, isWithdrawal, isDebt,
   isTaxType, isRealExpense, isInternal, sumField, salesAmountGross, salesAmountNet, expenseAmountGross, expenseAmountNet } from './financeRules.js'
 // القواعد الخالصة في financeRules.js، وتُعاد تصديرها من هنا كما كانت
@@ -10,6 +11,7 @@ export { VAT_RATE, WITHDRAWALS_TYPES, DEBT_TYPES, COGS_TYPES, isCOGS, isCOGSEntr
 
 export async function getFinancialSummary(projectId, fromDate, toDate, branch = null) {
   // جلب كامل بترتيب ثابت (src/lib/fetchAll.js): لا تنقص القيود بصمت إن تجاوزت حد الصفحة؛ والخطأ يعيد null كما كان
+  const settingsRequest = supabase.from('project_settings').select('settings').eq('project_id', projectId).maybeSingle()
   const { data: entries, error } = await fetchEveryRow(() => {
     let q = supabase
       .from('ledger_entries')
@@ -24,6 +26,10 @@ export async function getFinancialSummary(projectId, fromDate, toDate, branch = 
   })
 
   if (error || !entries) return null
+  // حالة التسجيل الضريبي تحدد ضريبة قيود المبيعات بلا ضريبة محفوظة (financeRules.salesVatBasis)؛ فشل قراءتها يوقف الأرقام
+  // كبقية الأخطاء بدل حسابها بحالة خاطئة. غياب صف الإعدادات = حالة غير محددة (تنبيه، لا تقدير).
+  const settings = await settingsRequest
+  if (settings.error) return null
   // الحساب نفسه في وحدة خالصة يستعملها التحليل المالي أيضًا (src/lib/financeSummary.js)
-  return summarizeEntries(entries)
+  return summarizeEntries(entries, { taxStatus: taxStatusOf(settings.data?.settings) })
 }

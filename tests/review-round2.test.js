@@ -4,13 +4,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as rules from '../src/lib/financeRules.js'
-import { summarizeEntries } from '../src/lib/financeSummary.js'
+import { summarizeEntries as summarizeEntriesOf } from '../src/lib/financeSummary.js'
 import { allocateEntry } from '../src/lib/expenseBreakdown.js'
 import { expenseFigures } from '../src/lib/reportFigures.js'
 import { vatFigures } from '../src/lib/vatTreatment.js'
-import { windowFigures, referenceOf, buildAnalysis, leavesOf, contribsFor } from '../src/lib/financialAnalysis.js'
+import { windowFigures as windowFiguresOf, referenceOf, buildAnalysis, leavesOf, contribsFor } from '../src/lib/financialAnalysis.js'
 import * as periods from '../src/lib/analysisPeriods.js'
 import { loadAnalysisRows } from '../src/lib/analysisData.js'
+// الأرقام الاصطناعية هنا لمنشأة مسجلة ضريبيًا (المقبوض = الصافي × 1.15): حالة التسجيل صريحة، فلا تقدير بلا حالة (financeRules.salesVatBasis)
+const summarizeEntries = rows => summarizeEntriesOf(rows, { taxStatus: 'مسجل' })
+const windowFigures = (rows, w, opts = {}) => windowFiguresOf(rows, w, { taxStatus: 'مسجل', ...opts })
 
 let n = 0
 const id = () => `r${++n}`

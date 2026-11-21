@@ -3,6 +3,7 @@
 // • كل جدول تُبنى عليه الأرقام يُجلب كاملًا بترتيب ثابت (src/lib/fetchAll.js)؛ وأي فشل في أي جزء خطأ باسمه، لا أصفار ولا بيانات ناقصة.
 import { fetchEveryRow, fetchByChunks } from './fetchAll.js'
 import { COUNTED_STATUSES } from './financialAnalysis.js'
+import { taxStatusOf } from './financeRules.js'
 
 const ENTRY_COLS = 'id,date,type,description,status,branch,journal_number,category_id,category_main,category_sub,financial_class,'
   + 'cash_in,bank_in,custody_in,receivable_in,cash_out,bank_out,custody_out,receivable_out,payable_in,payable_out,vat_amount,output_vat_amount,total_amount'
@@ -56,6 +57,8 @@ export async function loadAnalysisRows(client, { projectId, branch = 'all', from
   if (noBranch.error) throw new AnalysisLoadError('القيود بلا فرع', noBranch.error)
   if (cats.error || !cats.data) throw new AnalysisLoadError('التصنيفات', cats.error)
   if (targets.error) throw new AnalysisLoadError('الأهداف', targets.error)
+  // حالة التسجيل الضريبي تحدد ضريبة المبيعات (financeRules.salesVatBasis): لا تُحسب الأرقام بحالة مجهولة بسبب فشل القراءة
+  if (settings.error) throw new AnalysisLoadError('الإعدادات', settings.error)
 
   // بنود المستندات لكل رقم قيد، كاملة ولو تجاوزت الحد (كما في التقارير)
   const jns = [...new Set(entries.data.filter(e => e.journal_number).map(e => e.journal_number))]
@@ -73,6 +76,7 @@ export async function loadAnalysisRows(client, { projectId, branch = 'all', from
     categoriesById: Object.fromEntries((cats.data || []).map(c => [c.id, c])),
     targets: targets.data,
     dataStart: first.data?.[0]?.date || null,
+    taxStatus: taxStatusOf(settings.data?.settings),
     // القيود بلا فرع بتواريخها؛ تُعدّ داخل نافذة الفترة الحالية وحدها في الحساب (financialAnalysis.limitsOf)
     noBranchRows: one ? noBranch.data : null,
     // عدّ المستندات المعلقة معلومة مساعدة: فشله لا يوقف التحليل، ويظهر «غير متاح»

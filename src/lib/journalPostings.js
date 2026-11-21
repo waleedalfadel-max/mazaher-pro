@@ -1,5 +1,5 @@
 import { cents } from './accountStatement.js'
-import { isSales, isCounted, isCOGSEntry, isWithdrawal, isDebt, isBalanceStart, salesVatOf } from './financeRules.js'
+import { isSales, isCounted, isCOGSEntry, isWithdrawal, isDebt, isBalanceStart, salesVatBasis, taxStatusOf, TAX_REGISTERED } from './financeRules.js'
 import { isSupplierPaymentType } from './supplierPayments.js'
 import { compactEntryDescription } from './entryDescription.js'
 import { loanKey, loanDisplayLabel } from './loanBalances.js'
@@ -15,7 +15,7 @@ const expenseTypes = new Set(['مصروفات تشغيلية', 'مصروفات �
 export function journalPostings(rows, { banks = [], suppliers = [], settings = {} } = {}) {
   const labels = new Map((Array.isArray(settings.statement_accounts) ? settings.statement_accounts : [])
     .filter(a => a && typeof a.label === 'string' && a.label.trim()).map(a => [a.value, a.label.trim()]))
-  const taxStatus = settings.onboarding?.tax?.status
+  const taxStatus = taxStatusOf(settings)
   const segments = [], transfers = new Map()
   for (const row of rows) {
     const type = clean(row.type), issues = [], lines = [], desc = compactEntryDescription(row)
@@ -68,10 +68,10 @@ export function journalPostings(rows, { banks = [], suppliers = [], settings = {
       }
       if (!issues.length) lines.push(line(clean(loanDisplayLabel(row.type, settings)), -net, row))
     } else if (isSales(row.type)) {
-      const explicit = row.output_vat_amount != null
-      let outputVat = explicit ? cents(row.output_vat_amount) : 0
-      if (!explicit && taxStatus === 'مسجل') outputVat = cents(salesVatOf(row))
-      if (!explicit && !['مسجل', 'غير مسجل'].includes(taxStatus)) issues.push('ضريبة المبيعات غير محددة')
+      // القاعدة نفسها في لوحة التحكم والتقارير والتحليل (financeRules.salesVatBasis)
+      const { vat: salesVat, basis } = salesVatBasis(row, taxStatus)
+      const explicit = basis === 'explicit', outputVat = cents(salesVat)
+      if (basis === 'unknown') issues.push('ضريبة المبيعات غير محددة')
       if ((net && (Math.abs(outputVat) > Math.abs(net) || outputVat * net < 0)) || cents(row.payable_in) || cents(row.payable_out)) issues.push('مبالغ المبيعات تحتاج مراجعة')
       if (!issues.length) {
         lines.push(line('المبيعات', -(net - outputVat), row))
@@ -80,9 +80,9 @@ export function journalPostings(rows, { banks = [], suppliers = [], settings = {
     } else if (expense) {
       const gross = -net, sign = Math.sign(gross)
       if (!gross || vat < 0 || vat > Math.abs(gross) || cents(row.output_vat_amount)) issues.push('مبالغ المشتريات أو المصروف تحتاج مراجعة')
-      if (vat && !['مسجل', 'غير مسجل'].includes(taxStatus)) issues.push('معالجة ضريبة المشتريات غير محددة')
+      if (vat && !taxStatus) issues.push('معالجة ضريبة المشتريات غير محددة')
       if (!issues.length) {
-        const inputVat = taxStatus === 'مسجل' ? vat * sign : 0
+        const inputVat = taxStatus === TAX_REGISTERED ? vat * sign : 0
         const account = [clean(row.category_main), clean(row.category_sub)].filter(x => x && x !== 'أخرى').join(' — ') || type
         lines.push(line(account, gross - inputVat, row))
         if (inputVat) lines.push(line('ضريبة المشتريات', inputVat, row))

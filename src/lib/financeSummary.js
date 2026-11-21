@@ -2,9 +2,11 @@
 // المحرك (لوحة التحكم والتقارير) والتحليل المالي معًا بتعريف واحد للمبيعات والمصروفات والنتيجة. التغيير الوحيد في الحساب: مبلغ القيد في
 // المصروفات من expenseAmountNet (src/lib/financeRules.js) بدل «الخروج ناقص الضريبة» — انظر سبب ذلك هناك.
 import { salesAmountNet, isCOGSEntry, isSales, isExcluded, isWithdrawal, isDebt, isRealExpense, sumField,
-  expenseAmountGross, expenseAmountNet, isCounted, uncountedSummary, inputVatTotal } from './financeRules.js'
+  expenseAmountGross, expenseAmountNet, isCounted, uncountedSummary, inputVatTotal, salesVatUndetermined } from './financeRules.js'
 
-export function summarizeEntries(rows) {
+// taxStatus: حالة التسجيل الضريبي للمنشأة (financeRules.taxStatusOf). غيابها = غير محددة: لا تقدير لضريبة المبيعات، ويُعاد
+// salesVatUndetermined للتنبيه.
+export function summarizeEntries(rows, { taxStatus = null } = {}) {
   // القيود المحتسبة وحدها (financeRules: المعتمد والتلقائي)؛ غيرها يُعاد ملخصًا منفصلًا للعرض
   const entries = rows.filter(isCounted)
   const uncounted = uncountedSummary(rows)
@@ -20,9 +22,9 @@ export function summarizeEntries(rows) {
   // الحركة النقدية المقبوضة فعلاً — شاملة ضريبة المخرجات
   const grossSales = cashSales + networkSales + appSales
 
-  // ضريبة التقرير المراجَعة محفوظة منفصلة عن ضريبة مدخلات المشتريات.
-  // القيود القديمة بلا ضريبة مخرجات محفوظة تحتفظ بتقدير 15% السابق.
-  const totalSales = salesEntries.reduce((sum, e) => sum + salesAmountNet(e), 0)
+  // ضريبة التقرير المراجَعة محفوظة منفصلة عن ضريبة مدخلات المشتريات. القيود بلا ضريبة محفوظة بقاعدة financeRules.salesVatBasis:
+  // تقدير 15% للمنشأة المسجلة، ولا ضريبة لغير المسجلة، ولا تقدير مع تنبيه حين لا تُعرف الحالة.
+  const totalSales = salesEntries.reduce((sum, e) => sum + salesAmountNet(e, taxStatus), 0)
   const outputVat = grossSales - totalSales
   const inputVat = inputVatTotal(entries)
 
@@ -81,5 +83,7 @@ export function summarizeEntries(rows) {
     payableBalance,
     entries: active,
     uncounted,
+    taxStatus,
+    salesVatUndetermined: salesVatUndetermined(salesEntries, taxStatus),
   }
 }

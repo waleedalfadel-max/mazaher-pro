@@ -9,6 +9,8 @@ export function fmtDate(d) {
 }
 
 export function salesFigures({ engineSummary, selectedBranch, branches, from, to, prevEntries }) {
+  // حالة التسجيل الضريبي من ملخص المحرك نفسه، فتطابق ضريبة كل قيد هنا بطاقة المبيعات (financeRules.salesVatBasis)
+  const taxStatus = engineSummary?.taxStatus ?? null
   const salesEntries = (engineSummary?.entries || [])
     .filter(e => isSales(e.type))
     .filter(e => selectedBranch === 'all' || !selectedBranch || e.branch === selectedBranch)
@@ -19,7 +21,7 @@ export function salesFigures({ engineSummary, selectedBranch, branches, from, to
   salesEntries.forEach(e => {
     const b = e.branch || '— غير محدد'
     if (!branchSalesMap[b]) branchSalesMap[b] = { sales: 0, byDate: {} }
-    const amt = salesAmountNet(e)
+    const amt = salesAmountNet(e, taxStatus)
     branchSalesMap[b].sales += amt
     if (e.date) branchSalesMap[b].byDate[e.date] = (branchSalesMap[b].byDate[e.date] || 0) + amt
   })
@@ -37,7 +39,7 @@ export function salesFigures({ engineSummary, selectedBranch, branches, from, to
   salesEntries.forEach(e => {
     const b = e.branch || '— غير محدد'
     const t = e.type || ''
-    const amt = salesAmountNet(e)
+    const amt = salesAmountNet(e, taxStatus)
     if (!t.includes('هنقر') && !t.includes('جاهز') && !t.includes('كيتا') && !t.includes('مرسول') && !t.includes('نينجا')) return
     if (!appMap[b]) appMap[b] = { hunger: 0, jahez: 0, keeta: 0, mrsool: 0, ninja: 0 }
     if (t.includes('هنقر')) appMap[b].hunger += amt
@@ -57,10 +59,10 @@ export function salesFigures({ engineSummary, selectedBranch, branches, from, to
   const [ty2, tm2, td2] = actualLastDate.split('-').map(Number)
   const actualPrevFromD = fmtDate(new Date(fy2, fm2 - 2, fd2))
   const actualPrevToD   = fmtDate(new Date(ty2, tm2 - 2, td2))
-  const curSales  = salesEntries.reduce((s, e) => s + salesAmountNet(e), 0)
+  const curSales  = salesEntries.reduce((s, e) => s + salesAmountNet(e, taxStatus), 0)
   const prevSales = prevEntries.filter(isCounted)   // القاعدة المركزية للحالات المحتسبة (financeRules)
     .filter(e => isSales(e.type) && e.date >= actualPrevFromD && e.date <= actualPrevToD)
-    .reduce((s, e) => s + salesAmountNet(e), 0)
+    .reduce((s, e) => s + salesAmountNet(e, taxStatus), 0)
   const growth    = prevSales > 0 ? ((curSales - prevSales) / prevSales * 100) : null
 
   // القسم 4: المبيعات اليومية
@@ -69,7 +71,7 @@ export function salesFigures({ engineSummary, selectedBranch, branches, from, to
     const d = e.date; if (!d) return
     if (!dailyMap[d]) dailyMap[d] = { date: d, cash: 0, bank: 0, apps: 0 }
     // صافية بنفس معالجة بقية الشاشات — وإلا خالف مجموع الجدول بطاقة المبيعات
-    const net = netSalesChannels(e)
+    const net = netSalesChannels(e, taxStatus)
     for (const key of ['cash', 'bank', 'apps']) dailyMap[d][key] += net[key]
   })
   const dailyRows    = Object.values(dailyMap).sort((a, b) => b.date.localeCompare(a.date))

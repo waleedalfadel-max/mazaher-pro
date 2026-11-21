@@ -113,21 +113,68 @@ export function salesAmountGross(e) {
   return (Number(e.cash_in) || 0) + (Number(e.bank_in) || 0) + (Number(e.receivable_in) || 0)
 }
 
-export function salesAmountNet(e) {
-  return e.output_vat_amount == null ? salesAmountGross(e) / (1 + VAT_RATE) : salesAmountGross(e) - salesVatOf(e)
+// ── ضريبة المخرجات على قيد المبيعات: قاعدة واحدة لكل المسارات ─────────────────────────────────────────
+// يستعملها ملخص المحرك (لوحة التحكم والتقارير والتصدير) والتحليل المالي والقيود اليومية وشاشة اعتماد تقرير المبيعات.
+// حالة التسجيل من إعدادات المنشأة (settings.onboarding.tax.status)، وهي القيمة نفسها التي يشترطها الخادم
+// لأي ضريبة في suspense_private.validate_proposal (20261107163108).
+export const TAX_REGISTERED = 'مسجل'
+export const TAX_UNREGISTERED = 'غير مسجل'
+
+/** حالة التسجيل الضريبي المعروفة للمنشأة من إعداداتها، أو null إن لم تُحدَّد أو كانت قيمة غير معروفة. */
+export function taxStatusOf(settings) {
+  const s = settings?.onboarding?.tax?.status
+  return s === TAX_REGISTERED || s === TAX_UNREGISTERED ? s : null
 }
 
-// NULL keeps the existing 15% estimate. An explicit zero is a reviewed zero,
-// and negative values represent a documented correction to a previous report.
-export function salesVatOf(e) {
-  if (e.output_vat_amount != null && Number.isFinite(Number(e.output_vat_amount))) return Number(e.output_vat_amount)
-  const gross = salesAmountGross(e)
-  return gross - gross / (1 + VAT_RATE)
+/**
+ * ضريبة مخرجات قيد مبيعات وأساسها { vat, basis }:
+ * • explicit: ضريبة محفوظة على القيد (output_vat_amount، ومنها الصفر المراجَع والسالب لتصحيح موثّق) ← كما هي، أيًّا كانت الحالة.
+ * • estimate: بلا ضريبة محفوظة والمنشأة «مسجل» ← تقدير 15/115 من الإجمالي.
+ * • unregistered: بلا ضريبة محفوظة والمنشأة «غير مسجل» ← لا ضريبة؛ المبلغ كله مبيعات.
+ * • unknown: بلا ضريبة محفوظة وحالة التسجيل غير محددة ← لا تقدير (vat = 0 في الأرقام) ويُعرض تنبيه بعدده ومبلغه
+ *   (salesVatUndetermined)، ولا يُرحَّل في القيود اليومية؛ فلا تُخترع ضريبة مستحقة للهيئة ولا يُخفى النقص.
+ */
+export function salesVatBasis(e, taxStatus) {
+  const v = e?.output_vat_amount
+  if (v != null && v !== '' && Number.isFinite(Number(v))) return { vat: Number(v), basis: 'explicit' }
+  if (taxStatus === TAX_REGISTERED) {
+    const gross = salesAmountGross(e)
+    return { vat: gross - gross / (1 + VAT_RATE), basis: 'estimate' }
+  }
+  if (taxStatus === TAX_UNREGISTERED) return { vat: 0, basis: 'unregistered' }
+  return { vat: 0, basis: 'unknown' }
 }
 
-export function netSalesChannels(e) {
+export function salesVatOf(e, taxStatus) {
+  return salesVatBasis(e, taxStatus).vat
+}
+
+export function salesAmountNet(e, taxStatus) {
+  const { vat, basis } = salesVatBasis(e, taxStatus)
+  // التقدير بالقسمة مباشرة كما كان (لا فرق كسور عن الأرقام السابقة للمنشأة المسجلة)
+  return basis === 'estimate' ? salesAmountGross(e) / (1 + VAT_RATE) : salesAmountGross(e) - vat
+}
+
+/** قيود المبيعات المحتسبة التي لم تُحدَّد ضريبتها (بلا ضريبة محفوظة وحالة التسجيل غير محددة): العدد والإجمالي بالهللات. */
+export function salesVatUndetermined(entries, taxStatus) {
+  let n = 0, h = 0
+  for (const e of entries || []) {
+    if (!isCounted(e) || isExcluded(e.type) || !isSales(e.type) || salesVatBasis(e, taxStatus).basis !== 'unknown') continue
+    n++; h += Math.round(salesAmountGross(e) * 100)
+  }
+  return { n, h }
+}
+
+/** نص التنبيه للوحة التحكم والتقارير والتصدير والتحليل؛ null إن لم يوجد. */
+export function salesVatUndeterminedText(u) {
+  if (!u?.n) return null
+  const amount = (u.h / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `ضريبة المبيعات غير محددة في ${u.n} قيد مبيعات بإجمالي ${amount}: حالة التسجيل الضريبي للمنشأة غير محددة، فلم تُقدَّر عليها ضريبة وظهرت كاملة في المبيعات. تُحدَّد حالة التسجيل لتُحسب ضريبتها.`
+}
+
+export function netSalesChannels(e, taxStatus) {
   const amounts = { cash: Number(e.cash_in) || 0, bank: Number(e.bank_in) || 0, apps: Number(e.receivable_in) || 0 }
-  const gross = salesAmountGross(e), net = salesAmountNet(e)
+  const gross = salesAmountGross(e), net = salesAmountNet(e, taxStatus)
   if (gross) return Object.fromEntries(Object.entries(amounts).map(([k, v]) => [k, v * net / gross]))
   // A tax-only correction has no cash movement, but still changes net sales.
   const channel = /كاش/.test(e.type || '') ? 'cash' : /شبكة|تحويل/.test(e.type || '') ? 'bank' : 'apps'

@@ -10,7 +10,7 @@ import { normCat } from './approvalV2.js'
 import { formatDate } from '../ui/format.js'
 import { summarizeEntries } from './financeSummary.js'
 import { isSales, isExcluded, isWithdrawal, isDebt, isTaxType, isCOGSEntry, isRealExpense, expenseAmountNet,
-  salesAmountGross } from './financeRules.js'
+  salesAmountGross, salesVatUndeterminedText } from './financeRules.js'
 
 // القاعدة المركزية للحالات المحتسبة في financeRules (مصدر واحد للمحرك والتقارير والتحليل)
 export { COUNTED_STATUSES } from './financeRules.js'
@@ -33,7 +33,7 @@ export const ratioOf = (aH, salesH) => (salesH > 0 ? aH / salesH : null)
  * @param rows قيود الفترة المجلوبة (كل الحالات عدا «ملغى» القديمة)، بالفرع المختار.
  * @returns أرقام النافذة بالهللات، والبنود (رئيسي ← فرعي) بمصادرها.
  */
-export function windowFigures(rows, w, { docItems = [], categoriesById = {} } = {}) {
+export function windowFigures(rows, w, { docItems = [], categoriesById = {}, taxStatus = null } = {}) {
   const inside = (rows || []).filter(e => inWindow(e, w))
   const counted = inside.filter(e => COUNTED_STATUSES.includes(e.status))
   const uncounted = inside.filter(e => !COUNTED_STATUSES.includes(e.status))
@@ -54,7 +54,9 @@ export function windowFigures(rows, w, { docItems = [], categoriesById = {} } = 
     costsH += net
     if (isCOGSEntry(e)) cogsH += net
   }
-  const salesNetH = toH(summarizeEntries(counted).totalSales)
+  // ضريبة المبيعات بحالة التسجيل الضريبي للمنشأة (financeRules.salesVatBasis)، كلوحة التحكم والتقارير
+  const engine = summarizeEntries(counted, { taxStatus })
+  const salesNetH = toH(engine.totalSales)
 
   // البنود: توزيع صافي كل قيد مصروف على بنود مستنده (كما في تقرير المصروفات)، ثم الرئيسي بمعرّفه الثابت والفرعي تحته
   // فرعي محفوظ بالاسم وحده (قيود سابقة) تحت رئيسي معروف: يُربط بمعرّف الفرعي الوحيد بالاسم نفسه تحته، فلا يظهر البند صفين.
@@ -111,7 +113,8 @@ export function windowFigures(rows, w, { docItems = [], categoriesById = {} } = 
     uncategorizedH: mainList.filter(m => m.uncategorized).reduce((s, m) => s + m.h, 0),
     settlementH: mainList.filter(m => m.settlement).reduce((s, m) => s + m.h, 0),
     // للمطابقة مع المحرك نفسه (الاختبارات): الملخص من القيود المحتسبة
-    engine: summarizeEntries(counted),
+    engine,
+    salesVatUndetermined: engine.salesVatUndetermined,
   }
 }
 
@@ -388,13 +391,15 @@ function limitsOf(cur, ref, { noBranchRows, pendingDocs, branch } = {}) {
   if (cur.window.partial) L.push({ key: 'partial', text: 'الفترة الحالية لم تنته بعد، وقد لا تكون قيود اليوم مسجلة.' })
   const unc = Object.entries(cur.uncounted)
   if (unc.length) L.push({ key: 'status', tone: 'warning', text: `قيود غير محتسبة لأنها غير معتمدة: ${unc.map(([k, v]) => `${v.n} ${STATUS_LABEL[k] || 'بلا حالة'} بمبلغ ${money(v.h)}`).join('، ')}. القاعدة نفسها في لوحة التحكم والتقارير والتصدير.` })
+  const undetermined = salesVatUndeterminedText(cur.salesVatUndetermined)
+  if (undetermined) L.push({ key: 'salesvat', tone: 'warning', text: undetermined })
   if (pendingDocs) L.push({ key: 'docs', tone: 'warning', text: `${pendingDocs} مستند بانتظار المراجعة والاعتماد لا يدخل الأرقام حتى يُعتمد.` })
   if (cur.uncategorizedH) L.push({ key: 'uncat', tone: 'warning', text: `مبالغ غير مصنفة في الفترة: ${money(cur.uncategorizedH)}. تظهر بندًا مستقلًا ولا توزَّع على بنود أخرى.` })
   if (branch && branch !== 'all' && noBranch?.n) L.push({ key: 'nobranch', tone: 'warning', text: `${noBranch.n} قيد بلا فرع بمبلغ ${money(noBranch.h)} في الفترة (${cur.window.from} – ${cur.window.to}) لا يظهر عند اختيار فرع (مثل الإيجار والرواتب إن سُجّلت بلا فرع). نسب الفرع لا تشمله.` })
   if (cur.settlementH) L.push({ key: 'settle', text: `سداد أرصدة موردين لم تدخل فواتيرها الدفتر ${money(cur.settlementH)}: يُحتسب تكلفةً عند السداد بإجماليه وبلا تصنيف. سداد الفواتير المسجلة في الدفتر يخفض الالتزام ولا يُحتسب تكلفة ثانية.` })
   if (cur.salesOutflows) L.push({ key: 'returns', tone: 'warning', text: `${cur.salesOutflows} قيد مبيعات فيه مبلغ خارج (مرتجع؟). المحرك لا يطرح الخارج من المبيعات؛ راجعه.` })
   if (cur.debtsH || cur.withdrawalsH) L.push({ key: 'finance', text: `خارج التكاليف: أقساط وقروض ${money(cur.debtsH)} ومسحوبات ${money(cur.withdrawalsH)}. البيانات لا تفصل رسوم التمويل عن أصل القرض.` })
-  L.push({ key: 'vat', text: 'صافي المبيعات = إجمالي المبيعات ناقص ضريبة التقارير المحفوظة؛ وعند غيابها تُقدّر بافتراض خضوع كامل المبيعات لضريبة 15%. ضريبة المدخلات المسجلة على الفواتير تُطرح من التكاليف على أنها قابلة للاسترداد.' })
+  L.push({ key: 'vat', text: 'صافي المبيعات = إجمالي المبيعات ناقص ضريبة التقارير المحفوظة؛ وعند غيابها تُقدّر بافتراض خضوع كامل المبيعات لضريبة 15% إن كانت المنشأة مسجلة ضريبيًا، ولا ضريبة إن كانت غير مسجلة. ضريبة المدخلات المسجلة على الفواتير تُطرح من التكاليف على أنها قابلة للاسترداد.' })
   L.push({ key: 'inventory', text: '«مشتريات المواد» هي مشتريات الفترة لا تكلفة الاستهلاك الفعلي؛ لا بيانات مخزون. لا تُستنتج منها هدر أو فقد.' })
   if (cur.firstDate == null && ref.n === 0) L.push({ key: 'empty', tone: 'warning', text: 'لا قيود محتسبة في الفترة ولا في المقارنة.' })
   const bad = ref.windows.filter(x => !x.valid)

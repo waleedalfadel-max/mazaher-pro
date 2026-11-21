@@ -12,7 +12,7 @@ const r2=n=>Math.round(n*100)/100
 const rows=()=>[row('💵 مبيعات كاش','cash_in',230,27),row('🏦 مبيعات شبكة','bank_in',1380,162),row('🍔 مبيعات هنقر ستيشن','receivable_in',690,81)]
 test('printed sales VAT, explicit zero and legacy estimate; input VAT remains separate',()=>{
  const old=row('💵 مبيعات كاش','cash_in',115,null)
- assert.equal(salesAmountNet(old),115/1.15);assert.equal(r2(salesVatOf(old)),15)
+ assert.equal(salesAmountNet(old,'مسجل'),115/1.15);assert.equal(r2(salesVatOf(old,'مسجل')),15)
  assert.equal(salesAmountNet({...old,output_vat_amount:0}),115)
  const s=summarizeEntries([...rows(),{type:'🛒 مصروفات تشغيلية',status:'approved',cash_out:115,vat_amount:15}])
  assert.equal(s.grossSales,2300);assert.equal(s.totalSales,2030);assert.equal(s.outputVat,270);assert.equal(s.inputVat,15)
